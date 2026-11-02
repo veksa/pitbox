@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {sourceHash} from './drivers/apple/runner.ts';
+import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
@@ -64,5 +65,44 @@ describe('apple driver', () => {
     expect(sourceHash(dir)).toBe(first);
     fs.writeFileSync(path.join(dir, 'Runner', 'A.swift'), 'let a = 2');
     expect(sourceHash(dir)).not.toBe(first);
+  });
+
+  const ips = (o: {bundle?: string; udid?: string; bug?: string; exception?: boolean} = {}) =>
+    `${JSON.stringify({bug_type: o.bug ?? '309', bundleID: o.bundle ?? 'com.example.app'})}\n${JSON.stringify({
+      procPath: `/Users/u/Library/Developer/CoreSimulator/Devices/${o.udid ?? 'AAA'}/data/Containers/Bundle/Application/X/MyApp.app/MyApp`,
+      captureTime: '2026-01-02 10:00:00.1234 +0200',
+      exception: {type: o.exception ? 'EXC_CRASH' : 'EXC_BREAKPOINT', signal: o.exception ? 'SIGABRT' : 'SIGTRAP'},
+      asi: o.exception ? {CoreFoundation: ["*** Terminating app due to uncaught exception 'NSInvalidArgumentException'"]} : undefined,
+      lastExceptionBacktrace: o.exception ? [{imageIndex: 0, symbol: 'MyApp.save()', sourceFile: '/src/Store.swift', sourceLine: 42}] : undefined,
+      faultingThread: 0,
+      threads: [{frames: [{imageIndex: 1, symbol: '_assertionFailure'}, {imageIndex: 0, symbol: 'MyApp.load()', sourceFile: '/src/Feed.swift', sourceLine: 7}]}],
+      usedImages: [{name: 'MyApp'}, {name: 'libswiftCore.dylib'}],
+    })}`;
+
+  it('reads a simulator crash report of the app on that simulator only', () => {
+    const e = parseIps(ips(), 'com.example.app', 'AAA', 0)!;
+    expect(e).toMatchObject({kind: 'crash', summary: 'EXC_BREAKPOINT (SIGTRAP)', at: Date.parse('2026-01-02T10:00:00.123+02:00')});
+    expect(e.lines).toEqual(['libswiftCore.dylib _assertionFailure', 'MyApp MyApp.load() (Feed.swift:7)']);
+    expect(parseIps(ips({udid: 'BBB'}), 'com.example.app', 'AAA', 0)).toBeUndefined();
+    expect(parseIps(ips({bundle: 'com.example.other'}), 'com.example.app', 'AAA', 0)).toBeUndefined();
+    expect(parseIps(ips({bug: '288'}), 'com.example.app', 'AAA', 0)).toBeUndefined();
+    expect(parseIps('not a report', 'com.example.app', 'AAA', 0)).toBeUndefined();
+  });
+
+  it('takes the stack of an uncaught exception and its reason', () => {
+    const e = parseIps(ips({exception: true}), 'com.example.app', 'AAA', 0)!;
+    expect(e.summary).toContain('NSInvalidArgumentException');
+    expect(e.lines).toEqual(['MyApp MyApp.save() (Store.swift:42)']);
+  });
+
+  it('finds new reports in the reports directory without asking the simulator', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0})};
+    const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+    w.begin(['com.example.app']);
+    fs.writeFileSync(path.join(dir, 'MyApp-2026-01-02-100001.ips'), ips());
+    fs.writeFileSync(path.join(dir, 'Other-2026-01-02-100001.ips'), ips({bundle: 'com.example.other'}));
+    const found = await w.since(Date.parse('2026-01-02T10:00:00+02:00'));
+    expect(found.map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
   });
 });

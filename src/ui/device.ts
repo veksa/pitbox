@@ -35,7 +35,13 @@ export type UiRunner = {
 };
 
 /** Crashes of the app under test, collected in the background. */
-export type CrashSource = {start(): void; stop(): void; since(t: number): AppEvent[]};
+export type CrashSource = {
+  start(): void;
+  stop(): void;
+  /** Called when an action begins with the apps the last snapshot showed, for sources that compare before and after. */
+  begin?(front?: string[]): void;
+  since(t: number): AppEvent[] | Promise<AppEvent[]>;
+};
 
 const noCrashes: CrashSource = {start: () => undefined, stop: () => undefined, since: () => []};
 
@@ -129,13 +135,18 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   /** Crashes, ANRs and JS errors of the app since `since`, for an action's result. */
   async crashesSince(since: number): Promise<AppEvent[]> {
-    const js = (await this.#hooks.jsErrors?.(since).catch(() => [])) ?? [];
-    return [...this.#crashes.since(since), ...js].sort((a, b) => a.at - b.at);
+    const [native, js] = await Promise.all([Promise.resolve(this.#crashes.since(since)).catch(() => []), this.#hooks.jsErrors?.(since).catch(() => []) ?? []]);
+    return [...native, ...js].sort((a, b) => a.at - b.at);
   }
 
   async #crashed(since: number) {
     const c = await this.crashesSince(since);
     return c.length ? {crashes: c} : {};
+  }
+
+  /** Tells the crash source which apps were on screen just before the input: the snapshot the action used. */
+  #front(snap?: Snapshot) {
+    this.#crashes.begin?.(snap?.windows.map(w => w.pkg));
   }
 
   #begin() {
@@ -147,6 +158,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async press(selector: string, kind: 'tap' | 'longpress' | 'doubletap' = 'tap'): Promise<ActResult> {
     const t0 = this.#begin();
     const {snap, target} = await this.#target(selector);
+    this.#front(snap);
     let t = this.#phase('target', t0);
     await this.runner.call(kind, {x: target.x, y: target.y});
     t = this.#phase('input', t);
@@ -159,6 +171,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async fill(selector: string, text: string): Promise<ActResult> {
     const t0 = this.#begin();
     const {snap, target} = await this.#target(selector);
+    this.#front(snap);
     await this.runner.call('tap', {x: target.x, y: target.y});
     await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
     const editable = target.node && (target.node.f ?? '').includes('e');
@@ -172,6 +185,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async type(text: string): Promise<ActResult> {
     const t0 = this.#begin();
     const before = this.last;
+    this.#front(before);
     const r = await this.runner.call<{set: boolean}>('text', {text, append: true});
     if (!r.set) throw new Error('no focused text field to type into');
     this.record(`type ${quote(text)}`);
@@ -181,6 +195,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async key(keys: string[]): Promise<ActResult> {
     const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
+    this.#front(before);
     for (const k of keys) {
       const code = KEYS[k.toLowerCase()] ?? Number(k);
       if (!Number.isInteger(code)) throw new Error(`unknown key: ${k} (known: ${Object.keys(KEYS).join(', ')} or a keycode)`);
@@ -193,6 +208,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async swipe(spec: string, durationMs = 300): Promise<ActResult> {
     const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
+    this.#front(before);
     const {width: w, height: h} = await this.size();
     const dirs: Record<string, [number, number, number, number]> = {
       up: [w / 2, h * 0.72, w / 2, h * 0.28],
@@ -218,6 +234,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     let y = 0;
     let target: string | undefined;
     const before = this.last ?? (await this.snapshot());
+    this.#front(before);
     if (phase !== 'up') {
       if (!selector) throw new Error(`touch ${phase} needs a target`);
       const r = await this.#target(selector);
@@ -236,6 +253,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const t0 = Date.now();
     const start = this.last;
     let snap = await this.snapshot();
+    this.#front(snap);
     const swipeDir = {down: 'up', up: 'down', left: 'right', right: 'left'}[direction] ?? direction;
     for (let i = 0; i < max && !matches(snap, selector); i++) {
       const prev = snap.lines.join('\n');

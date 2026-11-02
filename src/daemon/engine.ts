@@ -11,6 +11,7 @@ import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
 import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
+import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
@@ -172,7 +173,7 @@ export class Engine {
     };
     ui =
       t.platform === 'apple'
-        ? new DeviceUi(t.id, new AppleRunner(t.s, t.id, this.config.app?.apple), hooks)
+        ? new DeviceUi(t.id, new AppleRunner(t.s, t.id, this.config.app?.apple), hooks, new AppleCrashWatcher(t.s, t.id, this.config.app?.apple))
         : new DeviceUi(t.id, new AndroidRunner(t.a, t.id), hooks, new CrashWatcher(t.a.adbPath, t.id, this.config.app?.android));
     this.#uis.set(t.id, ui);
     return ui;
