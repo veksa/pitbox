@@ -208,6 +208,16 @@ export class AppleDriver {
     for (const sub of ['Documents', 'Library', 'tmp']) fs.mkdirSync(path.join(dir, sub), {recursive: true});
   }
 
+  /**
+   * Writes string values into the app's own preferences (its `UserDefaults`), through the simulator's cfprefsd so
+   * the app sees them on its next launch. Writing to the plist file directly would be lost to cfprefsd's cache.
+   */
+  async setDefaults(udid: string, bundleId: string, values: Record<string, string>) {
+    const dir = (await this.#ok(['get_app_container', udid, bundleId, 'data'], 'get_app_container')).trim();
+    const domain = path.join(dir, 'Library', 'Preferences', bundleId);
+    for (const [k, v] of Object.entries(values)) await this.#ok(['spawn', udid, 'defaults', 'write', domain, k, '-string', v], `defaults write ${k}`);
+  }
+
   async uninstall(udid: string, bundleId: string) {
     await this.#ok(['uninstall', udid, bundleId], 'uninstall', 60_000);
   }

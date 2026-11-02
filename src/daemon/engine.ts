@@ -702,9 +702,23 @@ export class Engine {
     open: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
-        // No Swift connect library yet: only a link the project names itself is opened instead of the app.
+        const bundleId = str(p, 'pkg') ?? this.config.app?.apple;
         const target = str(p, 'target') ?? (this.config.app?.connect ? this.connectUrl() : undefined) ?? this.#bundleId(p);
-        const r = await t.s.open(t.id, target, {relaunch: bool(p, 'relaunch'), bundleId: str(p, 'pkg') ?? this.config.app?.apple});
+        let relaunch = bool(p, 'relaunch');
+        let args: string[] | undefined;
+        // Point the app at this dev server without a link: React Native reads its bundler from the
+        // `RCT_jsLocation` default and the connect library reads `pitbox.<name>`. Saved in the app's preferences
+        // (a launch from the home screen keeps it) and passed as launch arguments (they win over a cached value).
+        // A simulator shares the Mac's network, so localhost is the Mac.
+        if (this.#dev && bundleId && target === bundleId) {
+          const host = `localhost:${this.#dev.port}`;
+          const values = {RCT_jsLocation: host, 'pitbox.devserver': host};
+          await t.s.stop(t.id, bundleId);
+          await t.s.setDefaults(t.id, bundleId, values).catch(() => undefined);
+          args = Object.entries(values).flatMap(([k, v]) => [`-${k}`, v]);
+          relaunch = true;
+        }
+        const r = await t.s.open(t.id, target, {relaunch, bundleId, args});
         // A runner already attached reads the shell until the launched app comes to the front.
         const ui = this.#uis.get(t.id);
         if (ui && !target.includes('://')) await ui.runner.call('foreground', {}, 10_000).catch(() => undefined);
