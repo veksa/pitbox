@@ -39,6 +39,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   swipe up|down|left|right|x1,y1,x2,y2 [ms] · scroll down until <selector>
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
+  focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
   media [selector]              is it playing? motion and brightness of a region, compared on the device
 
 flows
@@ -165,6 +166,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'wait', params: {device, gone: rest[0] === 'gone', target: (rest[0] === 'gone' ? rest.slice(1) : rest).join(' '), timeout: flags.timeout}};
     case 'focus':
       return {method: 'focus', params: {device}};
+    case 'focusmap':
+      return {method: 'focusMap', params: {device, max: flags.max}};
     case 'media':
       return {method: 'media', params: {device, target: rest.join(' ') || undefined, count: flags.count, interval: flags.interval}};
     case 'shot':

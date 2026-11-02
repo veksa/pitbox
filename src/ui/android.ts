@@ -18,6 +18,8 @@ export type UiHooks = {
 
 const quote = (s: string) => JSON.stringify(s);
 
+export type FocusMap = {start: string; reached: number; focusable: number; unreached: string[]; traps: string[]; asymmetric: string[]; presses: number; complete: boolean; ms: number};
+
 export type MediaResult = {target?: string; moving: boolean; black: boolean; playing: boolean; motion: number; luma: number};
 
 export class AndroidUi {
@@ -257,6 +259,62 @@ export class AndroidUi {
     const black = luma < 8;
     const moving = motion > 1.5;
     return {target, moving, black, playing: moving && !black, motion: Math.round(motion * 10) / 10, luma: Math.round(luma)};
+  }
+
+  /**
+   * Walks the screen with the D-pad from the current focus: from every node it reaches it tries the four
+   * directions and steps back. Reports focusable nodes never reached, nodes focus cannot leave, and moves that
+   * do not reverse (right goes to B, left from B does not come back). Bounded by `maxPresses`.
+   */
+  async focusMap(maxPresses = 150): Promise<FocusMap> {
+    const t0 = Date.now();
+    const label = (n?: UiNode) => (n ? (n.id ? `#${n.id}` : n.t ? JSON.stringify(n.t) : n.d ? `(${n.d})` : `@[${n.b.join(',')}]`) : 'nothing');
+    // Ids are stable while a rail scrolls; bounds are not.
+    const keyOf = (n?: UiNode) => (n ? (n.id ? `#${n.id}` : `@${n.b.join(',')}|${n.t ?? n.d ?? ''}`) : 'none');
+    const opposite: Record<string, string> = {up: 'down', down: 'up', left: 'right', right: 'left'};
+    const codes: Record<string, number> = {up: 19, down: 20, left: 21, right: 22};
+    let presses = 0;
+    const current = async () => (await this.runner.call<{input?: UiNode}>('focus')).input;
+    const press = async (dir: string) => {
+      presses++;
+      await this.runner.call('key', {code: codes[dir]});
+      await this.runner.call('idle', {quiet: 120, timeout: 700}, 5000);
+      return current();
+    };
+    const seen = new Map<string, UiNode>();
+    const edges = new Map<string, Map<string, string>>();
+    const asymmetric: string[] = [];
+    const start = await current();
+    if (!start) throw new Error('nothing has input focus — press a D-pad key first, or this screen has no focusable nodes');
+    seen.set(keyOf(start), start);
+    const visit = async (node: UiNode): Promise<void> => {
+      const k = keyOf(node);
+      const out = new Map<string, string>();
+      edges.set(k, out);
+      for (const dir of ['right', 'down', 'left', 'up']) {
+        if (presses >= maxPresses) return;
+        const next = await press(dir);
+        const nk = keyOf(next);
+        out.set(dir, nk);
+        if (nk === k || !next) continue;
+        const isNew = !seen.has(nk);
+        seen.set(nk, next);
+        if (isNew) await visit(next);
+        if (presses >= maxPresses) return;
+        // Step back to where this direction started.
+        const back = await press(opposite[dir]!);
+        if (keyOf(back) !== k) {
+          asymmetric.push(`${label(node)} —${dir}→ ${label(next)}, but ${opposite[dir]} from there → ${label(back)}`);
+          return;
+        }
+      }
+    };
+    await visit(start);
+    const snap = await this.snapshot();
+    const focusable = snap.nodes.filter(n => (n.f ?? '').includes('f') && !(n.f ?? '').includes('d'));
+    const unreached = focusable.filter(n => !seen.has(keyOf(n)));
+    const traps = [...edges.entries()].filter(([k, out]) => out.size === 4 && [...out.values()].every(v => v === k)).map(([k]) => label(seen.get(k)));
+    return {start: label(start), reached: seen.size, focusable: focusable.length, unreached: unreached.map(label), traps, asymmetric, presses, complete: presses < maxPresses, ms: Date.now() - t0};
   }
 
   async focus(): Promise<{input?: UiNode; accessibility?: UiNode}> {

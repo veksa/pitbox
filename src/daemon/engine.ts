@@ -630,6 +630,8 @@ export class Engine {
 
     focus: async (p: Params) => (await this.ui(str(p, 'device'))).focus(),
 
+    focusMap: async (p: Params) => (await this.ui(str(p, 'device'))).focusMap(num(p, 'max') ?? 150),
+
     media: async (p: Params) => (await this.ui(str(p, 'device'))).media(str(p, 'target'), {count: num(p, 'count'), intervalMs: num(p, 'interval')}),
 
     uiShot: async (p: Params) => (await this.ui(str(p, 'device'))).screenshot(this.#shotFile(str(p, 'name')), num(p, 'scale') ?? 0.4),

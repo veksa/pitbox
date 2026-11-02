@@ -7,7 +7,7 @@ import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
-import type {ActResult} from './ui/android.ts';
+import type {ActResult, FocusMap} from './ui/android.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
 import {clipLines, seconds} from './util/text.ts';
@@ -146,6 +146,15 @@ export const formatResult = (method: string, r: unknown): string => {
       return fmtFlow(r as FlowResult);
     case 'focus':
       return `input focus: ${fmtNode(x.input as UiNode | undefined)}\naccessibility focus: ${fmtNode(x.accessibility as UiNode | undefined)}`;
+    case 'focusMap': {
+      const m = x as unknown as FocusMap;
+      return [
+        `focus walk from ${m.start}: reached ${m.reached} focusable nodes · ${m.presses} presses · ${seconds(m.ms)}${m.complete ? '' : ' · stopped at the press limit (raise max)'}`,
+        ...(m.unreached.length ? [`${m.complete ? 'unreachable' : 'not reached within the limit'}: ${m.unreached.join(', ')}`] : []),
+        ...(m.traps.length ? [`traps (focus cannot leave): ${m.traps.join(', ')}`] : []),
+        ...m.asymmetric.map(a => `not reversible: ${a}`),
+      ].join('\n');
+    }
     case 'media':
       return `${x.playing ? 'playing' : x.black ? 'black' : x.moving ? 'moving (but dark)' : 'not moving'}${x.target ? ` ${x.target}` : ''} · motion ${x.motion} · brightness ${x.luma}`;
     case 'uiShot':
@@ -198,7 +207,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'boot':
       return x.already ? `${x.avd} already running as ${x.serial}` : `${x.avd} booted as ${x.serial} in ${seconds(x.ms as number)}`;
     case 'install':
-      return `installed on ${x.serial} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old signature first)' : ''}`;
+      return `installed on ${x.serial} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
     case 'open':
       return `opened ${x.target} on ${x.serial}${x.totalMs !== undefined ? ` (activity in ${x.totalMs} ms)` : ''}`;
     case 'screenshot':
