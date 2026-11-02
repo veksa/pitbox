@@ -32,9 +32,11 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   XCUITest cannot hold a finger between calls (`touch`), and `network`, `perf`, display size and animations
   are reported as unsupported. Apple TV has no touch: drive it with `key`. On iPhone and iPad simulators
   `rotate` turns the device (an error when the app stays as it was), and iPad takes `press kind=right|hover`,
-  `swipe via=wheel` and `key keys=["meta+k"]`; the watch takes `swipe via=rotary`. A foldable iPhone reports
-  which screen is lit in `device action=info` (`fold: folded: cover screen …`) and screenshots that screen; it
-  cannot be folded from outside Xcode, so `posture` and `window` stay Android-only.
+  `swipe via=wheel` and `key keys=["meta+k"]`; the watch takes `swipe via=rotary`. A foldable iPhone poses
+  as in Xcode's device window: `device action=posture value=closed|half|open|<degrees> [fast|medium|slow]`
+  swings the hinge and the app moves between the screens, `value=swap` changes the lit screen at once (motion
+  then waits about ten seconds), `rotate` turns the whole phone, 180 upside down. `device action=info` names the
+  lit screen (`fold: folded: cover screen …`) and screenshots are of it; `window` stays Android-only.
 - **TV:** `key` with up/down/left/right/center/back and remote keys (play, next, channel_up, guide…);
   `inspect what=focus`; `inspect what=focus_map` audits D-pad reachability.
 - **Foldables, tablets, desktops:** `device action=posture value=closed|half|open|reset`, `device action=rotate

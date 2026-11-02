@@ -70,8 +70,8 @@ locales.
 | `device <serial\|avd>` | runs the following steps on another device |
 | `state <name>` | restores a named stand state (emulator snapshot + backend dump) |
 | `run <flow> key=value…` | runs another flow file with parameters (nesting up to 5 deep) |
-| `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge |
-| `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor. On iPhone and iPad simulators it turns the device, and fails when the app stays as it was (a folded phone's cover screen, a portrait-only app) |
+| `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge. A foldable iPhone simulator takes `closed|half|open|<degrees> [fast|medium|slow]`, swinging the hinge as Xcode's device window does, and `swap`, which changes the lit screen at once and holds motion for about ten seconds |
+| `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor. On iPhone and iPad simulators it turns the device, and fails when the app stays as it was (a portrait-only app); a foldable iPhone turns as a whole, Xcode's device window too |
 | `wear tile show|add|remove <component>` · `wear face <package|component>` · `wear ambient on|off` · `wear home` | a watch: a tile in the carousel (shown, added, removed), the current watch face (a Watch Face Format package; faces with code no longer run on current Wear OS), the ambient state (always-on display enabled), the watch face itself (the home key toggles face and app list) |
 | `xr look yaw[,pitch[,roll]]` · `xr move dx,dy,dz` · `xr recenter` | an XR emulator's view: turns the head by degrees (turns add up), moves it by metres, recenters — through the emulator's control channel |
 | `xr panel minimize|close|menu|info|spatial-audio|tidy|close-app` | an XR headset: the controls of the app's panel — its caption and the caption's menu |
