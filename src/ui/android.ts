@@ -42,10 +42,21 @@ export class AndroidUi {
     return this.last;
   }
 
-  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 2500): Promise<{diff: SnapshotDiff; idle: boolean}> {
+  /**
+   * Waits for the UI to go quiet and diffs. An action's effect can start after the first quiet window (a sheet
+   * that animates on the next frame, a navigation that waits for a promise), so an unchanged screen is checked
+   * again for a little while before it is reported as unchanged.
+   */
+  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 2500, graceMs = 1200): Promise<{diff: SnapshotDiff; idle: boolean}> {
+    const t0 = Date.now();
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
-    const after = await this.snapshot();
-    return {diff: diffSnapshots(before, after), idle: r.idle};
+    let diff = diffSnapshots(before, await this.snapshot());
+    while (!diff.changed && Date.now() - t0 < graceMs) {
+      await new Promise(res => setTimeout(res, 200));
+      await this.runner.call('idle', {quiet: 150, timeout: 1500}, 6000);
+      diff = diffSnapshots(before, await this.snapshot());
+    }
+    return {diff, idle: r.idle};
   }
 
   /** Resolves against the last snapshot for refs, against a fresh one for everything else. */

@@ -23,7 +23,16 @@ describe('snapshot', () => {
   const snap = buildSnapshot(windows, nodes, {height: 2400});
 
   it('folds a button with its label, hides system bars, keeps hints and ids', () => {
-    expect(snap.lines).toEqual(['@e1 text "Popular items"', '@e2 button "Get started" #get-started', '@e3 field hint "Email"', '@e4 button (Search)']);
+    expect(snap.lines).toEqual(['@e1 text "Popular items"', '@e2 button "Get started" #get-started', '@e3 field hint "Email"', '@e4 button "Search"']);
+  });
+
+  it('drops child texts a control description already carries, keeps children with ids', () => {
+    const rn: UiNode[] = [
+      {p: -1, w: 1, c: 'ViewGroup', b: [0, 0, 1080, 400], d: 'The Blue Box, 11 parts', id: 'hero', f: 'c'},
+      {p: 0, w: 1, c: 'TextView', b: [0, 300, 500, 340], t: 'The Blue Box', id: 'hero-title'},
+      {p: 0, w: 1, c: 'TextView', b: [0, 340, 500, 380], t: '11 parts'},
+    ];
+    expect(buildSnapshot(windows, rn).lines).toEqual(['@e1 button "The Blue Box, 11 parts" #hero', '@e2 text "The Blue Box" #hero-title']);
   });
 
   it('resolves refs, ids, text, labels, words and points', () => {

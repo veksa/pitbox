@@ -92,11 +92,14 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
     if (!opts.system && w?.type === 'system' && w.pkg === 'com.android.systemui') hidden.add(i);
   });
 
-  // Fold unlabelled interactive containers with their text descendants.
+  // Fold unlabelled interactive containers with their text descendants — but not lists (they hold many items),
+  // and never through another interactive descendant, whose texts are its own.
   nodes.forEach((n, i) => {
-    if (hidden.has(i) || !interactive(n) || n.t || n.d || has(n, 'e')) return;
+    if (hidden.has(i) || !interactive(n) || n.t || n.d || has(n, 'e') || has(n, 's')) return;
     const texts: string[] = [];
-    for (const j of descendants(kids, i)) {
+    const stack = [...(kids.get(i) ?? [])];
+    while (stack.length) {
+      const j = stack.shift()!;
       const m = nodes[j]!;
       if (interactive(m)) continue;
       const s = m.t ?? m.d;
@@ -104,8 +107,25 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
         texts.push(s);
         hidden.add(j);
       }
+      stack.push(...(kids.get(j) ?? []));
     }
     if (texts.length) label.set(i, texts.slice(0, 3).join(' · '));
+  });
+
+  // A control whose description already says what its children say (React Native merges them): the children
+  // without ids add nothing but tokens.
+  nodes.forEach((n, i) => {
+    if (hidden.has(i) || !interactive(n) || !n.d) return;
+    const d = n.d.toLowerCase();
+    const stack = [...(kids.get(i) ?? [])];
+    while (stack.length) {
+      const j = stack.shift()!;
+      const m = nodes[j]!;
+      if (interactive(m)) continue;
+      const s = (m.t ?? m.d)?.toLowerCase();
+      if (s && !m.id && d.includes(s)) hidden.add(j);
+      stack.push(...(kids.get(j) ?? []));
+    }
   });
 
   const lines: string[] = [];
@@ -114,7 +134,7 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   let lastWindow = -1;
   nodes.forEach((n, i) => {
     if (hidden.has(i)) return;
-    const own = n.t ?? label.get(i);
+    const own = n.t ?? label.get(i) ?? (interactive(n) ? n.d : undefined);
     if (!own && !n.d && !n.id && !interactive(n)) return;
     if (n.w !== lastWindow) {
       const w = windows[n.w];
