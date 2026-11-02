@@ -43,6 +43,13 @@ describe('snapshot', () => {
     expect(resolveTarget(snap, 'popular').node?.t).toBe('Popular items');
     expect(resolveTarget(snap, '10,20')).toEqual({x: 10, y: 20});
     expect(() => resolveTarget(snap, '@e99')).toThrow(/fresh one/);
+  });
+
+  it('matches text with no-break spaces the way lines show it', () => {
+    const nb = buildSnapshot(windows, [{p: -1, w: 1, c: 'Button', b: [0, 0, 100, 40], t: 'About\u00a0this  device', f: 'c'}]);
+    expect(nb.lines).toEqual(['@e1 button "About this device"']);
+    expect(resolveTarget(nb, 'About this device').node?.c).toBe('Button');
+    expect(resolveTarget(nb, 'text="about this device"').node?.c).toBe('Button');
     expect(() => resolveTarget(snap, 'text=Nope')).toThrow(/nothing matches/);
   });
 

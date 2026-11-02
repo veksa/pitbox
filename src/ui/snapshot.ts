@@ -204,7 +204,8 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
     return {node, index: i, ref: sel, ...centre(node.b)};
   }
   const m = /^(id|text|label)(~?=)(.*)$/s.exec(sel);
-  const lower = (s?: string) => (s ?? '').trim().toLowerCase();
+  // Lines show any run of whitespace (a no-break space too) as one space; selectors match what lines show.
+  const lower = (s?: string) => (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
   let match: (n: UiNode) => boolean;
   if (m) {
     const [, field, op, raw] = m;
