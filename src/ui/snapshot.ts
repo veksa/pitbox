@@ -88,10 +88,10 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   const hidden = new Set<number>();
   const label = new Map<number, string>();
 
-  // Skip the system bars unless asked; keep everything else (dialogs, keyboards, other apps).
   nodes.forEach((n, i) => {
     const w = windows[n.w];
-    if (!opts.system && w?.type === 'system' && w.pkg === 'com.android.systemui') hidden.add(i);
+    // System UI windows (bars, and on XR the shell's own panels and window captions) unless asked for.
+    if (!opts.system && w && w.pkg.startsWith('com.android.systemui')) hidden.add(i);
   });
 
   // Fold unlabelled interactive containers with their text descendants — but not lists (they hold many items),
