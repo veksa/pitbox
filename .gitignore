@@ -9,3 +9,6 @@ DerivedData/
 *.log
 .DS_Store
 .pitbox/
+runners/android/build/
+runners/android/.gradle/
+runners/android/local.properties

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- A local server socket needs it, even on the loopback interface. -->
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <application android:label="pitbox runner" android:hasCode="true" />
+
+  <instrumentation
+    android:name=".RunnerInstrumentation"
+    android:targetPackage="dev.pitbox.runner"
+    android:label="pitbox runner" />
+</manifest>

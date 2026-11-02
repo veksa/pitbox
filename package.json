@@ -13,7 +13,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "runners/android/pitbox-runner.apk"
   ],
   "engines": {
     "node": ">=22.18"
@@ -22,7 +23,8 @@
     "build": "tsc -p tsconfig.json",
     "compile": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "check-all": "yarn compile && yarn test"
+    "check-all": "yarn compile && yarn test",
+    "build-runner": "node scripts/build-runner.mjs"
   },
   "keywords": [
     "mcp",
