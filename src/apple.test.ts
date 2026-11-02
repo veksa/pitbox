@@ -5,7 +5,7 @@ import {describe, expect, it} from 'vitest';
 import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
-import {buildSnapshot, swipeArea} from './ui/snapshot.ts';
+import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
 import {contentSize, foldState, isAppleBundle, parseDisplays, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
@@ -189,6 +189,19 @@ describe('apple driver', () => {
       ],
     );
     expect(swipeArea(snap, 402, 874)).toEqual([0, 0, 402, 583]);
+  });
+
+  it('tells a tap that only closed the keyboard from one that reached the control', () => {
+    const app = {type: 'app', title: 'MyApp', pkg: 'com.example.app'};
+    const field = {p: 0, w: 0, c: 'TextField', b: [16, 80, 386, 110], f: 'eF', t: 'Ada'} as const;
+    const list = {p: -1, w: 0, c: 'ScrollView', b: [0, 0, 402, 874], f: 's'} as const;
+    const greet = {p: 0, w: 0, c: 'Button', b: [16, 120, 386, 150], f: 'c', id: 'greet'} as const;
+    const up = buildSnapshot([app, {type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'}], [list, field, greet, {p: -1, w: 1, c: 'Keyboard', b: [0, 583, 402, 874]}]);
+    const closed = buildSnapshot([app], [list, {...field, f: 'e'}, greet]);
+    const greeted = buildSnapshot([app], [list, {...field, f: 'e'}, greet, {p: 0, w: 0, c: 'Text', b: [16, 160, 386, 180], t: 'Hello, Ada'}]);
+    expect(onlyClosedKeyboard(up, closed)).toBe(true);
+    expect(onlyClosedKeyboard(up, greeted)).toBe(false);
+    expect(onlyClosedKeyboard(closed, closed)).toBe(false);
   });
 
   it('builds a snapshot from a window without a package', () => {

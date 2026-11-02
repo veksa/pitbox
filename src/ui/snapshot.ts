@@ -267,3 +267,20 @@ export const swipeArea = (snap: Snapshot | undefined, width: number, height: num
   if (Number.isFinite(imeTop) && imeTop > area[1] + 100 && imeTop < area[3]) area = [area[0], area[1], area[2], imeTop];
   return area;
 };
+
+/**
+ * A tap that only closed the on-screen keyboard: it was up before and is gone after, and nothing else on screen
+ * changed. A scrolling list in React Native (keyboardShouldPersistTaps "never", the default) and many native forms
+ * spend the first tap on closing the keyboard, so the control under the finger never got it.
+ */
+export const onlyClosedKeyboard = (before: Snapshot, after: Snapshot): boolean => {
+  const ime = (s: Snapshot) => s.windows.some(w => w.type === 'ime');
+  if (!ime(before) || ime(after)) return false;
+  const rest = (s: Snapshot) =>
+    s.nodes
+      .filter(n => s.windows[n.w]?.type !== 'ime')
+      .map(n => `${n.c}|${n.id ?? ''}|${n.t ?? ''}|${n.d ?? ''}|${n.h ?? ''}|${(n.f ?? '').replace(/[FA]/g, '')}`)
+      .sort()
+      .join('\n');
+  return rest(before) === rest(after);
+};

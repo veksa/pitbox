@@ -88,7 +88,10 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'press':
     case 'longpress':
     case 'doubletap':
-      await (await host.ui()).press(a.join(' '), s.cmd === 'press' ? 'tap' : s.cmd);
+      {
+        const r = await (await host.ui()).press(a.join(' '), s.cmd === 'press' ? 'tap' : s.cmd);
+        if (r?.note) notes.push(`line ${s.line} (${s.text}): ${r.note}`);
+      }
       return;
     case 'fill':
       await (await host.ui()).fill(a.slice(0, -1).join(' '), unquote(a[a.length - 1]!));

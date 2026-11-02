@@ -93,7 +93,7 @@ export const fmtAct = (r: ActResult): string => {
   const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}${slow}`;
   const broke = (r.crashes ?? []).flatMap(c => [`! ${broken(c)}: ${c.summary}`, ...c.lines.slice(0, c.kind === 'js-error' ? 6 : 4).map(l => `    ${l}`)]);
   if (!r.diff.changed) return [head, ...broke, r.note ? `no change on screen — ${r.note}` : 'no change on screen'].join('\n');
-  return [head, ...broke, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
+  return [head, ...broke, ...(r.note ? [`note: ${r.note}`] : []), ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
 };
 
 export const fmtFlow = (r: FlowResult): string => {
