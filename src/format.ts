@@ -153,6 +153,8 @@ export const formatResult = (method: string, r: unknown): string => {
       return 'recording: actions from now on become flow steps';
     case 'recordStop':
       return [x.file ? `saved ${x.file}` : 'recorded:', ...(x.lines as string[])].join('\n');
+    case 'qr':
+      return [x.terminal as string | undefined, `${x.url}`, `qr image: ${x.file}`, `reaches: ${x.reachable}`].filter(Boolean).join('\n');
     case 'fresh': {
       const f = x as unknown as Freshness;
       if (!f.apps.length) return 'no app connected to the dev server — not started, a release build, or talking to another server';

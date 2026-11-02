@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import type {DevserverConfig, ServiceConfig} from '../config/schema.ts';
+import {lanAddress} from '../util/lan.ts';
 import {BytecodeCache, findHermesc, hermesCompiler} from './hermes.ts';
 import {DevProxy, isNativeBundleRequest} from './proxy.ts';
 
@@ -61,7 +62,7 @@ export class DevServer {
     this.#stateFile = path.join(stateDir, 'devserver.json');
     this.proxy = new DevProxy({
       port: this.port,
-      host: cfg.host,
+      host: cfg.host === 'lan' ? '0.0.0.0' : cfg.host,
       upstreamPort: this.internalPort,
       bytecode: this.hermesc ? {compile: hermesCompiler(this.hermesc, path.join(stateDir, 'bytecode', 'work')), cache: new BytecodeCache(path.join(stateDir, 'bytecode'))} : undefined,
       inApp: cfg.inApp ?? (cfg.adapter ?? 'metro') !== 'command',
@@ -72,6 +73,12 @@ export class DevServer {
     } catch {
       // nothing remembered yet
     }
+  }
+
+  /** The address devices use: the LAN address when the proxy serves the network, localhost otherwise. */
+  publicHost(): string {
+    if (this.cfg.host === 'lan' || this.cfg.host === '0.0.0.0') return lanAddress() ?? 'localhost';
+    return this.cfg.host && this.cfg.host !== '127.0.0.1' ? this.cfg.host : 'localhost';
   }
 
   /** The bundler as a supervised service on the internal port. */
@@ -86,7 +93,7 @@ export class DevServer {
       env: {
         ...(nodeOptions ? {NODE_OPTIONS: nodeOptions} : {}),
         // Expo writes absolute bundle URLs into its manifest; they must point at the proxy, not the bundler.
-        ...(adapter === 'metro' ? {EXPO_PACKAGER_PROXY_URL: `http://localhost:${this.port}`} : {}),
+        ...(adapter === 'metro' ? {EXPO_PACKAGER_PROXY_URL: `http://${this.publicHost()}:${this.port}`} : {}),
         BROWSER: 'none',
         ...this.cfg.env,
       },

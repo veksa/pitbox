@@ -66,6 +66,7 @@ export const devserverSchema = z.object({
   port: z.number().int().positive().optional(),
   /** Port the bundler itself listens on. Default `port + 1`. */
   internalPort: z.number().int().positive().optional(),
+  /** Where the proxy listens: `127.0.0.1` (default, devices behind adb), `lan` (phones on the network) or an address. */
   host: z.string().optional(),
   env: env.optional(),
   /** Serve the app's main bundle as Hermes bytecode compiled on the host (React Native with Hermes). */
@@ -88,6 +89,12 @@ export const configSchema = z.object({
       android: z.string().optional(),
       apple: z.string().optional(),
       scheme: z.string().optional(),
+      /**
+       * Link that points the app at the dev server, for `qr` and for `open` without a target:
+       * `{devserver}` (URL-encoded http://host:port), `{host}`, `{port}`. Default: pitbox's own connect link
+       * (`pitbox.<android id>://connect?devserver=host:port`), handled by the connect library in debug builds.
+       */
+      connect: z.string().optional(),
     })
     .optional(),
   /** Shell for project commands: `bash` (default; Git Bash on Windows), `sh`, `cmd` or a path. */

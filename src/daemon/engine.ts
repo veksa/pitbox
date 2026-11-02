@@ -2,6 +2,7 @@
 // The CLI and the MCP server call these methods over the daemon's RPC.
 
 import crypto from 'node:crypto';
+import QRCode from 'qrcode';
 import fs from 'node:fs';
 import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
@@ -16,6 +17,7 @@ import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import {AndroidUi} from '../ui/android.ts';
+import {lanAddress} from '../util/lan.ts';
 
 type Params = Record<string, unknown>;
 
@@ -191,6 +193,17 @@ export class Engine {
     return url;
   }
 
+  /** The link that points the app at the dev server (see `app.connect`). */
+  connectUrl(host?: string): string | undefined {
+    const dev = this.#dev;
+    if (!dev) return undefined;
+    const h = host ?? 'localhost';
+    const devserver = `http://${h}:${dev.port}`;
+    const template = this.config.app?.connect ?? (this.config.app?.android ? `pitbox.${this.config.app.android}://connect?devserver={host}:{port}` : undefined);
+    if (!template) return undefined;
+    return template.replace(/\{devserver\}/g, encodeURIComponent(devserver)).replace(/\{host\}/g, h).replace(/\{port\}/g, String(dev.port));
+  }
+
   get android(): AndroidDriver | undefined {
     if (this.#android === undefined) {
       try {
@@ -337,6 +350,20 @@ export class Engine {
       return {prewarm: (await this.#devUp(true)) ?? []};
     },
 
+    qr: async (p: Params) => {
+      const dev = this.#dev;
+      if (!dev) throw new Error('no devserver in the config');
+      const host = bool(p, 'lan') ? (lanAddress() ?? 'localhost') : dev.publicHost();
+      const url = this.connectUrl(host);
+      if (!url) throw new Error('no connect link: set app.connect or app.android in the config');
+      const file = path.join(this.#loaded.stateDir, 'qr.png');
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      await QRCode.toFile(file, url, {margin: 2, width: 360});
+      const terminal = bool(p, 'terminal') ? await QRCode.toString(url, {type: 'terminal', small: true}) : undefined;
+      const reachable = host === 'localhost' ? 'devices behind adb only — use lan=true (and devserver.host: lan) for a phone on Wi-Fi' : `devices that reach ${host}:${dev.port}`;
+      return {url, file, terminal, reachable};
+    },
+
     fresh: async () => {
       if (!this.#dev) throw new Error('no devserver in the config');
       return this.#dev.freshness();
@@ -441,7 +468,9 @@ export class Engine {
     open: async (p: Params) => {
       const a = this.#needAndroid();
       const serial = await a.resolve(str(p, 'device'));
-      const target = str(p, 'target') ?? this.#pkg(p);
+      // Without a target, open the app through its connect link when there is one: it then always talks to this
+      // dev server, whatever a launcher remembered.
+      const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p);
       return {serial, target, ...(await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg: str(p, 'pkg') ?? this.config.app?.android}))};
     },
 

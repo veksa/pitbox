@@ -54,6 +54,7 @@ export const startMcp = async (opts: {config?: string} = {}) => {
     tool('dev_status', 'Dev server: proxy, bytecode cache, prewarm results, the last bundle requests from devices with their timing.', {}, 'devStatus');
     tool('dev_prewarm', 'Build the main bundle (and its bytecode) now so the next app start is served from cache.', {}, 'devPrewarm');
     tool('dev_reload', 'Ask every connected app to reload its JS.', {}, 'devReload');
+    tool('qr', 'The link that points the app at this dev server, as a QR image file (for a phone camera) and as text (for adb or a simulator). lan=true for phones on Wi-Fi.', {lan: z.boolean().optional()}, 'qr');
     tool('fresh', 'Does the running app execute the newest code? Reported from inside the app; answers stale with the reason (old bundle, rebuild pending) before you debug a fix that never arrived.', {}, 'fresh');
     tool('app_network', "The app's recent network requests (method, URL, status, time) and socket events, from inside the app.", {limit: z.number().int().optional()}, 'appLog');
     tool(

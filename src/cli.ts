@@ -47,6 +47,7 @@ flows
 devserver
   dev [status|prewarm|reload|restart]   the bundler behind pitbox's proxy: device requests, bytecode, prewarming
   fresh                         does the app run the newest code? (reported from inside the app)
+  qr [--lan]                    QR with the link that points the app at this dev server
   app-log [-n 30]               the app's recent network requests and socket events
   net fail|mock|delay|freeze <match> [--kind http|ws] [--status 503] [--body '{…}'] [--ms 3000]
   net offline | net clear | net
@@ -71,7 +72,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -187,6 +188,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     }
     case 'fresh':
       return {method: 'fresh', params: {}};
+    case 'qr':
+      return {method: 'qr', params: {lan: flags.lan, terminal: true}};
     case 'app-log':
       return {method: 'appLog', params: {limit: flags.lines}};
     case 'net':
