@@ -16,6 +16,7 @@ import {LlmMock} from '../stand/llmMock.ts';
 import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
+import {fillRoute} from '../flows/flow.ts';
 import {AndroidUi} from '../ui/android.ts';
 import {lanAddress} from '../util/lan.ts';
 
@@ -184,10 +185,7 @@ export class Engine {
   async #goto(device: string | undefined, route: string, params: Record<string, string>) {
     const template = this.config.routes?.[route];
     if (!template) throw new Error(`unknown route: ${route} (known: ${Object.keys(this.config.routes ?? {}).join(', ') || 'none'})`);
-    const url = template.replace(/{(w+)}/g, (_, k: string) => {
-      if (params[k] === undefined) throw new Error(`route ${route} needs ${k}`);
-      return encodeURIComponent(params[k]!);
-    });
+    const url = fillRoute(route, template, params);
     await this.methods.open({device, target: url});
     (await this.ui(device)).record(`goto ${route}${Object.entries(params).map(([k, v]) => ` ${k}=${JSON.stringify(v)}`).join('')}`);
     return url;
@@ -567,6 +565,8 @@ export class Engine {
     },
 
     focus: async (p: Params) => (await this.ui(str(p, 'device'))).focus(),
+
+    media: async (p: Params) => (await this.ui(str(p, 'device'))).media(str(p, 'target'), {count: num(p, 'count'), intervalMs: num(p, 'interval')}),
 
     uiShot: async (p: Params) => (await this.ui(str(p, 'device'))).screenshot(this.#shotFile(str(p, 'name')), num(p, 'scale') ?? 0.4),
 

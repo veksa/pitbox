@@ -143,6 +143,8 @@ export const formatResult = (method: string, r: unknown): string => {
       return fmtFlow(r as FlowResult);
     case 'focus':
       return `input focus: ${fmtNode(x.input as UiNode | undefined)}\naccessibility focus: ${fmtNode(x.accessibility as UiNode | undefined)}`;
+    case 'media':
+      return `${x.playing ? 'playing' : x.black ? 'black' : x.moving ? 'moving (but dark)' : 'not moving'}${x.target ? ` ${x.target}` : ''} · motion ${x.motion} · brightness ${x.luma}`;
     case 'uiShot':
       return `${x.file} (${x.width}×${x.height}, ${x.kb} KB)`;
     case 'wait':

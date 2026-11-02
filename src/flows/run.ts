@@ -84,6 +84,15 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number):
         }
         return;
       }
+      if (a[0] === 'playing' || a[0] === 'paused') {
+        const sel = a.slice(1).join(' ') || undefined;
+        // A player needs a moment to start; give "playing" a few tries.
+        let m = await ui.media(sel);
+        for (let i = 0; a[0] === 'playing' && !m.playing && i < 3; i++) m = await ui.media(sel);
+        if (a[0] === 'playing' && !m.playing) throw new Error(`not playing: ${m.black ? 'black' : 'no motion'} (motion ${m.motion}, brightness ${m.luma})`);
+        if (a[0] === 'paused' && m.moving) throw new Error(`still moving (motion ${m.motion})`);
+        return;
+      }
       const gone = a[0] === 'gone';
       const sel = (gone ? a.slice(1) : a).join(' ');
       const snap = await ui.snapshot();

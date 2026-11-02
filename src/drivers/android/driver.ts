@@ -58,18 +58,27 @@ export class AndroidDriver {
     return r.stdout.replace(/\r/g, '');
   }
 
+  /** AVD name per emulator serial: asking the emulator console every time is slow and busies adb. */
+  readonly #avdNames = new Map<string, string>();
+
   async devices(): Promise<AndroidDevice[]> {
-    const r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 15_000});
+    let r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 8000});
+    // A busy adb server can hang a call; one retry before reporting no devices.
+    if (r.timedOut || r.code !== 0) r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 15_000});
+    if (r.timedOut) throw new AndroidError('the adb server is not responding', '`doctor --fix` restarts it (a wedged server makes every device look offline)');
     const lines = r.stdout.replace(/\r/g, '').split('\n').slice(1).filter(l => l.trim());
+    const serials = new Set(lines.map(l => l.trim().split(/\s+/)[0]));
+    for (const s of [...this.#avdNames.keys()]) if (!serials.has(s)) this.#avdNames.delete(s);
     return Promise.all(
       lines.map(async line => {
         const [serial = '', state = ''] = line.trim().split(/\s+/);
         const model = /model:(\S+)/.exec(line)?.[1];
         const emulator = serial.startsWith('emulator-');
-        let avd: string | undefined;
-        if (emulator && state === 'device') {
+        let avd = this.#avdNames.get(serial);
+        if (emulator && state === 'device' && !avd) {
           const name = await this.adb(['emu', 'avd', 'name'], serial, {timeoutMs: 5000});
           avd = name.stdout.replace(/\r/g, '').split('\n')[0]?.trim() || undefined;
+          if (avd) this.#avdNames.set(serial, avd);
         }
         return {serial, state, model, avd, kind: avd ? avdKind(avd) : undefined, emulator};
       }),

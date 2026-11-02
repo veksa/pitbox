@@ -117,6 +117,16 @@ describe('cli', () => {
   });
 });
 
+describe('runner version', () => {
+  it('is the same in the host, the Gradle build and the runner code', async () => {
+    const {RUNNER_VERSION} = await import('./drivers/android/runner.ts');
+    const gradle = fs.readFileSync('runners/android/build.gradle.kts', 'utf8');
+    const kotlin = fs.readFileSync('runners/android/src/main/kotlin/dev/pitbox/runner/Commands.kt', 'utf8');
+    expect(Number(/versionCode = (\d+)/.exec(gradle)?.[1])).toBe(RUNNER_VERSION);
+    expect(Number(/const val VERSION = (\d+)/.exec(kotlin)?.[1])).toBe(RUNNER_VERSION);
+  });
+});
+
 describe('cli and engine agree', () => {
   it('maps every command to an engine method, never to the daemon stop rpc', async () => {
     const {Engine} = await import('./daemon/engine.ts');
@@ -125,7 +135,7 @@ describe('cli and engine agree', () => {
     fs.writeFileSync(path.join(dir, 'pitbox.config.json'), '{}');
     const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
     const methods = new Set(Object.keys(engine.methods));
-    const commands = ['up', 'down', 'restart', 'status', 'logs x', 'tools', 'tool x', 'actors', 'actor start a b', 'actor stop a', 'actor call a', 'devices', 'boot', 'shutdown', 'install a.apk', 'open', 'stop-app', 'clear-app', 'uninstall', 'apps', 'app-logs', 'settings', 'network full', 'screenshot', 'key back', 'reverse', 'info', 'doctor', 'docs', 'dev status', 'dev prewarm', 'dev reload', 'dev restart', 'snapshot', 'press a', 'longpress a', 'doubletap a', 'fill a b', 'type a', 'swipe up', 'scroll down until a', 'wait a', 'focus', 'shot', 'run f', 'goto r', 'as u', 'record start', 'record stop', 'fresh', 'app-log', 'net clear'];
+    const commands = ['up', 'down', 'restart', 'status', 'logs x', 'tools', 'tool x', 'actors', 'actor start a b', 'actor stop a', 'actor call a', 'devices', 'boot', 'shutdown', 'install a.apk', 'open', 'stop-app', 'clear-app', 'uninstall', 'apps', 'app-logs', 'settings', 'network full', 'screenshot', 'key back', 'reverse', 'info', 'doctor', 'docs', 'dev status', 'dev prewarm', 'dev reload', 'dev restart', 'snapshot', 'press a', 'longpress a', 'doubletap a', 'fill a b', 'type a', 'swipe up', 'scroll down until a', 'wait a', 'focus', 'shot', 'run f', 'goto r', 'as u', 'record start', 'record stop', 'fresh', 'app-log', 'net clear', 'media'];
     for (const c of commands) {
       const {method} = toCall(parseArgs(c.split(' ')));
       expect(method, c).not.toBe(DAEMON_STOP);

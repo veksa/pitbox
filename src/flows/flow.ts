@@ -13,6 +13,7 @@
 //   scroll down until text="Popular items"
 //   wait text="Home" [seconds] | wait gone id=spinner [seconds]
 //   expect text="Welcome" | expect gone id=error | expect focus id=play
+//   expect playing id=player | expect paused id=player   (frames compared on the device; black is not playing)
 //   tool sql query="select 1" contains "1"
 //   sleep 500
 //   screenshot [name]
@@ -77,7 +78,14 @@ export const substitute = (s: string, params: Record<string, string>): string =>
     return params[k]!;
   });
 
-export const parseFlow = (source: string, params: Record<string, string> = {}): Step[] =>
+/** A route's deep link with its `{param}`s filled in (URL-encoded); a missing parameter is an error. */
+export const fillRoute = (route: string, template: string, params: Record<string, string>): string =>
+  template.replace(/\{(\w+)\}/g, (_, k: string) => {
+    if (params[k] === undefined) throw new Error(`route ${route} needs ${k}`);
+    return encodeURIComponent(params[k]!);
+  });
+
+export const parseFlow =(source: string, params: Record<string, string> = {}): Step[] =>
   source
     .split(/\r?\n/)
     .map((raw, i) => ({raw: raw.trim(), line: i + 1}))

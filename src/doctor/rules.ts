@@ -2,7 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {run} from '../util/proc.ts';
+import {run, which} from '../util/proc.ts';
 import {tcpOpen} from '../util/net.ts';
 import {probePort} from '../stand/health.ts';
 import type {Finding, Rule} from './types.ts';
@@ -29,6 +29,56 @@ const adbAvailable: Rule = {
   id: 'adb',
   title: 'adb is installed',
   check: async ctx => (ctx.android ? [] : [{rule: 'adb', severity: 'warn', message: 'adb not found', hint: 'install Android SDK platform-tools or set ANDROID_HOME'}]),
+};
+
+/** Restarts adb from scratch: a wedged server ignores `kill-server`, so every adb process goes. */
+export const restartAdb = async (adbPath: string): Promise<string> => {
+  if (process.platform === 'win32') await run('taskkill', ['/F', '/IM', 'adb.exe'], {timeoutMs: 15_000});
+  else await run('pkill', ['-9', '-x', 'adb'], {timeoutMs: 15_000});
+  await new Promise(r => setTimeout(r, 800));
+  const r = await run(adbPath, ['start-server'], {timeoutMs: 20_000});
+  return r.code === 0 ? 'adb restarted' : `adb start-server exited ${r.code}: ${r.stderr.trim()}`;
+};
+
+const adbServer: Rule = {
+  id: 'adb-server',
+  title: 'the adb server answers',
+  check: async ctx => {
+    if (!ctx.android) return [];
+    const r = await run(ctx.android.adbPath, ['devices'], {timeoutMs: 6000});
+    if (!r.timedOut) return [];
+    return [
+      {
+        rule: 'adb-server',
+        severity: 'error',
+        message: 'the adb server does not answer within 6 s — every device looks offline and every call hangs',
+        hint: 'a wedged server ignores kill-server; all adb processes must go',
+        fix: () => restartAdb(ctx.android!.adbPath),
+      },
+    ];
+  },
+};
+
+/** Two adb builds on one machine (an SDK one and one on PATH) take turns killing and starting the shared server. */
+const adbBinaries: Rule = {
+  id: 'adb-binaries',
+  title: 'one adb on this machine',
+  check: async ctx => {
+    if (!ctx.android) return [];
+    const onPath = which('adb');
+    if (!onPath || path.resolve(onPath).toLowerCase() === path.resolve(ctx.android.adbPath).toLowerCase()) return [];
+    const [a, b] = await Promise.all([run(ctx.android.adbPath, ['version'], {timeoutMs: 5000}), run(onPath, ['version'], {timeoutMs: 5000})]);
+    const v = (s: string) => /Version (\S+)/.exec(s)?.[1] ?? '?';
+    if (v(a.stdout) === v(b.stdout)) return [];
+    return [
+      {
+        rule: 'adb-binaries',
+        severity: 'warn',
+        message: `two adb builds: ${ctx.android.adbPath} (${v(a.stdout)}) and ${onPath} on PATH (${v(b.stdout)})`,
+        hint: 'tools using different builds share one server and can restart it under each other; keep one (put the SDK platform-tools first on PATH)',
+      },
+    ];
+  },
 };
 
 const androidDevice: Rule = {
@@ -157,4 +207,4 @@ export const metroWindowsWatcher: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, androidDevice, reversePorts, servicesHealthy, dataPartition, metroWindowsWatcher];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, servicesHealthy, dataPartition, metroWindowsWatcher];

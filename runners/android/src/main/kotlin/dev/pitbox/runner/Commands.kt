@@ -49,6 +49,7 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     "text" -> JSONObject().put("set", setText(req.getString("text"), req.optBoolean("append", false), req.optJSONArray("bounds")))
     "action" -> JSONObject().put("done", action(req.getJSONArray("bounds"), req.getString("action")))
     "screenshot" -> screenshot(req.optDouble("scale", 0.5), req.optInt("quality", 70))
+    "frames" -> frames(req.optJSONArray("bounds"), req.optInt("count", 4), req.optLong("interval", 400), req.optInt("size", 32))
     else -> throw IllegalArgumentException("unknown command: $cmd")
   }
 
@@ -249,6 +250,36 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     return false
   }
 
+  /**
+   * Is something moving in a region, and is it black? `count` frames `interval` ms apart, each cropped to
+   * `bounds`, shrunk to `size`×`size` greyscale. Answers the mean brightness of each frame and the mean absolute
+   * difference between neighbours (0–255) — no image leaves the device.
+   */
+  private fun frames(bounds: JSONArray?, count: Int, interval: Long, size: Int): JSONObject {
+    val luma = JSONArray()
+    val diff = JSONArray()
+    var prev: IntArray? = null
+    for (i in 0 until count) {
+      if (i > 0) SystemClock.sleep(interval)
+      val full = ui.takeScreenshot() ?: throw IllegalStateException("screenshot failed")
+      val r = if (bounds != null) Rect(bounds.getInt(0), bounds.getInt(1), bounds.getInt(2), bounds.getInt(3)) else Rect(0, 0, full.width, full.height)
+      r.intersect(0, 0, full.width, full.height)
+      if (r.width() <= 0 || r.height() <= 0) throw IllegalArgumentException("bounds outside the screen")
+      val crop = Bitmap.createBitmap(full, r.left, r.top, r.width(), r.height())
+      val small = Bitmap.createScaledBitmap(crop, size, size, true)
+      val px = IntArray(size * size)
+      small.getPixels(px, 0, size, 0, 0, size, size)
+      val grey = IntArray(px.size) { k ->
+        val c = px[k]
+        (((c shr 16) and 0xff) * 299 + ((c shr 8) and 0xff) * 587 + (c and 0xff) * 114) / 1000
+      }
+      luma.put(grey.average())
+      prev?.let { p -> diff.put(grey.indices.sumOf { k -> kotlin.math.abs(grey[k] - p[k]) }.toDouble() / grey.size) }
+      prev = grey
+    }
+    return JSONObject().put("luma", luma).put("diff", diff)
+  }
+
   /** A downscaled JPEG, base64 — small enough to hand to a model only when it is really needed. */
   private fun screenshot(scale: Double, quality: Int): JSONObject {
     val full = ui.takeScreenshot() ?: throw IllegalStateException("screenshot failed")
@@ -262,5 +293,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 1
+  const val VERSION = 2
 }

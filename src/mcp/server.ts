@@ -97,6 +97,7 @@ export const startMcp = async (opts: {config?: string} = {}) => {
   tool('swipe', 'Swipe up/down/left/right or "x1,y1,x2,y2"; duration in ms sets the velocity.', {direction: z.string(), duration: z.number().int().optional(), device}, 'swipe');
   tool('scroll', 'Scroll in a direction until a target is on screen.', {direction: z.enum(['down', 'up', 'left', 'right']).optional(), until: target, device}, 'scroll');
   tool('wait', 'Wait until a target appears (gone=true: disappears).', {target, gone: z.boolean().optional(), timeout: z.number().optional().describe('seconds, default 10'), device}, 'wait');
+  tool('media', 'Is a video (or any region) playing? Compares frames on the device: motion between frames and brightness; black is not playing. No image is sent.', {target: z.string().optional(), count: z.number().int().optional(), interval: z.number().int().optional(), device}, 'media');
   tool('focus', 'Which node has input focus (what a D-pad or keyboard acts on) and accessibility focus.', {device}, 'focus');
   tool('ui_screenshot', 'Downscaled JPEG of the screen saved to a file; returns the path. Read the file only when text and snapshot are not enough.', {name: z.string().optional(), scale: z.number().optional(), device}, 'uiShot');
 

@@ -38,6 +38,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   fill <selector> <text> · type <text> · key back|home|up|down|left|right|center|enter|…|<keycode> …
   swipe up|down|left|right|x1,y1,x2,y2 [ms] · scroll down until <selector>
   wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
+  media [selector]              is it playing? motion and brightness of a region, compared on the device
 
 flows
   run <flow> [param=value…] | run --steps "press id=a"   run a flow in the daemon, get one verdict
@@ -161,6 +162,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'wait', params: {device, gone: rest[0] === 'gone', target: (rest[0] === 'gone' ? rest.slice(1) : rest).join(' '), timeout: flags.timeout}};
     case 'focus':
       return {method: 'focus', params: {device}};
+    case 'media':
+      return {method: 'media', params: {device, target: rest.join(' ') || undefined, count: flags.count, interval: flags.interval}};
     case 'shot':
       return {method: 'uiShot', params: {device, name: rest[0], scale: flags.scale}};
     case 'run':

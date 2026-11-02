@@ -18,6 +18,8 @@ export type UiHooks = {
 
 const quote = (s: string) => JSON.stringify(s);
 
+export type MediaResult = {target?: string; moving: boolean; black: boolean; playing: boolean; motion: number; luma: number};
+
 export class AndroidUi {
   readonly serial: string;
   readonly runner: AndroidRunner;
@@ -186,6 +188,27 @@ export class AndroidUi {
     }
     this.record(`wait ${opts.gone ? 'gone ' : ''}${selector}`);
     return {ms: Date.now() - t0, snapshot: snap};
+  }
+
+  /**
+   * Is the region of a node (or the screen) moving, and is it black? Frames are compared on the device.
+   * playing: something moves and it is not black; paused: nothing moves.
+   */
+  async media(selector?: string, opts: {count?: number; intervalMs?: number} = {}): Promise<MediaResult> {
+    let bounds: [number, number, number, number] | undefined;
+    let target: string | undefined;
+    if (selector) {
+      const {target: t} = await this.#target(selector);
+      if (!t.node) throw new Error('media needs a node, not a point');
+      bounds = t.node.b;
+      target = t.ref;
+    }
+    const r = await this.runner.call<{luma: number[]; diff: number[]}>('frames', {bounds, count: opts.count ?? 4, interval: opts.intervalMs ?? 400}, 30_000);
+    const motion = Math.max(0, ...r.diff);
+    const luma = r.luma.reduce((a, b) => a + b, 0) / Math.max(1, r.luma.length);
+    const black = luma < 8;
+    const moving = motion > 1.5;
+    return {target, moving, black, playing: moving && !black, motion: Math.round(motion * 10) / 10, luma: Math.round(luma)};
   }
 
   async focus(): Promise<{input?: UiNode; accessibility?: UiNode}> {

@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {parseFlow, tokenize, validateFlow} from './flows/flow.ts';
+import {fillRoute, parseFlow, tokenize, validateFlow} from './flows/flow.ts';
 import {runFlow, type FlowHost} from './flows/run.ts';
 import type {AndroidUi} from './ui/android.ts';
 import {buildSnapshot, diffSnapshots, resolveTarget, selectorFor, type UiNode, type UiWindow} from './ui/snapshot.ts';
@@ -67,6 +67,11 @@ describe('flows', () => {
     expect(tokenize('fill text="E mail" "a b@example.test"')).toEqual(['fill', 'text="E mail"', '"a b@example.test"']);
     expect(tokenize("press 'Get started'")).toEqual(['press', "'Get started'"]);
     expect(() => tokenize('press "open')).toThrow(/unclosed/);
+  });
+
+  it('fills routes and refuses missing parameters', () => {
+    expect(fillRoute('item', 'myapp://item/{id}?t={t}', {id: '42', t: 'a b'})).toBe('myapp://item/42?t=a%20b');
+    expect(() => fillRoute('item', 'myapp://item/{id}', {})).toThrow(/needs id/);
   });
 
   it('substitutes parameters and validates before running', () => {
