@@ -56,6 +56,9 @@ export const loadConfig = async (opts: {file?: string; cwd?: string} = {}): Prom
     const missing = [...tool.run.matchAll(/\{(\w+)\}/g)].map(m => m[1]).filter(p => p && !declared.has(p));
     if (missing.length) throw new Error(`invalid config ${file}:\n  tools.${name}.params: missing ${[...new Set(missing)].join(', ')}`);
   }
+  if (config.devserver && config.services?.devserver) {
+    throw new Error(`invalid config ${file}:\n  services.devserver: the name is reserved for the devserver section`);
+  }
   const root = path.dirname(file);
   return {root, file, config, stateDir: path.join(root, '.pitbox')};
 };

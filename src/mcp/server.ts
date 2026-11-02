@@ -49,6 +49,13 @@ export const startMcp = async (opts: {config?: string} = {}) => {
     tool(`tool_${name}`, `${t.description ?? t.run} (project tool)`, shape, 'tool', a => ({name, params: a}));
   }
 
+  // Dev server
+  if (config.devserver) {
+    tool('dev_status', 'Dev server: proxy, bytecode cache, prewarm results, the last bundle requests from devices with their timing.', {}, 'devStatus');
+    tool('dev_prewarm', 'Build the main bundle (and its bytecode) now so the next app start is served from cache.', {}, 'devPrewarm');
+    tool('dev_reload', 'Ask every connected app to reload its JS.', {}, 'devReload');
+  }
+
   // Android
   tool('devices', 'Online Android devices (with AVD name and kind: phone, foldable, tv, xr) and idle AVDs.', {}, 'devices');
   tool('boot', 'Boot an emulator and wait until it is ready; forwards exposed ports.', {avd: z.string().optional(), wipe: z.boolean().optional(), headless: z.boolean().optional()}, 'boot');

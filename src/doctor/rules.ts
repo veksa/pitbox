@@ -135,6 +135,8 @@ export const metroWindowsWatcher: Rule = {
   title: 'Metro uses a native file watcher',
   check: async ctx => {
     if (process.platform !== 'win32') return [];
+    // pitbox's own dev server enables the native watcher at runtime.
+    if (ctx.config.devserver && (ctx.config.devserver.adapter ?? 'metro') === 'metro') return [];
     const roots = new Set<string>([ctx.root, ...Object.values(ctx.config.services ?? {}).map(s => (s.cwd ? path.resolve(ctx.root, s.cwd) : ctx.root))]);
     const findings: Finding[] = [];
     // Expo's fork is the file map an Expo project's Metro loads; the plain package is checked only without it.

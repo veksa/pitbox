@@ -33,6 +33,9 @@ android
   reverse                       forward every exposed port to every device now
   info
 
+devserver
+  dev [status|prewarm|reload|restart]   the bundler behind pitbox's proxy: device requests, bytecode, prewarming
+
 support
   doctor [--fix] [--only rule,…]
   docs [name [toc|section|grep|lines] [query] [--context n] [--from a --to b]]
@@ -130,6 +133,12 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'info', params: {device}};
     case 'doctor':
       return {method: 'doctor', params: {fix: flags.fix, only: flags.only}};
+    case 'dev': {
+      const sub = rest[0] ?? 'status';
+      const method = ({status: 'devStatus', prewarm: 'devPrewarm', reload: 'devReload', restart: 'restart'} as Record<string, string>)[sub];
+      if (!method) throw new Error('dev status|prewarm|reload|restart');
+      return {method, params: method === 'restart' ? {services: ['devserver']} : {}};
+    }
     case 'docs': {
       const [name, op, ...q] = rest;
       return {method: 'docs', params: {name, op, query: q.join(' ') || undefined, context: flags.context, from: flags.from, to: flags.to, depth: flags.depth}};

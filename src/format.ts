@@ -6,6 +6,7 @@ import type {DoctorReport} from './doctor/run.ts';
 import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
+import type {DevserverStatus} from './devserver/devserver.ts';
 import {clipLines, seconds} from './util/text.ts';
 
 const mark: Record<string, string> = {up: '✓', external: '✓', starting: '…', stopped: '·', down: '✗', failed: '✗'};
@@ -38,8 +39,23 @@ export const fmtDevices = (devices: AndroidDevice[], avds?: {name: string; kind:
 
 export const fmtActors = (actors: ActorState[]): string[] => actors.map(a => `${a.status === 'up' ? '✓' : '✗'} actor ${a.name} (${a.type}) :${a.port}${a.pid ? ` pid ${a.pid}` : ''}${a.detail ? ` — ${a.detail.split('\n')[0]}` : ''}`);
 
-export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; exposed: number[]}): string => {
+type Prewarm = {platform: string; ms: number; ok: boolean; note?: string}[];
+
+export const fmtPrewarm = (p: Prewarm | undefined): string[] => (p ?? []).map(x => `${x.ok ? '✓' : '✗'} prewarm ${x.platform} ${seconds(x.ms)}${x.note ? ` — ${x.note}` : ''}`);
+
+export const fmtDev = (d: DevserverStatus, detailed = false): string[] => {
+  const out = [`  devserver proxy :${d.port} → :${d.internalPort} ${d.proxy ? 'listening' : 'down'} · bytecode ${d.bytecode}${d.lastCompileMs !== undefined ? ` (last compile ${seconds(d.lastCompileMs)}, ${d.lastBytecodeKB} KB)` : ''} · ${d.compiles} compiles, ${d.cacheHits} cache hits`];
+  if (d.lastError) out.push(`  last error: ${d.lastError}`);
+  if (detailed) {
+    out.push(...fmtPrewarm(d.prewarm).map(l => `  ${l}`));
+    for (const r of d.requests) out.push(`  ${r.ago} ago ${r.kind} ${r.url} ${r.status} ${r.kb} KB in ${r.ms} ms${r.note ? ` (${r.note})` : ''}`);
+  }
+  return out;
+};
+
+export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; exposed: number[]; dev?: DevserverStatus}): string => {
   const out = [...fmtServices(r.services)];
+  if (r.dev) out.push(...fmtDev(r.dev));
   if (r.mock) out.push(`${r.mock.running ? '✓' : '·'} llm-mock :${r.mock.port} ${r.mock.running ? `${r.mock.requests} requests` : 'stopped'}`);
   out.push(...fmtActors(r.actors));
   out.push(...fmtDevices(r.devices));
@@ -79,11 +95,18 @@ export const formatResult = (method: string, r: unknown): string => {
       const mock = x.mock as {port: number} | undefined;
       if (mock) lines.push(`✓ llm-mock :${mock.port}`);
       for (const f of (x.forwards as {serial: string; ports: number[]}[]) ?? []) lines.push(`forwarded ${f.ports.join(',')} → ${f.serial}`);
+      lines.push(...fmtPrewarm(x.prewarm as Prewarm | undefined));
       return lines.join('\n');
     }
     case 'down':
-    case 'restart':
       return fmtServices(x.services as ServiceState[]).join('\n');
+    case 'restart':
+    case 'devPrewarm':
+      return [...(x.services ? fmtServices(x.services as ServiceState[]) : []), ...fmtPrewarm(x.prewarm as Prewarm | undefined)].join('\n') || 'nothing to prewarm';
+    case 'devStatus':
+      return [...(x.service ? fmtServices([x.service as ServiceState]) : []), ...fmtDev(x as unknown as DevserverStatus, true)].join('\n');
+    case 'devReload':
+      return 'reload sent to connected apps';
     case 'logs':
     case 'appLogs':
       return ((x.lines as string[]) ?? []).length ? clipLines(x.lines as string[]).join('\n') : '(no lines)';

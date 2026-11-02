@@ -55,6 +55,28 @@ export const toolSchema = z.object({
   timeout: z.number().positive().optional(),
 });
 
+export const devserverSchema = z.object({
+  /** `metro` (React Native with Metro, Expo included), `rspack` (Re.Pack) or `command` (anything else). */
+  adapter: z.enum(['metro', 'rspack', 'command']).optional(),
+  /** App directory the bundler runs in. */
+  root: z.string().optional(),
+  /** Start command; `{port}` is the internal port pitbox gives it. Default `yarn start --port {port}`. */
+  start: z.string().optional(),
+  /** Port the device talks to (pitbox's proxy). Default 8081. */
+  port: z.number().int().positive().optional(),
+  /** Port the bundler itself listens on. Default `port + 1`. */
+  internalPort: z.number().int().positive().optional(),
+  host: z.string().optional(),
+  env: env.optional(),
+  /** Serve the app's main bundle as Hermes bytecode compiled on the host (React Native with Hermes). */
+  bytecode: z.boolean().optional(),
+  /** Platforms whose main bundle is built ahead of the device asking. Default `['android']`. */
+  platforms: z.array(z.enum(['android', 'ios'])).optional(),
+  /** Main bundle path for prewarming when it cannot be discovered (`/index.bundle?platform={platform}&dev=true`). */
+  bundlePath: z.string().optional(),
+  startTimeout: z.number().positive().optional(),
+});
+
 export const configSchema = z.object({
   app: z
     .object({
@@ -66,6 +88,8 @@ export const configSchema = z.object({
   /** Shell for project commands: `bash` (default; Git Bash on Windows), `sh`, `cmd` or a path. */
   shell: z.string().optional(),
   services: z.record(z.string(), serviceSchema).optional(),
+  /** The JS dev server, run behind pitbox's proxy with a native watcher, prewarming and optional bytecode. */
+  devserver: devserverSchema.optional(),
   actors: z.record(z.string(), actorSchema).optional(),
   tools: z.record(z.string(), toolSchema).optional(),
   mocks: z
@@ -94,6 +118,7 @@ export const configSchema = z.object({
 });
 
 export type ServiceConfig = z.infer<typeof serviceSchema>;
+export type DevserverConfig = z.infer<typeof devserverSchema>;
 export type ActorConfig = z.infer<typeof actorSchema>;
 export type ToolConfig = z.infer<typeof toolSchema>;
 export type PitboxConfig = z.infer<typeof configSchema>;
@@ -107,6 +132,7 @@ export const asArray = (value: number | number[] | undefined): number[] => (valu
 export const exposedPorts = (config: PitboxConfig): number[] => {
   const all = [
     ...Object.values(config.services ?? {}).flatMap(s => asArray(s.expose)),
+    ...(config.devserver ? [config.devserver.port ?? 8081] : []),
     ...(config.android?.reverse ?? []),
     ...(config.mocks?.llm ? [config.mocks.llm.port] : []),
   ];

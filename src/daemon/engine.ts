@@ -4,7 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
-import {exposedPorts} from '../config/schema.ts';
+import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
+import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
@@ -40,12 +41,15 @@ export class Engine {
   readonly #forwarded = new Set<string>();
   #watchTimer?: NodeJS.Timeout;
   #lastForwardCheck = 0;
+  #dev?: DevServer;
+  #devKey = '';
 
   private constructor(loaded: LoadedConfig) {
     this.#loaded = loaded;
     this.#mtime = fs.statSync(loaded.file).mtimeMs;
     const ctx = {root: loaded.root, stateDir: loaded.stateDir, shell: loaded.config.shell};
-    this.services = new ServiceManager(ctx, loaded.config.services ?? {});
+    this.#syncDev();
+    this.services = new ServiceManager(ctx, this.#allServices());
     this.actors = new ActorManager(ctx, loaded.config.actors ?? {});
   }
 
@@ -67,9 +71,41 @@ export class Engine {
     if (m === this.#mtime) return false;
     this.#loaded = await loadConfig({file: this.#loaded.file});
     this.#mtime = m;
-    this.services.setServices(this.config.services ?? {});
+    await this.#syncDev();
+    this.services.setServices(this.#allServices());
     this.actors.setActors(this.config.actors ?? {});
     return true;
+  }
+
+  get dev(): DevServer | undefined {
+    return this.#dev;
+  }
+
+  /** Creates (or recreates, when its config changed) the dev server from the config. */
+  async #syncDev() {
+    const cfg = this.config.devserver;
+    const key = JSON.stringify(cfg ?? null);
+    if (key === this.#devKey) return;
+    this.#devKey = key;
+    const old = this.#dev;
+    this.#dev = cfg ? new DevServer(cfg, this.#loaded.root, this.#loaded.stateDir) : undefined;
+    await old?.stop();
+  }
+
+  #allServices(): Record<string, ServiceConfig> {
+    const services = {...(this.config.services ?? {})};
+    if (this.#dev) services[DEVSERVER] = this.#dev.service();
+    return services;
+  }
+
+  /** Brings the proxy up once the bundler answers, then prewarms. */
+  async #devUp(prewarm: boolean) {
+    const dev = this.#dev;
+    if (!dev) return undefined;
+    const st = (await this.services.status()).find(s => s.name === DEVSERVER);
+    if (st?.status !== 'up' && st?.status !== 'external') return undefined;
+    if (!dev.proxy.listening) await dev.start();
+    return prewarm ? dev.prewarm() : undefined;
   }
 
   get android(): AndroidDriver | undefined {
@@ -123,6 +159,7 @@ export class Engine {
       try {
         await this.refresh();
         await this.ensureForwards();
+        if (this.#dev && !this.#dev.proxy.listening) await this.#devUp(true);
       } catch {
         // adb hiccups are retried on the next tick
       }
@@ -140,6 +177,7 @@ export class Engine {
     if (this.#watchTimer) clearTimeout(this.#watchTimer);
     this.actors.stopAll();
     await this.#mock?.stop();
+    await this.#dev?.stop();
   }
 
   async #startMock() {
@@ -172,6 +210,7 @@ export class Engine {
         mock: this.config.mocks?.llm ? {port: this.config.mocks.llm.port, running: this.#mock?.running ?? false, requests: this.#mock?.requests ?? 0} : undefined,
         devices,
         exposed: exposedPorts(this.config),
+        dev: this.#dev?.status(),
       };
     },
 
@@ -179,8 +218,9 @@ export class Engine {
       const names = list(p, 'services');
       const mock = names.length ? undefined : await this.#startMock();
       const services = await this.services.up(names);
+      const prewarm = !names.length || names.includes(DEVSERVER) ? await this.#devUp(true) : undefined;
       const forwards = await this.ensureForwards(true).catch(() => []);
-      return {services, mock, forwards};
+      return {services, mock, forwards, prewarm};
     },
 
     down: async (p: Params) => {
@@ -189,10 +229,35 @@ export class Engine {
         this.actors.stopAll();
         await this.#mock?.stop();
       }
-      return {services: await this.services.down(names)};
+      const services = await this.services.down(names);
+      if (this.#dev && services.some(s => s.name === DEVSERVER && s.status === 'stopped')) await this.#dev.stop();
+      return {services};
     },
 
-    restart: async (p: Params) => ({services: await this.services.restart(list(p, 'services'))}),
+    restart: async (p: Params) => {
+      const names = list(p, 'services');
+      if (names.includes(DEVSERVER)) await this.#dev?.stop();
+      const services = await this.services.restart(names);
+      const prewarm = names.includes(DEVSERVER) ? await this.#devUp(true) : undefined;
+      return {services, prewarm};
+    },
+
+    devStatus: async () => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      const st = (await this.services.status()).find(s => s.name === DEVSERVER);
+      return {service: st, ...this.#dev.status()};
+    },
+
+    devPrewarm: async () => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      return {prewarm: (await this.#devUp(true)) ?? []};
+    },
+
+    devReload: async () => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      await this.#dev.reload();
+      return {reloaded: true};
+    },
 
     logs: async (p: Params) => {
       const name = req(p, 'name');
