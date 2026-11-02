@@ -15,6 +15,9 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **Android** — phones, foldables, tablets, TV and XR, emulators and hardware: boot, install, open apps and
   deep links, logs, settings, network conditions, screenshots, keys. Stand ports are forwarded to every device
   and re-forwarded when a device reconnects.
+- **Dev server** — your bundler (`yarn start`) behind pitbox's proxy: a native file watcher on every platform
+  (Metro crawls every directory on Windows otherwise), the main bundle built before the device asks, and, with
+  `bytecode: true`, Hermes bytecode compiled on the host so the app skips parsing megabytes of source.
 - **Doctor** — known failures with remedies (`doctor --fix`), plus your own rules.
 - **Docs** — the lines of a long checklist or knowledge base that a step needs, not the whole file.
 - **MCP server** over stdio; the CLI prints the same compact text.
@@ -31,8 +34,8 @@ export default defineConfig({
   services: {
     db: {start: 'docker compose up -d db', stop: 'docker compose stop db', health: 'docker:db'},
     api: {start: 'yarn --cwd server start', health: 'http://localhost:3000/health', expose: 3000, dependsOn: ['db']},
-    metro: {start: 'yarn --cwd mobile start', health: 'http://127.0.0.1:8081/status', expose: 8081},
   },
+  devserver: {adapter: 'metro', root: 'mobile', bytecode: true},
   tools: {
     sql: {run: 'docker exec -i db psql -U app -qAt -c {query}', params: {query: 'SQL statement'}},
   },

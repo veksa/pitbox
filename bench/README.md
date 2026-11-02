@@ -9,6 +9,7 @@ type stripping), with no dependencies.
 | `metro-raw.mjs` | starts Metro through its API with the project's config, to compare against the CLI that wraps it |
 | `cpuprofile.ts` | summarizes a V8 `.cpuprofile` by package and function |
 | `sessions.ts` | token baseline from Claude Code transcripts: context re-read per turn, device calls, images |
+| `editloop.mjs` | edit → relaunch → time to running JS on an Android device, checking the new code ran |
 
 ## Results
 
@@ -97,6 +98,39 @@ Implications for pitbox:
 
 The release build measured was an older build with R8 and no dev tooling, so it is an
 upper bound on the gain rather than an exact one.
+
+### P2: pitbox's dev server against stock Metro
+
+Same app, same emulator. pitbox runs the project's own `yarn start` on an internal port with the native
+watcher enabled at runtime, its proxy on the device port, prewarming, and host-compiled Hermes bytecode for
+the main bundle (`hermesc -O0`, ~5 s for 16 MB; lazily split bundles folded into the main one, since bytecode
+cannot be `eval`-ed). `editloop.mjs` appends a marker log line to a startup module, relaunches the app and
+times intent → `Running "main"`, checking that the marker (the new code) ran.
+
+| | Stock Metro | pitbox |
+|---|---|---|
+| dev server ready, warm | 38.8 s | **5.4–6.0 s** |
+| main bundle on the device's first request | built on request (2.6 s warm, ~10 s after a start) | prewarmed: **8–12 ms** from cache |
+| JS evaluation on the device | 2.6–3.3 s (source) | **0.7–1.2 s** (bytecode) |
+| relaunch, quiet host | 5.4–6.5 s | **3.1–3.7 s** |
+| relaunch, loaded host, back to back | 16.6–16.9 s | **6.2–11.2 s** |
+| relaunch right after an edit | 14.7–18.8 s ¹ | **6.6 s** (source served, bytecode compiling) |
+| relaunch 8 s after an edit | 17.1–21.8 s ¹ | **3.8–4.6 s** (bytecode from cache) |
+
+¹ measured after the pitbox runs, while another application loaded the host (~44% CPU); the stock server also
+took 126 s to become ready then. The quiet-host rows are the cleaner comparison.
+
+Rules that came out of it:
+
+- **never slower than the bundler alone**: when the bytecode for the current code is not ready, the device gets
+  the source at once and the compile finishes in the background for the next start;
+- **only the native loader's request is converted** (`Accept: multipart/mixed`, no `modulesOnly`); a lazily
+  loaded bundle evaluated with `eval` must stay source;
+- **Expo writes absolute bundle URLs into its manifest**, so behind a proxy it needs
+  `EXPO_PACKAGER_PROXY_URL` pointing at the proxy;
+- **services must not depend on the daemon's console or pipes**: started attached, they died when the daemon
+  restarted (Windows console close; EPIPE on the next log write) — now detached with logs written straight to
+  files, covered by a test that runs a real daemon exit.
 
 ### Token baseline
 
