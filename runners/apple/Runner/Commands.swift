@@ -91,6 +91,9 @@ final class Commands {
     case "touch": throw RunnerError("XCUITest cannot hold a finger between calls — use swipe or longpress")
     case "text": return try text(req)
     case "key": return try key(req)
+    case "rotate": return try rotate(req)
+    case "rotary": return try rotary(req)
+    case "mouse": return try mouse(req)
     case "screenshot": return try Images.jpeg(scale: double(req, "scale", 0.5), quality: double(req, "quality", 70) / 100)
     case "fingerprint": return try Images.fingerprint(cols: Int(double(req, "cols", 54)), masks: rects(req["masks"]))
     case "frames": return try Images.frames(bounds: rects(req["bounds"].map { [$0] }).first, count: Int(double(req, "count", 4)), interval: double(req, "interval", 400) / 1000, size: Int(double(req, "size", 32)))
@@ -342,7 +345,6 @@ final class Commands {
   // MARK: input
 
   #if !os(tvOS)
-  #if os(visionOS)
   /// The smallest control whose frame holds the point, as an element to act on.
   private func control(at point: CGPoint, _ req: [String: Any]) -> XCUIElement? {
     element(at: point, req) { Self.tappable.contains($0) || Self.editable.contains($0) }
@@ -368,7 +370,6 @@ final class Commands {
     let query = n.identifier.isEmpty ? all.matching(NSPredicate(format: "label == %@", n.label)) : all.matching(identifier: n.identifier)
     return query.allElementsBoundByIndex.first { Self.same($0.frame, n.frame) }
   }
-  #endif
 
   private func coordinate(_ req: [String: Any], x xKey: String = "x", y yKey: String = "y") -> XCUICoordinate {
     let (a, _) = front(req)
@@ -455,6 +456,20 @@ final class Commands {
     guard let button = remote[code] else { throw RunnerError("no Siri Remote button for key code \(code)") }
     XCUIRemote.shared.press(button)
     #else
+    #if os(iOS)
+    // A combination from a hardware keyboard (an iPad's): Android's key code and meta flags as a key and modifiers.
+    let meta = Int(double(req, "meta", 0))
+    if meta != 0 {
+      guard let k = Self.keyName(code) else { throw RunnerError("key code \(code) has no key on an Apple keyboard") }
+      var flags: XCUIElement.KeyModifierFlags = []
+      if meta & 0x1000 != 0 { flags.insert(.control) }
+      if meta & 0x1 != 0 { flags.insert(.shift) }
+      if meta & 0x2 != 0 { flags.insert(.option) }
+      if meta & 0x10000 != 0 { flags.insert(.command) }
+      a.typeKey(k, modifierFlags: flags)
+      return [:]
+    }
+    #endif
     switch code {
     #if os(iOS)
     case 3: XCUIDevice.shared.press(.home)
@@ -466,5 +481,72 @@ final class Commands {
     #endif
     _ = a
     return [:]
+  }
+
+  #if os(iOS)
+  /// Android key codes as the keys `typeKey` takes: letters, digits and the named keys a shortcut uses.
+  private static func keyName(_ code: Int) -> String? {
+    if (29...54).contains(code) { return String(UnicodeScalar(UInt8(97 + code - 29))) }
+    if (7...16).contains(code) { return String(code - 7) }
+    let named: [Int: XCUIKeyboardKey] = [61: .tab, 66: .return, 67: .delete, 111: .escape, 62: .space, 19: .upArrow, 20: .downArrow, 21: .leftArrow, 22: .rightArrow, 112: .forwardDelete, 122: .home, 123: .end, 92: .pageUp, 93: .pageDown]
+    return named[code]?.rawValue
+  }
+  #endif
+
+  /// Turns the device: Android's rotation in degrees as an orientation. Simulators have no sensor, so `auto`
+  /// is portrait again.
+  private func rotate(_ req: [String: Any]) throws -> [String: Any] {
+    #if os(iOS)
+    let value = req["value"] as? String ?? ""
+    let map: [String: UIDeviceOrientation] = ["0": .portrait, "90": .landscapeLeft, "180": .portraitUpsideDown, "270": .landscapeRight, "auto": .portrait]
+    guard let o = map[value] else { throw RunnerError("rotate 0, 90, 180, 270 or auto") }
+    XCUIDevice.shared.orientation = o
+    Thread.sleep(forTimeInterval: 0.8)
+    // Some screens stay portrait whatever the device does (the cover screen of a folded phone, an app that
+    // supports portrait only): a turn that did not reach the app is an error, not a silent success.
+    let frame = front(req).0.windows.firstMatch.frame
+    if !frame.isEmpty, (frame.width > frame.height) != o.isLandscape {
+      throw RunnerError("the screen stayed \(frame.width > frame.height ? "landscape" : "portrait") (\(Int(frame.width))x\(Int(frame.height))): this screen or the app does not turn to \(value)")
+    }
+    return ["rotation": value]
+    #else
+    throw RunnerError("this device does not rotate")
+    #endif
+  }
+
+  /// The Digital Crown turned `steps` detents; a negative amount moves the content as a swipe up would.
+  private func rotary(_ req: [String: Any]) throws -> [String: Any] {
+    #if os(watchOS)
+    let amount = double(req, "amount", -1), steps = double(req, "steps", 3)
+    XCUIDevice.shared.rotateDigitalCrown(delta: -amount * steps * 0.05, velocity: .default)
+    return [:]
+    #else
+    throw RunnerError("this device has no crown")
+    #endif
+  }
+
+  /// A pointer on an iPad: hover, a secondary click, the wheel over the control or scroller under the point.
+  private func mouse(_ req: [String: Any]) throws -> [String: Any] {
+    #if os(iOS)
+    let point = CGPoint(x: double(req, "x", 0), y: double(req, "y", 0))
+    let action = req["action"] as? String ?? ""
+    if action == "wheel" {
+      let e = element(at: point, req) { Self.scrollable.contains($0) } ?? front(req).0
+      // A notch is about three lines, as a wheel's; a positive amount scrolls towards the top, which iOS takes
+      // as a negative delta.
+      e.scroll(byDeltaX: 0, deltaY: CGFloat(-double(req, "amount", -1) * 120))
+      return [:]
+    }
+    let target = element(at: point, req) { _ in true }
+    guard let e = target else { throw RunnerError("nothing under \(Int(point.x)),\(Int(point.y))") }
+    switch action {
+    case "hover": e.hover()
+    case "right": e.rightClick()
+    default: throw RunnerError("mouse right|hover|wheel")
+    }
+    return [:]
+    #else
+    throw RunnerError("this device has no pointer")
+    #endif
   }
 }
