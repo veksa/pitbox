@@ -29,15 +29,18 @@ object PitboxConnect {
       val value = link.getQueryParameter(name)
       if (value.isNullOrEmpty()) editor.remove(name) else editor.putString(name, value)
     }
-    editor.apply()
-    apply(context)
+    // commit(), not apply(): the connect screen kills the process right after, and apply() writes later.
+    editor.commit()
+    apply(context, sync = true)
   }
 
   /** Mirrors the saved dev server into React Native's own setting. */
   @Suppress("DEPRECATION")
-  fun apply(context: Context) {
+  fun apply(context: Context, sync: Boolean = false) {
     val devserver = host(context, "devserver") ?: return
     val rn = PreferenceManager.getDefaultSharedPreferences(context)
-    if (rn.getString(RN_HOST_KEY, null) != devserver) rn.edit().putString(RN_HOST_KEY, devserver).apply()
+    if (rn.getString(RN_HOST_KEY, null) == devserver) return
+    val edit = rn.edit().putString(RN_HOST_KEY, devserver)
+    if (sync) edit.commit() else edit.apply()
   }
 }

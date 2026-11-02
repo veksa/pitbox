@@ -64,6 +64,8 @@ export class DevProxy {
   generation = 0;
   /** Last main bundle URL each platform asked for — what prewarming rebuilds. */
   readonly mainUrls = new Map<string, string>();
+  /** Host header of the last main bundle request per platform — the address devices use, which prewarming must match. */
+  readonly mainHosts = new Map<string, string>();
   /** Bundles built, by id (hash of the bundler's output): when and from which generation. */
   readonly builds = new Map<string, {generation: number; at: number}>();
   /** The newest bundle id per platform. */
@@ -270,7 +272,10 @@ export class DevProxy {
 
     const isBundle = req.method === 'GET' && /\.bundle(\?|$)/.test(url);
     const native = isNativeBundleRequest(req.method, url, req.headers.accept);
-    if (native) this.mainUrls.set(platformOf(url), url);
+    if (native) {
+      this.mainUrls.set(platformOf(url), url);
+      if (req.headers.host) this.mainHosts.set(platformOf(url), req.headers.host);
+    }
 
     if (native && (this.opts.bytecode || this.opts.inApp)) {
       try {
