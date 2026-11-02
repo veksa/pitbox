@@ -271,6 +271,7 @@ export class Engine {
     const mode = this.config.android?.forward ?? 'auto';
     for (const d of online) {
       if (this.#forwarded.has(d.serial) && !verify) continue;
+      if (d.avd && this.#relayAvds().has(d.avd)) this.#relayed.add(d.serial);
       if (this.#relayed.has(d.serial) || (mode === 'relay' && d.emulator)) {
         // The relay lives in the runner; a restarted runner has none, so re-apply when they are gone.
         const ui = await this.ui(d.serial);
@@ -295,6 +296,7 @@ export class Engine {
       // `adb reverse` can list its forwards and carry nothing; on an emulator, switch to the relay then.
       if (mode === 'auto' && d.emulator && verify && !(await this.#forwardCarries(d.serial, ports))) {
         this.#relayed.add(d.serial);
+        if (d.avd) this.#rememberRelay(d.avd);
         this.#forwarded.delete(d.serial);
         applied.push(...(await this.ensureForwards(true)).filter(a => a.serial === d.serial));
       }
@@ -304,6 +306,22 @@ export class Engine {
 
   /** Serials whose forwards go through the runner's relay instead of `adb reverse`. */
   readonly #relayed = new Set<string>();
+
+  /** AVDs whose adb reverse was found broken — remembered so the next daemon relays them from the start. */
+  #relayAvds(): Set<string> {
+    try {
+      return new Set(JSON.parse(fs.readFileSync(path.join(this.#loaded.stateDir, 'relay-avds.json'), 'utf8')) as string[]);
+    } catch {
+      return new Set();
+    }
+  }
+
+  #rememberRelay(avd: string) {
+    const set = this.#relayAvds();
+    set.add(avd);
+    fs.mkdirSync(this.#loaded.stateDir, {recursive: true});
+    fs.writeFileSync(path.join(this.#loaded.stateDir, 'relay-avds.json'), JSON.stringify([...set]));
+  }
 
   /**
    * Whether data really flows from the device to the host on a forwarded port: an HTTP request sent from the
@@ -318,7 +336,8 @@ export class Engine {
       const out = await android
         .shell(serial, `printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | toybox nc -w 4 127.0.0.1 ${port} | head -c 12`, 15_000)
         .catch(() => '');
-      return out.trim().length > 0;
+      // Every HTTP port: one working forward must not hide a dead one.
+      if (!out.trim().length) return false;
     }
     return true;
   }
@@ -338,6 +357,8 @@ export class Engine {
   /** Moves a device's forwards onto the runner's relay (emulators only). */
   async useRelay(serial: string): Promise<string> {
     this.#relayed.add(serial);
+    const avd = (await this.android?.devices())?.find(d => d.serial === serial)?.avd;
+    if (avd) this.#rememberRelay(avd);
     this.#forwarded.delete(serial);
     const r = await this.ensureForwards(true);
     return `forwards for ${serial} now go through the runner relay (${r.flatMap(a => a.ports).join(', ') || 'already in place'})`;
