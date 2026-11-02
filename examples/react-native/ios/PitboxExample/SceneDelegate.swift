@@ -16,7 +16,7 @@ class SceneDelegate: RCTDefaultReactNativeFactoryDelegate, UIWindowSceneDelegate
       return
     }
 
-    dependencyProvider = RCTAppDependencyProvider()
+    dependencyProvider = AppDependencyProvider()
     reactNativeFactory = RCTReactNativeFactory(delegate: self)
     window = UIWindow(windowScene: windowScene)
     
@@ -52,5 +52,13 @@ class SceneDelegate: RCTDefaultReactNativeFactoryDelegate, UIWindowSceneDelegate
     #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
     #endif
+  }
+}
+
+/// React Native's own codegen config lists its sample module among those set up on the main queue at start, but the
+/// prebuilt core ships only the module's spec: asking for it shows "Unable to find module for SampleTurboModule".
+class AppDependencyProvider: RCTAppDependencyProvider {
+  override func unstableModulesRequiringMainQueueSetup() -> [String] {
+    super.unstableModulesRequiringMainQueueSetup().filter { $0 != "SampleTurboModule" || NSClassFromString("RCTSampleTurboModule") != nil }
   }
 }
