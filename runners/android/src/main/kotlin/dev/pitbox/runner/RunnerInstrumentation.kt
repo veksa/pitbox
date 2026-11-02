@@ -11,17 +11,20 @@ import java.io.PrintWriter
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import kotlin.concurrent.thread
 
 /**
  * Entry point: `am instrument -w -e port 7912 dev.pitbox.runner/.RunnerInstrumentation`.
  *
  * Serves newline-delimited JSON on the device's loopback: one request per line (`{"id":1,"cmd":"tree",...}`),
- * one answer per line (`{"id":1,"ok":true,...}`). The host reaches it through `adb forward`. The instrumentation
+ * one answer per line (`{"id":1,"ok":true,...}`). The host reaches it through `adb forward`. Several hosts (one
+ * pitbox daemon per project) can be connected at once; their commands run one at a time. The instrumentation
  * stays alive until it gets `shutdown` or the host kills it.
  */
 class RunnerInstrumentation : Instrumentation() {
   private var port = DEFAULT_PORT
   @Volatile private var running = true
+  @Volatile private var server: ServerSocket? = null
 
   override fun onCreate(arguments: Bundle?) {
     super.onCreate(arguments)
@@ -34,13 +37,14 @@ class RunnerInstrumentation : Instrumentation() {
     val commands = Commands(this, automation)
     commands.configure()
     try {
-      ServerSocket(port, 4, InetAddress.getByName("127.0.0.1")).use { server ->
+      ServerSocket(port, 8, InetAddress.getByName("127.0.0.1")).use { server ->
+        this.server = server
         Log.i(TAG, "listening on $port")
         // The host waits for this line on the instrumentation's output before it connects.
         sendStatus(0, Bundle().apply { putString("pitbox", "ready $port") })
         while (running) {
           val socket = server.accept()
-          serve(socket, commands)
+          thread(name = "pitbox-client", isDaemon = true) { serve(socket, commands) }
         }
       }
     } catch (e: Exception) {
@@ -65,8 +69,11 @@ class RunnerInstrumentation : Instrumentation() {
           if (cmd == "shutdown") {
             running = false
             reply.put("ok", true)
+            // Unblocks the accept loop; other hosts' connections end with it.
+            runCatching { server?.close() }
           } else {
-            val result = commands.run(cmd, req)
+            // One device, one UiAutomation: commands from different hosts must not interleave.
+            val result = synchronized(commands) { commands.run(cmd, req) }
             reply.put("ok", true)
             for (key in result.keys()) reply.put(key, result.get(key))
           }

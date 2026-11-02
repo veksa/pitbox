@@ -1,8 +1,7 @@
 // Host side of the Android runner: installs the runner APK when its version differs, starts it through
-// `am instrument`, forwards its port, and keeps one connection with a request queue. A dead runner (the app
-// under test crashed the instrumentation, the device rebooted) is restarted on the next call.
+// `am instrument` (detached on the device, shared by every pitbox daemon there), forwards its port, and keeps one
+// connection with a request queue. A dead runner (the device rebooted) is restarted on the next call.
 
-import {spawn, type ChildProcess} from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -12,8 +11,10 @@ import {AndroidError} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
-export const RUNNER_VERSION = 9;
+export const RUNNER_VERSION = 10;
 const DEVICE_PORT = 7912;
+/** The instrumentation's output on the device: its ready line or why it failed. */
+const RUNNER_OUT = '/data/local/tmp/pitbox-runner.out';
 
 export const runnerApk = (): string => {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,7 +26,6 @@ type Pending = {resolve: (v: Record<string, unknown>) => void; reject: (e: Error
 export class AndroidRunner {
   readonly serial: string;
   readonly #driver: AndroidDriver;
-  #child?: ChildProcess;
   #socket?: net.Socket;
   #hostPort?: number;
   #buffer = '';
@@ -77,45 +77,55 @@ export class AndroidRunner {
   async #attempt(reinstall: boolean) {
     this.#teardown();
     await this.#ensureInstalled(reinstall);
+    // A runner another pitbox daemon started (one per project) is used as it is: restarting it would cut that
+    // daemon off mid-call.
+    if (!reinstall && (await this.#connect())) return;
     await this.#driver.shell(this.serial, `am force-stop ${RUNNER_PACKAGE}`);
-    const child = spawn(this.#driver.adbPath, ['-s', this.serial, 'shell', 'am', 'instrument', '-w', '-r', '--no-hidden-api-checks', '-e', 'port', String(DEVICE_PORT), `${RUNNER_PACKAGE}/.RunnerInstrumentation`], {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
-    this.#child = child;
+    // Started on the device under nohup: the UiAutomation connection lives in the `am` process, so a runner tied
+    // to this daemon's adb session would die with it and take every other daemon's connection along.
+    await this.#driver.shell(this.serial, `rm -f ${RUNNER_OUT}; nohup am instrument -w -r --no-hidden-api-checks -e port ${DEVICE_PORT} ${RUNNER_PACKAGE}/.RunnerInstrumentation > ${RUNNER_OUT} 2>&1 &`);
+    const deadline = Date.now() + 60_000;
     let output = '';
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new AndroidError('runner did not start in 60s', output.trim().split('\n').slice(-3).join(' ') || 'check `app-logs --all --grep pitbox`')), 60_000);
-      const onData = (d: Buffer) => {
-        output += d.toString();
-        if (output.includes('pitbox=ready')) {
-          clearTimeout(timer);
-          resolve();
-        } else if (/INSTRUMENTATION_FAILED|INSTRUMENTATION_RESULT: shortMsg=|already registered|Error type/.test(output)) {
-          clearTimeout(timer);
-          const busy = /already registered|UiAutomation/.test(output);
-          reject(new AndroidError(`runner failed to start: ${output.trim().split('\n').slice(-2).join(' ')}`, busy ? 'another UI automation tool holds UiAutomation on this device — stop it first' : undefined));
-        }
-      };
-      child.stdout?.on('data', onData);
-      child.stderr?.on('data', onData);
-      child.on('exit', () => {
-        clearTimeout(timer);
-        reject(new AndroidError(`runner exited: ${output.trim().split('\n').slice(-2).join(' ')}`));
-      });
-    });
-    child.on('exit', () => this.#teardown());
-    const fwd = await this.#driver.adb(['forward', 'tcp:0', `tcp:${DEVICE_PORT}`], this.serial);
-    this.#hostPort = Number(fwd.stdout.trim());
-    if (!this.#hostPort) throw new AndroidError(`adb forward failed: ${fwd.stderr.trim()}`);
-    await new Promise<void>((resolve, reject) => {
-      const s = net.connect(this.#hostPort!, '127.0.0.1', () => resolve());
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 300));
+      output = await this.#driver.shell(this.serial, `cat ${RUNNER_OUT} 2>/dev/null`).catch(() => '');
+      if (/INSTRUMENTATION_FAILED|INSTRUMENTATION_RESULT: shortMsg=|already registered|Error type/.test(output)) {
+        const busy = /already registered|UiAutomation/.test(output);
+        throw new AndroidError(`runner failed to start: ${output.trim().split('\n').slice(-2).join(' ')}`, busy ? 'another UI automation tool holds UiAutomation on this device — stop it first' : undefined);
+      }
+      if (output.includes('pitbox=ready') && (await this.#connect())) return;
+    }
+    throw new AndroidError('runner did not start in 60s', output.trim().split('\n').slice(-3).join(' ') || 'check `app-logs --all --grep pitbox`');
+  }
+
+  /** Connects to a runner listening on the device; true once it answers. */
+  async #connect(): Promise<boolean> {
+    if (!this.#hostPort) {
+      const fwd = await this.#driver.adb(['forward', 'tcp:0', `tcp:${DEVICE_PORT}`], this.serial);
+      this.#hostPort = Number(fwd.stdout.trim());
+      if (!this.#hostPort) throw new AndroidError(`adb forward failed: ${fwd.stderr.trim()}`);
+    }
+    const connected = await new Promise<boolean>(resolve => {
+      const s = net.connect(this.#hostPort!, '127.0.0.1', () => resolve(true));
       s.setNoDelay(true);
       s.on('error', e => {
-        reject(e);
+        resolve(false);
         this.#fail(e);
       });
       s.on('close', () => this.#fail(new Error('runner connection closed')));
       s.on('data', (d: Buffer) => this.#onData(d));
       this.#socket = s;
     });
+    if (!connected) return false;
+    // adb accepts the forward even when nothing listens on the device; only an answer proves a runner.
+    try {
+      await this.#send('info', {}, 3000);
+      return true;
+    } catch {
+      this.#socket?.destroy();
+      this.#socket = undefined;
+      return false;
+    }
   }
 
   #onData(d: Buffer) {
@@ -151,14 +161,16 @@ export class AndroidRunner {
   #teardown() {
     this.#socket?.destroy();
     this.#socket = undefined;
-    if (this.#child && this.#child.exitCode === null) this.#child.kill();
-    this.#child = undefined;
     if (this.#hostPort) void this.#driver.adb(['forward', '--remove', `tcp:${this.#hostPort}`], this.serial).catch(() => undefined);
     this.#hostPort = undefined;
   }
 
   async call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {
     await this.start();
+    return this.#send<T>(cmd, args, timeoutMs);
+  }
+
+  #send<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown>, timeoutMs: number): Promise<T> {
     const id = this.#nextId++;
     const socket = this.#socket;
     if (!socket) throw new AndroidError('runner not connected');
@@ -172,8 +184,8 @@ export class AndroidRunner {
     });
   }
 
+  /** Leaves the runner running: other daemons may be using it, and the next start reuses it. */
   async stop() {
-    if (this.alive) await this.call('shutdown', {}, 3000).catch(() => undefined);
     this.#teardown();
   }
 }
