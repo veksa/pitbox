@@ -1,0 +1,159 @@
+// Built-in doctor rules.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import {run} from '../util/proc.ts';
+import {tcpOpen} from '../util/net.ts';
+import {probePort} from '../stand/health.ts';
+import type {Finding, Rule} from './types.ts';
+
+/** Who listens on a TCP port: `pid name`, best effort. */
+export const portOwner = async (port: number): Promise<string | undefined> => {
+  if (process.platform === 'win32') {
+    const r = await run('netstat', ['-ano', '-p', 'tcp'], {timeoutMs: 10_000});
+    const line = r.stdout.split(/\r?\n/).find(l => new RegExp(`[:.]${port}\\s+\\S+\\s+LISTENING`).test(l));
+    const pid = line?.trim().split(/\s+/).pop();
+    if (!pid) return undefined;
+    const t = await run('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {timeoutMs: 10_000});
+    const name = t.stdout.split(',')[0]?.replace(/"/g, '').trim();
+    return `pid ${pid}${name ? ` ${name}` : ''}`;
+  }
+  const r = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], {timeoutMs: 10_000});
+  const line = r.stdout.split('\n')[1];
+  if (!line) return undefined;
+  const [name, pid] = line.split(/\s+/);
+  return `pid ${pid} ${name}`;
+};
+
+const adbAvailable: Rule = {
+  id: 'adb',
+  title: 'adb is installed',
+  check: async ctx => (ctx.android ? [] : [{rule: 'adb', severity: 'warn', message: 'adb not found', hint: 'install Android SDK platform-tools or set ANDROID_HOME'}]),
+};
+
+const androidDevice: Rule = {
+  id: 'android-device',
+  title: 'an Android device is online',
+  check: async ctx => {
+    if (!ctx.android || !ctx.config.app?.android) return [];
+    const devices = await ctx.android.devices();
+    const offline = devices.filter(d => d.state !== 'device');
+    const findings: Finding[] = offline.map(d => ({
+      rule: 'android-device',
+      severity: 'warn',
+      message: `${d.serial} is ${d.state}`,
+      hint: d.state === 'unauthorized' ? 'accept the USB debugging prompt on the device' : 'reconnect it, or restart adb',
+      fix: async () => {
+        await ctx.android!.adb(['reconnect', 'offline']);
+        return 'adb reconnect offline';
+      },
+    }));
+    if (!devices.some(d => d.state === 'device')) {
+      findings.push({rule: 'android-device', severity: 'info', message: 'no Android device online', hint: ctx.config.android?.avd ? `boot ${ctx.config.android.avd}` : 'boot an emulator or connect a device'});
+    }
+    return findings;
+  },
+};
+
+const reversePorts: Rule = {
+  id: 'reverse-ports',
+  title: 'exposed ports are forwarded to every Android device',
+  check: async ctx => {
+    if (!ctx.android || !ctx.exposedPorts.length) return [];
+    const findings: Finding[] = [];
+    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      const have = await ctx.android.reverseList(d.serial);
+      const missing = ctx.exposedPorts.filter(p => !have.includes(p));
+      if (missing.length) {
+        findings.push({
+          rule: 'reverse-ports',
+          severity: 'error',
+          message: `${d.avd ?? d.serial}: ports not forwarded: ${missing.join(', ')}`,
+          hint: 'the app cannot reach the stand on these ports; `adb reverse` silently drops forwards on reconnect',
+          fix: async () => {
+            const now = await ctx.android!.reverse(d.serial, missing);
+            return `forwarded ${missing.join(', ')} → now ${now.join(', ')}`;
+          },
+        });
+      }
+    }
+    return findings;
+  },
+};
+
+const servicesHealthy: Rule = {
+  id: 'services',
+  title: 'stand services answer their probes',
+  check: async ctx => {
+    const findings: Finding[] = [];
+    for (const s of await ctx.services.status()) {
+      if (s.status === 'up' || s.status === 'external') continue;
+      const svc = ctx.config.services?.[s.name];
+      if (svc?.autostart === false && s.status === 'stopped') continue;
+      const port = probePort(svc?.health);
+      let owner: string | undefined;
+      if (port && !(await tcpOpen(port))) owner = undefined;
+      else if (port) owner = await portOwner(port);
+      findings.push({
+        rule: 'services',
+        severity: 'error',
+        message: `${s.name} is ${s.status}${s.detail ? ` (${s.detail.split('\n')[0]})` : ''}${owner ? `; port ${port} held by ${owner}` : ''}`,
+        hint: owner ? 'something else holds the port — find out what it is before killing it' : svc?.start ? 'start it' : 'start it outside pitbox, it has no start command',
+        fix: svc?.start && !owner ? async () => {
+          const [r] = await ctx.services.up([s.name]);
+          return `${s.name}: ${r?.status}`;
+        } : undefined,
+      });
+    }
+    return findings;
+  },
+};
+
+const dataPartition: Rule = {
+  id: 'android-storage',
+  title: 'Android devices have room to install',
+  check: async ctx => {
+    if (!ctx.android) return [];
+    const findings: Finding[] = [];
+    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      const info = await ctx.android.info(d.serial).catch(() => undefined);
+      const free = Number(info?.freeDataMb);
+      if (Number.isFinite(free) && free > 0 && free < 600) {
+        findings.push({rule: 'android-storage', severity: 'warn', message: `${d.avd ?? d.serial}: only ${free} MB free on /data`, hint: 'large debug APKs fail with INSUFFICIENT_STORAGE; uninstall apps or wipe the emulator'});
+      }
+    }
+    return findings;
+  },
+};
+
+/**
+ * Metro's file map enables its native recursive watcher only on macOS; elsewhere it walks the whole tree and
+ * opens one watch handle per directory. On Windows that costs tens of seconds per start for a typical app.
+ */
+export const metroWindowsWatcher: Rule = {
+  id: 'metro-watcher',
+  title: 'Metro uses a native file watcher',
+  check: async ctx => {
+    if (process.platform !== 'win32') return [];
+    const roots = new Set<string>([ctx.root, ...Object.values(ctx.config.services ?? {}).map(s => (s.cwd ? path.resolve(ctx.root, s.cwd) : ctx.root))]);
+    const findings: Finding[] = [];
+    for (const r of roots) {
+      for (const rel of ['node_modules/@expo/metro-file-map/build/watchers/NativeWatcher.js', 'node_modules/metro-file-map/src/watchers/NativeWatcher.js']) {
+        const file = path.join(r, rel);
+        if (!fs.existsSync(file)) continue;
+        const src = fs.readFileSync(file, 'utf8');
+        if (/platform\)\(\)\s*===\s*['"]darwin['"]/.test(src)) {
+          findings.push({
+            rule: 'metro-watcher',
+            severity: 'warn',
+            message: `${path.relative(ctx.root, file) || file}: native watcher is macOS-only, Metro will crawl every directory on start`,
+            hint: "patch isSupported() to allow 'win32' (a yarn/patch-package patch survives installs); measured ~39s → ~4s per start",
+          });
+        }
+      }
+    }
+    return findings;
+  },
+};
+
+export const builtinRules: Rule[] = [adbAvailable, androidDevice, reversePorts, servicesHealthy, dataPartition, metroWindowsWatcher];
