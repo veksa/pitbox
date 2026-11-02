@@ -98,9 +98,11 @@ commands run in bash (Git Bash on Windows) unless `shell` says otherwise. Every 
 
 ## Testing pitbox itself
 
-`yarn check-all` runs the unit tests. `yarn e2e` drives [examples/android](examples/android) on one emulator of
-every kind found on the machine (phone, foldable, tablet, desktop, TV, XR, glasses, watch, car) and prints a
-verdict per kind.
+`yarn check-all` runs the unit tests. `yarn e2e` drives two example apps through the CLI and prints a verdict
+per device kind: [examples/android](examples/android), a native app, on one emulator of every kind found on the
+machine (phone, foldable, tablet, desktop, TV, XR, glasses, watch, car), and
+[examples/react-native](examples/react-native) on a phone through pitbox's dev server (connect link, bytecode,
+freshness, the network log, a JS error mapped to its source line).
 
 ## License
 

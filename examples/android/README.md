@@ -4,7 +4,7 @@ A small native app (no framework, no AndroidX) that pitbox's own end-to-end run 
 device: one APK for phones, foldables, tablets, TVs (it has a TV launcher entry and needs no touchscreen), XR
 headsets and watches, all run end to end; desktop, glasses and car AVDs get the smoke flow too, once there is one.
 
-What it has: a text field and a button that greets, a button that asks the stand (`stand/server.mjs` on port
+What it has: a text field and a button that greets, a button that asks the stand (`../stand/server.mjs` on port
 4100, forwarded to the device), a button that crashes, forty rows below the fold, and a second screen behind the
 deep link `pitboxexample://detail/<id>`.
 

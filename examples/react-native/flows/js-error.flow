@@ -1,0 +1,5 @@
+# Passes: the JS error the button throws comes back in the verdict's notes, mapped to App.tsx.
+open!
+wait id=title 90
+press id=js-error
+sleep 1500

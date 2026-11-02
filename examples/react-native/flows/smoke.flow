@@ -1,0 +1,15 @@
+# The React Native example through pitbox's dev server: the app is opened by its connect link.
+tool reset
+open!
+wait id=title 90
+fill id=name "Ada"
+press id=greet
+expect text="Hello, Ada"
+press id=fetch
+wait text~="hello from the stand" 10
+tool hits contains "1"
+scroll down until text="Row 40"
+goto detail id=42
+wait text="Detail 42" 10
+key back
+expect id=content-list

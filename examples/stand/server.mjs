@@ -1,4 +1,4 @@
-// The example's stand: one HTTP service the app asks, counting what it answered.
+// The examples' stand: one HTTP service the app asks, counting what it answered.
 
 import http from 'node:http';
 
