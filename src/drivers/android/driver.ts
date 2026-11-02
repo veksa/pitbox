@@ -82,7 +82,12 @@ export class AndroidDriver {
 
   /** Picks a device: by serial, AVD name or model; the only online device when no selector is given. */
   async resolve(selector?: string): Promise<string> {
-    const online = (await this.devices()).filter(d => d.state === 'device');
+    let online = (await this.devices()).filter(d => d.state === 'device');
+    // adb sometimes answers an empty list while it is busy with concurrent calls; ask once more before failing.
+    if (!online.length) {
+      await new Promise(r => setTimeout(r, 400));
+      online = (await this.devices()).filter(d => d.state === 'device');
+    }
     if (selector) {
       const hit = online.find(d => d.serial === selector || d.avd === selector || d.model === selector);
       if (hit) return hit.serial;

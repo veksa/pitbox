@@ -165,7 +165,9 @@ export class DevProxy {
     this.stats.lastSourceBytes = source.length;
     const platform = platformOf(url);
     const bundle = Cache.key(source).slice(0, 12);
-    if (!this.builds.has(bundle)) this.builds.set(bundle, {generation, at: Date.now()});
+    const known = this.builds.get(bundle);
+    // Rebuilding the same output (an edit undone) still means "up to date as of this generation".
+    this.builds.set(bundle, {generation: Math.max(generation, known?.generation ?? 0), at: known?.at ?? Date.now()});
     this.latest.set(platform, bundle);
     const body = this.opts.inApp ? injectInApp(source, inAppScript({bundle, gen: generation, platform, http: `http://${host}`, ws: `ws://${host}/pitbox/app`})) : source;
     if (!bc) return {kind: 'source', body, cached: false, status: 200, bundle};
