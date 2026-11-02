@@ -129,6 +129,12 @@ export const configSchema = z.object({
       forward: z.enum(['auto', 'reverse', 'relay']).optional(),
     })
     .optional(),
+  apple: z
+    .object({
+      /** Default simulator for `boot`: a name (`iPhone 17`) or a udid. */
+      simulator: z.string().optional(),
+    })
+    .optional(),
   /**
    * Named states: `save` and `restore` back up and bring back the backend (`{name}`, `{file}` — a file under
    * .pitbox/states); the device side is an emulator snapshot taken by pitbox.

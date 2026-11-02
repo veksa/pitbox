@@ -81,13 +81,13 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Devices and the app
   tool(
     'device',
-    'Devices: list, boot <avd>, shutdown, info, reverse (forward stand ports now).',
+    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now).',
     {action: z.enum(['list', 'boot', 'shutdown', 'info', 'reverse']), avd: opt.str(), wipe: opt.bool(), device},
     a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', info: 'info', reverse: 'reverse'})[a.action as string]!,
   );
   tool(
     'app',
-    'The app: open (or a deep link target; relaunch), install <apk> (replace: uninstall first), stop, clear, uninstall, logs.',
+    'The app: open (or a deep link target; relaunch), install <apk|.app> (replace: uninstall first), stop, clear, uninstall, logs.',
     {action: z.enum(['open', 'install', 'stop', 'clear', 'uninstall', 'logs']), target: opt.str(), relaunch: opt.bool(), apk: opt.str(), replace: opt.bool(), lines: opt.num(), grep: opt.str(), device},
     a => ({open: 'open', install: 'install', stop: 'stopApp', clear: 'clearApp', uninstall: 'uninstall', logs: 'appLogs'})[a.action as string]!,
   );

@@ -9,6 +9,7 @@ import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
+import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
@@ -45,6 +46,7 @@ export class Engine {
   readonly actors: ActorManager;
   #mock?: LlmMock;
   #android?: AndroidDriver | null;
+  #apple?: AppleDriver | null;
   /** Serials whose port forwards were applied since they came online. */
   readonly #forwarded = new Set<string>();
   #watchTimer?: NodeJS.Timeout;
@@ -142,8 +144,9 @@ export class Engine {
 
   /** The UI session of a device (one runner per device, kept between calls). */
   async ui(device?: string): Promise<AndroidUi> {
-    const a = this.#needAndroid();
-    const serial = await a.resolve(device);
+    const t = await this.#target(device);
+    if (t.platform === 'apple') throw new Error('UI automation on a simulator needs the Apple runner (not there yet)\nhint: open, install, logs, settings and screenshot work already');
+    const {a, id: serial} = t;
     let ui = this.#uis.get(serial);
     if (!ui) {
       ui = new AndroidUi(a, serial, {
@@ -257,6 +260,51 @@ export class Engine {
       }
     }
     return this.#android ?? undefined;
+  }
+
+  get apple(): AppleDriver | undefined {
+    if (this.#apple === undefined) {
+      try {
+        this.#apple = new AppleDriver();
+      } catch {
+        this.#apple = null;
+      }
+    }
+    return this.#apple ?? undefined;
+  }
+
+  #needApple(): AppleDriver {
+    const s = this.apple;
+    if (!s) throw new Error('Apple simulators need macOS with Xcode');
+    return s;
+  }
+
+  /**
+   * The device a selector names, on either platform: a booted simulator by udid or name, else an Android device.
+   * Without a selector, the only online device; Android alone keeps its old behaviour when no simulator runs.
+   */
+  async #target(device?: string): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDriver}> {
+    const s = this.apple;
+    const booted = s ? await s.booted().catch(() => []) : [];
+    if (s && booted.length) {
+      if (device) {
+        const hit = pickSimulator(booted, device);
+        if (hit) return {platform: 'apple', id: hit.udid, s};
+      } else {
+        const online = this.android ? (await this.android.devices().catch(() => [])).filter(d => d.state === 'device') : [];
+        if (!online.length) return {platform: 'apple', id: await s.resolve(), s};
+        throw new Error(`several devices online\nhint: pass a device: ${[...online.map(d => d.avd ?? d.serial), ...booted.map(b => b.name)].join(', ')}`);
+      }
+    }
+    if (s && !this.android) return {platform: 'apple', id: await s.resolve(device), s};
+    const a = this.#needAndroid();
+    return {platform: 'android', id: await a.resolve(device), a};
+  }
+
+  #bundleId(p: Params): string {
+    const id = str(p, 'pkg') ?? this.config.app?.apple;
+    if (!id) throw new Error('no bundle id: pass pkg or set app.apple in the config');
+    return id;
   }
 
   #needAndroid(): AndroidDriver {
@@ -427,12 +475,17 @@ export class Engine {
     ping: async () => ({pid: process.pid, root: this.#loaded.root, config: this.#loaded.file}),
 
     status: async () => {
-      const [services, devices] = await Promise.all([this.services.status(), this.android ? this.android.devices().catch(() => []) : Promise.resolve([])]);
+      const [services, devices, simulators] = await Promise.all([
+        this.services.status(),
+        this.android ? this.android.devices().catch(() => []) : Promise.resolve([]),
+        this.apple ? this.apple.booted().catch(() => []) : Promise.resolve([]),
+      ]);
       return {
         services,
         actors: this.actors.list(),
         mock: this.config.mocks?.llm ? {port: this.config.mocks.llm.port, running: this.#mock?.running ?? false, requests: this.#mock?.requests ?? 0} : undefined,
         devices,
+        simulators: simulators.length ? simulators.map(x => ({udid: x.udid, name: x.name, os: x.os})) : undefined,
         exposed: exposedPorts(this.config),
         dev: this.#dev?.status(),
       };
@@ -574,34 +627,60 @@ export class Engine {
     actorCall: async (p: Params) => this.actors.call(req(p, 'name'), p.body),
 
     devices: async () => {
-      const a = this.#needAndroid();
-      return {devices: await a.devices(), avds: a.avds()};
+      const a = this.android;
+      const s = this.apple;
+      if (!a && !s) this.#needAndroid();
+      const sims = s ? await s.simulators().catch(() => []) : [];
+      return {
+        devices: a ? await a.devices() : [],
+        avds: a ? a.avds() : [],
+        ...(s ? {simulators: sims.filter(x => x.kind !== 'watch').map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state}))} : {}),
+      };
     },
 
     boot: async (p: Params) => {
-      const avd = str(p, 'avd') ?? this.config.android?.avd;
-      if (!avd) throw new Error('no AVD: pass avd or set android.avd in the config');
-      const r = await this.#needAndroid().boot(avd, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless'), coldBoot: bool(p, 'coldBoot')});
+      const name = str(p, 'avd') ?? this.config.android?.avd ?? this.config.apple?.simulator;
+      if (!name) throw new Error('no device: pass an AVD or simulator name, or set android.avd / apple.simulator in the config');
+      const a = this.android;
+      const s = this.apple;
+      if (s && !(a?.avds().some(x => x.name === name)) && pickSimulator(await s.simulators(), name)) {
+        const r = await s.boot(name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless')});
+        return {...r, platform: 'apple'};
+      }
+      const r = await this.#needAndroid().boot(name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless'), coldBoot: bool(p, 'coldBoot')});
       const forwards = await this.ensureForwards(true).catch(() => []);
-      return {...r, avd, forwards};
+      return {...r, avd: name, forwards};
     },
 
     shutdown: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      return {serial, ...(await a.shutdown(serial))};
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        this.#uis.delete(t.id);
+        return {udid: t.id, ...(await t.s.shutdown(t.id))};
+      }
+      return {serial: t.id, ...(await t.a.shutdown(t.id))};
     },
 
     install: async (p: Params) => {
+      const file = path.resolve(this.#loaded.root, req(p, 'apk'));
+      if (isAppleBundle(file)) {
+        const s = this.#needApple();
+        const udid = await s.resolve(str(p, 'device'));
+        return {udid, ...(await s.install(udid, file))};
+      }
       const a = this.#needAndroid();
       const serial = await a.resolve(str(p, 'device'));
-      const apk = path.resolve(this.#loaded.root, req(p, 'apk'));
-      return {serial, ...(await a.install(serial, apk, {replace: bool(p, 'replace'), pkg: str(p, 'pkg') ?? this.config.app?.android}))};
+      return {serial, ...(await a.install(serial, file, {replace: bool(p, 'replace'), pkg: str(p, 'pkg') ?? this.config.app?.android}))};
     },
 
     open: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        // No Swift connect library yet: only a link the project names itself is opened instead of the app.
+        const target = str(p, 'target') ?? (this.config.app?.connect ? this.connectUrl() : undefined) ?? this.#bundleId(p);
+        return {udid: t.id, target, ...(await t.s.open(t.id, target, {relaunch: bool(p, 'relaunch'), bundleId: str(p, 'pkg') ?? this.config.app?.apple}))};
+      }
+      const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this
       // dev server, whatever a launcher remembered.
       const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p);
@@ -609,41 +688,69 @@ export class Engine {
     },
 
     stopApp: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      await a.stop(serial, this.#pkg(p));
-      return {serial};
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        await t.s.stop(t.id, this.#bundleId(p));
+        return {udid: t.id};
+      }
+      await t.a.stop(t.id, this.#pkg(p));
+      return {serial: t.id};
     },
 
     clearApp: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      await a.clear(serial, this.#pkg(p));
-      return {serial};
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        await t.s.clear(t.id, this.#bundleId(p));
+        return {udid: t.id};
+      }
+      await t.a.clear(t.id, this.#pkg(p));
+      return {serial: t.id};
     },
 
     uninstall: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      await a.uninstall(serial, this.#pkg(p));
-      return {serial};
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        await t.s.uninstall(t.id, this.#bundleId(p));
+        return {udid: t.id};
+      }
+      await t.a.uninstall(t.id, this.#pkg(p));
+      return {serial: t.id};
     },
 
     apps: async (p: Params) => {
-      const a = this.#needAndroid();
-      return {packages: await a.packages(await a.resolve(str(p, 'device')), str(p, 'filter'))};
+      const t = await this.#target(str(p, 'device'));
+      return {packages: t.platform === 'apple' ? await t.s.packages(t.id, str(p, 'filter')) : await t.a.packages(t.id, str(p, 'filter'))};
     },
 
     appLogs: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
+      const t = await this.#target(str(p, 'device'));
       const all = bool(p, 'all');
-      return {lines: await a.logs(serial, {pkg: all ? undefined : (str(p, 'pkg') ?? this.config.app?.android), lines: num(p, 'lines') ?? 50, grep: str(p, 'grep'), level: str(p, 'level')})};
+      const opts = {lines: num(p, 'lines') ?? 50, grep: str(p, 'grep'), level: str(p, 'level')};
+      if (t.platform === 'apple') return {lines: await t.s.logs(t.id, {...opts, bundleId: all ? undefined : (str(p, 'pkg') ?? this.config.app?.apple)})};
+      return {lines: await t.a.logs(t.id, {...opts, pkg: all ? undefined : (str(p, 'pkg') ?? this.config.app?.android)})};
     },
 
     settings: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        const bundleId = str(p, 'pkg') ?? this.config.app?.apple;
+        const grant = str(p, 'grant');
+        const revoke = str(p, 'revoke');
+        return {
+          udid: t.id,
+          applied: await t.s.settings(t.id, {
+            fontScale: num(p, 'fontScale'),
+            dark: bool(p, 'dark'),
+            animations: bool(p, 'animations'),
+            size: str(p, 'size'),
+            density: str(p, 'density'),
+            locale: str(p, 'locale'),
+            grant: grant && bundleId ? {bundleId, service: grant} : undefined,
+            revoke: revoke && bundleId ? {bundleId, service: revoke} : undefined,
+          }),
+        };
+      }
+      const {a, id: serial} = t;
       const pkg = str(p, 'pkg') ?? this.config.app?.android;
       const permission = str(p, 'grant') ?? str(p, 'revoke');
       return {
@@ -662,24 +769,24 @@ export class Engine {
     },
 
     network: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      return {serial, applied: await a.network(serial, req(p, 'profile') as NetworkProfile)};
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') throw new Error('a simulator shares the Mac\'s network\nhint: use `net` rules on the dev server, or the Network Link Conditioner on the Mac');
+      return {serial: t.id, applied: await t.a.network(t.id, req(p, 'profile') as NetworkProfile)};
     },
 
     screenshot: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
+      const t = await this.#target(str(p, 'device'));
       const file = str(p, 'file') ? path.resolve(this.#loaded.root, req(p, 'file')) : path.join(this.#loaded.stateDir, 'shots', `${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
-      return {serial, ...(await a.screenshot(serial, file))};
+      if (t.platform === 'apple') return {udid: t.id, ...(await t.s.screenshot(t.id, file))};
+      return {serial: t.id, ...(await t.a.screenshot(t.id, file))};
     },
 
     key: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') throw new Error('keys on a simulator need the Apple runner (not there yet)');
       const keys = list(p, 'keys');
-      await a.key(serial, keys);
-      return {serial, keys};
+      await t.a.key(t.id, keys);
+      return {serial: t.id, keys};
     },
 
     snapshot: async (p: Params) => {
@@ -803,15 +910,15 @@ export class Engine {
     reverse: async () => ({applied: await this.ensureForwards(true), ports: exposedPorts(this.config)}),
 
     perf: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      return a.perf(serial, this.#pkg(p), bool(p, 'reset'));
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') throw new Error('frame and memory stats on a simulator need the Apple runner (not there yet)');
+      return t.a.perf(t.id, this.#pkg(p), bool(p, 'reset'));
     },
 
     info: async (p: Params) => {
-      const a = this.#needAndroid();
-      const serial = await a.resolve(str(p, 'device'));
-      return {serial, ...(await a.info(serial))};
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') return {udid: t.id, ...(await t.s.info(t.id))};
+      return {serial: t.id, ...(await t.a.info(t.id))};
     },
 
     doctor: async (p: Params) => {

@@ -18,10 +18,10 @@ stand
   actors | actor start <type> <name> [--port n] | actor stop <name> | actor call <name> '<json>'
 
 android
-  devices                       online devices and idle AVDs
-  boot [avd] [--wipe] [--headless]
+  devices                       online devices, idle AVDs and simulators
+  boot [avd|simulator] [--wipe] [--headless]
   shutdown [--device d]
-  install <apk> [--replace]     --replace uninstalls an app signed with another key first
+  install <apk|app> [--replace] --replace uninstalls an app signed with another key first
   open [package|url] [--relaunch]
   stop-app | clear-app | uninstall [--pkg p]
   apps [filter]
