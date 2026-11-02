@@ -78,6 +78,10 @@ export class DevProxy {
   readonly latest = new Map<string, string>();
   rules: NetRule[] = [];
   trace: string | null = null;
+  /** Serve source even with bytecode on: the runtime's debugger needs the debug info it builds from source itself. */
+  debugSource = false;
+  /** What each platform's app was last given for its main bundle. */
+  readonly servedKind = new Map<string, 'bytecode' | 'source'>();
   #server?: http.Server;
   /** Upgraded (WebSocket) connections, which the HTTP server no longer tracks. */
   readonly #sockets = new Set<net.Socket>();
@@ -160,7 +164,7 @@ export class DevProxy {
    * slower than with the bundler alone.
    */
   async bundleFor(url: string, host: string, wait: boolean): Promise<{kind: 'bytecode' | 'source'; body: Buffer; cached: boolean; status: number; error?: boolean; bundle?: string}> {
-    const bc = this.opts.bytecode;
+    const bc = this.debugSource ? undefined : this.opts.bytecode;
     const generation = this.generation;
     const servedKey = `${host}|${url}`;
     const served = this.#served.get(servedKey);
@@ -185,7 +189,7 @@ export class DevProxy {
     this.latest.set(platform, bundle);
     let body: Buffer = source;
     if (this.opts.inApp) {
-      const script = inAppScript({bundle, gen: generation, platform, http: `http://${host}`, ws: `ws://${host}/pitbox/app`});
+      const script = inAppScript({bundle, gen: generation, platform, http: `http://${host}`, ws: `ws://${host}/pitbox/app`, fromSource: !bc});
       body = injectInApp(source, script);
       const at = injectionOf(source.toString('utf8'), script);
       if (at) this.#injections.set(bundle, at);
@@ -352,7 +356,8 @@ export class DevProxy {
         }
         res.writeHead(200, {'content-type': 'application/javascript', 'content-length': r.body.length, 'cache-control': 'no-store'});
         res.end(r.body);
-        const note = r.kind === 'bytecode' ? 'cached' : this.opts.bytecode ? 'bytecode not ready, compiling in background' : undefined;
+        this.servedKind.set(platformOf(url), r.kind);
+        const note = r.kind === 'bytecode' ? 'cached' : this.debugSource ? 'source for the debugger' : this.opts.bytecode ? 'bytecode not ready, compiling in background' : undefined;
         this.#record({at: t0, url, kind: r.kind, ms: Date.now() - t0, bytes: r.body.length, status: 200, note});
         return;
       } catch (e) {
@@ -361,6 +366,7 @@ export class DevProxy {
       }
     }
 
+    if (native) this.servedKind.set(platformOf(url), 'source');
     const upstream = http.request({host: '127.0.0.1', port: this.opts.upstreamPort, path: url, method: req.method, headers: req.headers}, up => {
       res.writeHead(up.statusCode ?? 502, up.headers);
       let bytes = 0;

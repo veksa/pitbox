@@ -8,7 +8,15 @@
 //
 // Written as plain ES2017 inside a function that is serialised with `toString()`: Hermes runs it as is.
 
-export type InAppConfig = {bundle: string; gen: number; platform: string; http: string; ws: string};
+export type InAppConfig = {
+  bundle: string;
+  gen: number;
+  platform: string;
+  http: string;
+  ws: string;
+  /** Served as source for sure (with bytecode on, a source answer may also be bytecode that was not ready yet). */
+  fromSource?: boolean;
+};
 
 // The body below runs inside the app, not in Node.
 /* eslint-disable */
@@ -16,7 +24,7 @@ function pitboxInApp(cfg: InAppConfig) {
   var g: any = globalThis as any;
   if (g.__pitbox) return;
   var scriptStart = Date.now();
-  var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false, errors: [], ch: null};
+  var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false, errors: [], ch: null, fromSource: !!cfg.fromSource};
   g.__pitbox = state;
   var seq = 0;
   var hex = function (n: number) {
