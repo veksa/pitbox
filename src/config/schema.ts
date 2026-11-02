@@ -111,6 +111,12 @@ export const configSchema = z.object({
       reverse: z.array(z.number().int().positive()).optional(),
     })
     .optional(),
+  /** Directory of `.flow` files. Default `flows`. */
+  flows: z.string().optional(),
+  /** Deep link templates for `goto`: `{item: 'myapp://item/{id}'}`. */
+  routes: z.record(z.string(), z.string()).optional(),
+  /** Flow that signs a user in for `as <user>`; it gets `${user}`. */
+  signIn: z.string().optional(),
   /** Named documents for `docs`: `{check: 'CHECK.md'}`. */
   docs: z.record(z.string(), z.string()).optional(),
   /** Module whose default export is an array of extra doctor rules. */

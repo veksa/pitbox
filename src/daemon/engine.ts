@@ -13,6 +13,8 @@ import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
 import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
+import {runFlow, type FlowHost} from '../flows/run.ts';
+import {AndroidUi} from '../ui/android.ts';
 
 type Params = Record<string, unknown>;
 
@@ -42,6 +44,7 @@ export class Engine {
   #watchTimer?: NodeJS.Timeout;
   #lastForwardCheck = 0;
   #dev?: DevServer;
+  readonly #uis = new Map<string, AndroidUi>();
   #devKey = '';
 
   private constructor(loaded: LoadedConfig) {
@@ -106,6 +109,67 @@ export class Engine {
     if (st?.status !== 'up' && st?.status !== 'external') return undefined;
     if (!dev.proxy.listening) await dev.start();
     return prewarm ? dev.prewarm() : undefined;
+  }
+
+  /** The UI session of a device (one runner per device, kept between calls). */
+  async ui(device?: string): Promise<AndroidUi> {
+    const a = this.#needAndroid();
+    const serial = await a.resolve(device);
+    let ui = this.#uis.get(serial);
+    if (!ui) {
+      ui = new AndroidUi(a, serial);
+      this.#uis.set(serial, ui);
+    }
+    return ui;
+  }
+
+  #flowsDir() {
+    return path.resolve(this.#loaded.root, this.config.flows ?? 'flows');
+  }
+
+  #loadFlow(name: string): string {
+    const candidates = [name, `${name}.flow`].flatMap(n => [path.resolve(this.#flowsDir(), n), path.resolve(this.#loaded.root, n)]);
+    const file = candidates.find(c => fs.existsSync(c) && fs.statSync(c).isFile());
+    if (!file) throw new Error(`no flow "${name}" in ${this.#flowsDir()}`);
+    return fs.readFileSync(file, 'utf8');
+  }
+
+  #flowHost(device?: string): FlowHost {
+    return {
+      ui: () => this.ui(device),
+      open: async (target, relaunch) => {
+        await this.methods.open({device, target, relaunch});
+        (await this.ui(device)).record(`open${relaunch ? '!' : ''}${target ? ` ${JSON.stringify(target)}` : ''}`);
+      },
+      goto: async (route, params) => {
+        await this.#goto(device, route, params);
+      },
+      signIn: user => runFlow(this.#flowHost(device), this.#loadFlow(this.#needSignIn()), {user}),
+      tool: (name, params) => this.methods.tool({name, params}) as Promise<{code: number | null; output: string}>,
+      loadFlow: name => this.#loadFlow(name),
+      screenshot: async name => (await (await this.ui(device)).screenshot(this.#shotFile(name))).file,
+    };
+  }
+
+  #needSignIn(): string {
+    if (!this.config.signIn) throw new Error('no signIn flow in the config');
+    return this.config.signIn;
+  }
+
+  #shotFile(name?: string) {
+    return path.join(this.#loaded.stateDir, 'shots', `${name ?? new Date().toISOString().replace(/[:.]/g, '-')}.jpg`);
+  }
+
+  async #goto(device: string | undefined, route: string, params: Record<string, string>) {
+    const template = this.config.routes?.[route];
+    if (!template) throw new Error(`unknown route: ${route} (known: ${Object.keys(this.config.routes ?? {}).join(', ') || 'none'})`);
+    const url = template.replace(/{(w+)}/g, (_, k: string) => {
+      if (params[k] === undefined) throw new Error(`route ${route} needs ${k}`);
+      return encodeURIComponent(params[k]!);
+    });
+    await this.methods.open({device, target: url});
+    (await this.ui(device)).record(`goto ${route}${Object.entries(params).map(([k, v]) => ` ${k}=${JSON.stringify(v)}`).join('')}`);
+    return url;
   }
 
   get android(): AndroidDriver | undefined {
@@ -178,6 +242,7 @@ export class Engine {
     this.actors.stopAll();
     await this.#mock?.stop();
     await this.#dev?.stop();
+    for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
   }
 
   async #startMock() {
@@ -388,6 +453,60 @@ export class Engine {
       const keys = list(p, 'keys');
       await a.key(serial, keys);
       return {serial, keys};
+    },
+
+    snapshot: async (p: Params) => {
+      const ui = await this.ui(str(p, 'device'));
+      const snap = await ui.snapshot({system: bool(p, 'system')});
+      return {lines: snap.lines};
+    },
+
+    press: async (p: Params) => (await this.ui(str(p, 'device'))).press(req(p, 'target'), (str(p, 'kind') as 'tap' | 'longpress' | 'doubletap' | undefined) ?? 'tap'),
+    fill: async (p: Params) => (await this.ui(str(p, 'device'))).fill(req(p, 'target'), req(p, 'text')),
+    type: async (p: Params) => (await this.ui(str(p, 'device'))).type(req(p, 'text')),
+    uiKey: async (p: Params) => (await this.ui(str(p, 'device'))).key(list(p, 'keys')),
+    swipe: async (p: Params) => (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300),
+    scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 8),
+
+    wait: async (p: Params) => {
+      const r = await (await this.ui(str(p, 'device'))).wait(req(p, 'target'), {gone: bool(p, 'gone'), timeoutMs: (num(p, 'timeout') ?? 10) * 1000});
+      return {ms: r.ms};
+    },
+
+    focus: async (p: Params) => (await this.ui(str(p, 'device'))).focus(),
+
+    uiShot: async (p: Params) => (await this.ui(str(p, 'device'))).screenshot(this.#shotFile(str(p, 'name')), num(p, 'scale') ?? 0.4),
+
+    run: async (p: Params) => {
+      const device = str(p, 'device');
+      const source = str(p, 'steps') ?? this.#loadFlow(req(p, 'flow'));
+      const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).map(([k, v]) => [k, String(v)]));
+      return runFlow(this.#flowHost(device), source, params);
+    },
+
+    goto: async (p: Params) => {
+      const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).map(([k, v]) => [k, String(v)]));
+      return {url: await this.#goto(str(p, 'device'), req(p, 'route'), params)};
+    },
+
+    as: async (p: Params) => runFlow(this.#flowHost(str(p, 'device')), this.#loadFlow(this.#needSignIn()), {user: req(p, 'user')}),
+
+    recordStart: async (p: Params) => {
+      const ui = await this.ui(str(p, 'device'));
+      ui.recording = [];
+      return {recording: true};
+    },
+
+    recordStop: async (p: Params) => {
+      const ui = await this.ui(str(p, 'device'));
+      const lines = ui.recording ?? [];
+      ui.recording = undefined;
+      const name = str(p, 'name');
+      if (!name) return {lines};
+      const file = path.resolve(this.#flowsDir(), name.endsWith('.flow') ? name : `${name}.flow`);
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      fs.writeFileSync(file, `${lines.join('\n')}\n`);
+      return {file, lines};
     },
 
     reverse: async () => ({applied: await this.ensureForwards(true), ports: exposedPorts(this.config)}),

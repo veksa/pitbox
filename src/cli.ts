@@ -29,9 +29,20 @@ android
   settings fontScale=1.3 dark=true animations=false size=1080x2400 density=420 locale=fr-FR grant=<perm> revoke=<perm>
   network full|lte|umts|edge|gsm|offline|online
   screenshot [file]
-  key back|home|up|down|left|right|center|enter|…|<keycode> …
   reverse                       forward every exposed port to every device now
   info
+
+ui (through the on-device runner; every action waits for the UI to settle and prints what changed)
+  snapshot [--system]           the screen as short lines with refs (@e12)
+  press|longpress|doubletap <@ref | id=… | text=… | label=… | words | x,y>
+  fill <selector> <text> · type <text> · key back|home|up|down|left|right|center|enter|…|<keycode> …
+  swipe up|down|left|right|x1,y1,x2,y2 [ms] · scroll down until <selector>
+  wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
+
+flows
+  run <flow> [param=value…] | run --steps "press id=a"   run a flow in the daemon, get one verdict
+  goto <route> [param=value…] · as <user>
+  record start | record stop [name]
 
 devserver
   dev [status|prewarm|reload|restart]   the bundler behind pitbox's proxy: device requests, bytecode, prewarming
@@ -126,7 +137,38 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'screenshot':
       return {method: 'screenshot', params: {device, file: rest[0]}};
     case 'key':
-      return {method: 'key', params: {device, keys: rest}};
+      return {method: 'uiKey', params: {device, keys: rest}};
+    case 'snapshot':
+      return {method: 'snapshot', params: {device, system: flags.system}};
+    case 'press':
+    case 'longpress':
+    case 'doubletap':
+      return {method: 'press', params: {device, target: rest.join(' '), kind: cmd === 'press' ? 'tap' : cmd}};
+    case 'fill':
+      return {method: 'fill', params: {device, target: rest.slice(0, -1).join(' '), text: rest[rest.length - 1]}};
+    case 'type':
+      return {method: 'type', params: {device, text: rest.join(' ')}};
+    case 'swipe':
+      return {method: 'swipe', params: {device, direction: rest[0], duration: rest[1]}};
+    case 'scroll':
+      return {method: 'scroll', params: {device, direction: rest[0], until: rest.slice(rest[1] === 'until' ? 2 : 1).join(' ')}};
+    case 'wait':
+      return {method: 'wait', params: {device, gone: rest[0] === 'gone', target: (rest[0] === 'gone' ? rest.slice(1) : rest).join(' '), timeout: flags.timeout}};
+    case 'focus':
+      return {method: 'focus', params: {device}};
+    case 'shot':
+      return {method: 'uiShot', params: {device, name: rest[0], scale: flags.scale}};
+    case 'run':
+      return {method: 'run', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
+    case 'goto':
+      return {method: 'goto', params: {device, route: rest[0], params: kv(rest.slice(1))}};
+    case 'as':
+      return {method: 'as', params: {device, user: rest[0]}};
+    case 'record': {
+      if (rest[0] === 'start') return {method: 'recordStart', params: {device}};
+      if (rest[0] === 'stop') return {method: 'recordStop', params: {device, name: rest[1]}};
+      throw new Error('record start | record stop [name]');
+    }
     case 'reverse':
       return {method: 'reverse', params: {}};
     case 'info':

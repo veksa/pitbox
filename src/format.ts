@@ -7,6 +7,9 @@ import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus} from './devserver/devserver.ts';
+import type {ActResult} from './ui/android.ts';
+import type {FlowResult} from './flows/run.ts';
+import type {UiNode} from './ui/snapshot.ts';
 import {clipLines, seconds} from './util/text.ts';
 
 const mark: Record<string, string> = {up: '✓', external: '✓', starting: '…', stopped: '·', down: '✗', failed: '✗'};
@@ -73,6 +76,27 @@ export const fmtDoctor = (r: DoctorReport): string => {
 
 export const fmtTool = (r: ToolResult): string => `${r.code === 0 ? '' : `exit ${r.timedOut ? 'timeout' : r.code} · `}${seconds(r.ms)}\n${r.output}`.trimEnd();
 
+export const fmtAct = (r: ActResult): string => {
+  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}`;
+  if (!r.diff.changed) return `${head}\nno change on screen`;
+  return [head, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
+};
+
+export const fmtFlow = (r: FlowResult): string => {
+  if (r.ok) return [`✓ flow passed: ${r.steps} steps in ${seconds(r.ms)}`, ...r.notes].join('\n');
+  const f = r.failed!;
+  return [
+    `✗ flow failed at line ${f.line}: ${f.step}`,
+    `  ${f.error}`,
+    `  after ${r.steps} passing steps, ${seconds(r.ms)}`,
+    ...(f.screenshot ? [`  screenshot: ${f.screenshot}`] : []),
+    ...(f.screen ? ['screen:', ...f.screen] : []),
+    ...r.notes,
+  ].join('\n');
+};
+
+const fmtNode = (n?: UiNode) => (n ? [n.c, n.t && JSON.stringify(n.t), n.d && `(${n.d})`, n.id && `#${n.id}`].filter(Boolean).join(' ') : 'none');
+
 /** Generic fallback: `key: value` lines for small objects. */
 export const fmtObject = (o: unknown): string => {
   if (o === undefined || o === null) return 'ok';
@@ -105,6 +129,30 @@ export const formatResult = (method: string, r: unknown): string => {
       return [...(x.services ? fmtServices(x.services as ServiceState[]) : []), ...fmtPrewarm(x.prewarm as Prewarm | undefined)].join('\n') || 'nothing to prewarm';
     case 'devStatus':
       return [...(x.service ? fmtServices([x.service as ServiceState]) : []), ...fmtDev(x as unknown as DevserverStatus, true)].join('\n');
+    case 'press':
+    case 'fill':
+    case 'type':
+    case 'uiKey':
+    case 'swipe':
+    case 'scroll':
+      return fmtAct(r as ActResult);
+    case 'snapshot':
+      return (x.lines as string[]).join('\n') || '(empty screen)';
+    case 'run':
+    case 'as':
+      return fmtFlow(r as FlowResult);
+    case 'focus':
+      return `input focus: ${fmtNode(x.input as UiNode | undefined)}\naccessibility focus: ${fmtNode(x.accessibility as UiNode | undefined)}`;
+    case 'uiShot':
+      return `${x.file} (${x.width}×${x.height}, ${x.kb} KB)`;
+    case 'wait':
+      return `appeared in ${x.ms} ms`;
+    case 'goto':
+      return `opened ${x.url}`;
+    case 'recordStart':
+      return 'recording: actions from now on become flow steps';
+    case 'recordStop':
+      return [x.file ? `saved ${x.file}` : 'recorded:', ...(x.lines as string[])].join('\n');
     case 'devReload':
       return 'reload sent to connected apps';
     case 'logs':

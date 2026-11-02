@@ -75,9 +75,28 @@ export const startMcp = async (opts: {config?: string} = {}) => {
   );
   tool('network', 'Network conditions: speed profile (emulator) or offline/online (airplane mode).', {profile: z.enum(['full', 'lte', 'umts', 'edge', 'gsm', 'offline', 'online']), device}, 'network');
   tool('screenshot', 'Save a screenshot to a file and return its path (the image is not sent; read the file only if you need to look).', {file: z.string().optional(), device}, 'screenshot');
-  tool('key', 'Press keys: back, home, up, down, left, right, center, enter, menu, … or keycodes (TV remote included).', {keys: z.array(z.string()), device}, 'key');
   tool('reverse', 'Forward every exposed stand port to every online device now (pitbox also does this on its own every few seconds).', {}, 'reverse');
   tool('info', 'Device facts: model, Android version, SDK, ABI, display, free space.', {device}, 'info');
+
+  // UI — through the on-device runner. Every action waits for the UI to settle and answers with what changed.
+  const target = z.string().describe('@ref from the last snapshot, id=…, text=… (text~= contains), label=…, plain words, or x,y');
+  tool('snapshot', 'The screen as short lines with refs (@e12): role, text, (label), #id, [state]. Take one before acting on a new screen; after an action you get the diff instead.', {system: z.boolean().optional(), device}, 'snapshot');
+  tool('press', 'Tap a target (kind: longpress, doubletap). Waits for the UI to settle; answers with the screen diff.', {target, kind: z.enum(['tap', 'longpress', 'doubletap']).optional(), device}, 'press');
+  tool('fill', 'Replace the text of a field.', {target, text: z.string(), device}, 'fill');
+  tool('type', 'Append text to the focused field.', {text: z.string(), device}, 'type');
+  tool('key', 'Press keys: back, home, up, down, left, right, center, enter, menu, … or keycodes (TV remote included).', {keys: z.array(z.string()), device}, 'uiKey');
+  tool('swipe', 'Swipe up/down/left/right or "x1,y1,x2,y2"; duration in ms sets the velocity.', {direction: z.string(), duration: z.number().int().optional(), device}, 'swipe');
+  tool('scroll', 'Scroll in a direction until a target is on screen.', {direction: z.enum(['down', 'up', 'left', 'right']).optional(), until: target, device}, 'scroll');
+  tool('wait', 'Wait until a target appears (gone=true: disappears).', {target, gone: z.boolean().optional(), timeout: z.number().optional().describe('seconds, default 10'), device}, 'wait');
+  tool('focus', 'Which node has input focus (what a D-pad or keyboard acts on) and accessibility focus.', {device}, 'focus');
+  tool('ui_screenshot', 'Downscaled JPEG of the screen saved to a file; returns the path. Read the file only when text and snapshot are not enough.', {name: z.string().optional(), scale: z.number().optional(), device}, 'uiShot');
+
+  // Flows — run in the daemon: one call, one verdict.
+  tool('run', 'Run a flow file (or inline steps, one per line) in the daemon and get one verdict; on failure, the failing line, the error and the screen. Steps: open, goto, as, press, fill, type, key, swipe, scroll … until, wait, expect [gone|focus], tool … contains, sleep, screenshot, run.', {flow: z.string().optional(), steps: z.string().optional(), params: z.record(z.string(), z.string()).optional(), device}, 'run');
+  tool('goto', 'Open a screen by a route from the config (deep link template).', {route: z.string(), params: z.record(z.string(), z.string()).optional(), device}, 'goto');
+  tool('as', 'Sign in as a user with the signIn flow from the config.', {user: z.string(), device}, 'as');
+  tool('record_start', 'Start recording UI actions as flow steps (semantic selectors, not coordinates).', {device}, 'recordStart');
+  tool('record_stop', 'Stop recording; with a name, save it as a flow file.', {name: z.string().optional(), device}, 'recordStop');
 
   // Support
   tool('doctor', 'Check the stand and devices for known problems; fix=true applies the remedies that have one.', {fix: z.boolean().optional(), only: z.array(z.string()).optional()}, 'doctor');

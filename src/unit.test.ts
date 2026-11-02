@@ -125,7 +125,7 @@ describe('cli and engine agree', () => {
     fs.writeFileSync(path.join(dir, 'pitbox.config.json'), '{}');
     const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
     const methods = new Set(Object.keys(engine.methods));
-    const commands = ['up', 'down', 'restart', 'status', 'logs x', 'tools', 'tool x', 'actors', 'actor start a b', 'actor stop a', 'actor call a', 'devices', 'boot', 'shutdown', 'install a.apk', 'open', 'stop-app', 'clear-app', 'uninstall', 'apps', 'app-logs', 'settings', 'network full', 'screenshot', 'key back', 'reverse', 'info', 'doctor', 'docs', 'dev status', 'dev prewarm', 'dev reload', 'dev restart'];
+    const commands = ['up', 'down', 'restart', 'status', 'logs x', 'tools', 'tool x', 'actors', 'actor start a b', 'actor stop a', 'actor call a', 'devices', 'boot', 'shutdown', 'install a.apk', 'open', 'stop-app', 'clear-app', 'uninstall', 'apps', 'app-logs', 'settings', 'network full', 'screenshot', 'key back', 'reverse', 'info', 'doctor', 'docs', 'dev status', 'dev prewarm', 'dev reload', 'dev restart', 'snapshot', 'press a', 'longpress a', 'doubletap a', 'fill a b', 'type a', 'swipe up', 'scroll down until a', 'wait a', 'focus', 'shot', 'run f', 'goto r', 'as u', 'record start', 'record stop'];
     for (const c of commands) {
       const {method} = toCall(parseArgs(c.split(' ')));
       expect(method, c).not.toBe(DAEMON_STOP);
