@@ -129,6 +129,11 @@ export const configSchema = z.object({
       forward: z.enum(['auto', 'reverse', 'relay']).optional(),
     })
     .optional(),
+  /**
+   * Named states: `save` and `restore` back up and bring back the backend (`{name}`, `{file}` — a file under
+   * .pitbox/states); the device side is an emulator snapshot taken by pitbox.
+   */
+  states: z.object({save: z.string().optional(), restore: z.string().optional()}).optional(),
   /** Directory of `.flow` files. Default `flows`. */
   flows: z.string().optional(),
   /** Deep link templates for `goto`: `{item: 'myapp://item/{id}'}`. */

@@ -16,6 +16,7 @@
 //   expect text="Welcome" | expect gone id=error | expect focus id=play
 //   expect playing id=player | expect paused id=player   (frames compared on the device; black is not playing)
 //   tool sql query="select 1" contains "1"
+//   state signed-in              restore a named stand state (device snapshot + backend)
 //   sleep 500
 //   screenshot [name]
 //   run sign-in user=viewer      another flow file
@@ -100,7 +101,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'state', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -121,6 +122,7 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'key':
       case 'swipe':
       case 'touch':
+      case 'state':
       case 'sleep':
       case 'run':
       case 'tool':

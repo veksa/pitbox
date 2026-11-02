@@ -108,6 +108,7 @@ describe('flows', () => {
       signIn: async () => ({ok: true, steps: 1, ms: 0, notes: []}),
       tool: async (name, p) => ({code: 0, output: name === 'sql' ? `rows: ${p.query?.length}` : ''}),
       loadFlow: () => 'press text=Next',
+      state: async () => undefined,
       screenshot: async n => `/shots/${n}.jpg`,
     };
     return {host, calls};

@@ -12,6 +12,7 @@ export type FlowHost = {
   signIn: (user: string) => Promise<FlowResult>;
   tool: (name: string, params: Record<string, string>) => Promise<{code: number | null; output: string}>;
   loadFlow: (name: string) => string;
+  state: (name: string) => Promise<void>;
   screenshot: (name?: string) => Promise<string>;
 };
 
@@ -114,6 +115,9 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number):
       }
       return;
     }
+    case 'state':
+      await host.state(a[0]!);
+      return;
     case 'sleep':
       await new Promise(r => setTimeout(r, Number(a[0])));
       return;

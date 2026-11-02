@@ -15,6 +15,7 @@ import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
 import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
+import {StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import {fillRoute} from '../flows/flow.ts';
 import {AndroidUi} from '../ui/android.ts';
@@ -50,6 +51,29 @@ export class Engine {
   #lastForwardCheck = 0;
   #dev?: DevServer;
   readonly #uis = new Map<string, AndroidUi>();
+
+  #states(): StateStore {
+    return new StateStore({root: this.#loaded.root, stateDir: this.#loaded.stateDir, shell: this.config.shell}, this.config.states);
+  }
+
+  /** An emulator to snapshot, or none when only the backend is saved. */
+  async #stateDevice(device?: string) {
+    const a = this.android;
+    if (!a) return {serial: undefined, avd: undefined};
+    const online = (await a.devices().catch(() => [])).filter(d => d.state === 'device');
+    if (!online.length && !device) return {serial: undefined, avd: undefined};
+    const serial = await a.resolve(device);
+    return {serial, avd: online.find(d => d.serial === serial)?.avd};
+  }
+
+  /** After a snapshot load the device's runner and forwards belong to a past moment: start them again. */
+  async #afterRestore(serial: string) {
+    const ui = this.#uis.get(serial);
+    this.#uis.delete(serial);
+    await ui?.stop().catch(() => undefined);
+    this.#forwarded.delete(serial);
+    await this.ensureForwards(true).catch(() => undefined);
+  }
   #devKey = '';
 
   private constructor(loaded: LoadedConfig) {
@@ -170,6 +194,9 @@ export class Engine {
       signIn: user => runFlow(this.#flowHost(device), this.#loadFlow(this.#needSignIn()), {user}),
       tool: (name, params) => this.methods.tool({name, params}) as Promise<{code: number | null; output: string}>,
       loadFlow: name => this.#loadFlow(name),
+      state: async name => {
+        await this.methods.stateRestore({name, device});
+      },
       screenshot: async name => (await (await this.ui(device)).screenshot(this.#shotFile(name))).file,
     };
   }
@@ -649,6 +676,26 @@ export class Engine {
     },
 
     as: async (p: Params) => runFlow(this.#flowHost(str(p, 'device')), this.#loadFlow(this.#needSignIn()), {user: req(p, 'user')}),
+
+    stateList: async () => ({states: this.#states().list()}),
+
+    stateSave: async (p: Params) => {
+      const {serial, avd} = await this.#stateDevice(str(p, 'device'));
+      return this.#states().save(req(p, 'name'), this.android, serial, avd);
+    },
+
+    stateRestore: async (p: Params) => {
+      const {serial} = await this.#stateDevice(str(p, 'device'));
+      const r = await this.#states().restore(req(p, 'name'), this.android, serial);
+      if (serial && r.device) await this.#afterRestore(serial);
+      return r;
+    },
+
+    stateDelete: async (p: Params) => {
+      const {serial} = await this.#stateDevice(str(p, 'device'));
+      await this.#states().remove(req(p, 'name'), this.android, serial);
+      return {deleted: req(p, 'name')};
+    },
 
     recordStart: async (p: Params) => {
       const ui = await this.ui(str(p, 'device'));

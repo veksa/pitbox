@@ -46,6 +46,7 @@ flows
   run <flow> [param=value…] | run --steps "press id=a"   run a flow in the daemon, get one verdict
   goto <route> [param=value…] · as <user>
   record start | record stop [name]
+  state save|restore|rm <name> · state list   device snapshot + backend dump, back in seconds
 
 devserver
   dev [status|prewarm|reload|restart]   the bundler behind pitbox's proxy: device requests, bytecode, prewarming
@@ -178,6 +179,12 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'goto', params: {device, route: rest[0], params: kv(rest.slice(1))}};
     case 'as':
       return {method: 'as', params: {device, user: rest[0]}};
+    case 'state': {
+      const [sub, name] = rest;
+      const method = ({save: 'stateSave', restore: 'stateRestore', list: 'stateList', rm: 'stateDelete'} as Record<string, string>)[sub ?? 'list'];
+      if (!method) throw new Error('state save|restore|rm <name> | state list');
+      return {method, params: {device, name}};
+    }
     case 'record': {
       if (rest[0] === 'start') return {method: 'recordStart', params: {device}};
       if (rest[0] === 'stop') return {method: 'recordStop', params: {device, name: rest[1]}};

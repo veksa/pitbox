@@ -185,6 +185,12 @@ export const formatResult = (method: string, r: unknown): string => {
       const lines = rules.map(r => `${r.id}: ${r.action} ${r.kind} matching "${r.match}"${r.status ? ` → ${r.status}` : ''}${r.ms ? ` ${r.ms} ms` : ''}`);
       return [...(lines.length ? lines : ['no network rules']), `apps connected: ${x.apps}`].join('\n');
     }
+    case 'stateList':
+      return (x.states as {name: string; savedAt: number; avd?: string; device?: string; backend: boolean}[]).map(s => `${s.name} · ${new Date(s.savedAt).toISOString().slice(0, 16).replace('T', ' ')} · ${[s.avd ?? s.device, s.backend && 'backend'].filter(Boolean).join(' + ') || 'empty'}`).join('\n') || 'no states saved';
+    case 'stateSave':
+      return `saved ${x.name}: ${[x.avd ?? x.device ? `snapshot of ${x.avd ?? x.device}` : '', x.backend ? 'backend dump' : ''].filter(Boolean).join(' + ') || 'nothing (no emulator, no states.save in the config)'}`;
+    case 'stateRestore':
+      return `restored ${x.name} in ${seconds(x.ms as number)}`;
     case 'devReload':
       return 'reload sent to connected apps';
     case 'logs':
