@@ -4,6 +4,7 @@ import path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
+import {fmtDevices} from './format.ts';
 import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
@@ -104,5 +105,15 @@ describe('apple driver', () => {
     fs.writeFileSync(path.join(dir, 'Other-2026-01-02-100001.ips'), ips({bundle: 'com.example.other'}));
     const found = await w.since(Date.parse('2026-01-02T10:00:00+02:00'));
     expect(found.map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
+  });
+
+  it('lists booted simulators as online devices and idle ones by name', () => {
+    const sims = [
+      {udid: 'AAA', name: 'iPhone 17', os: 'iOS 27.0', kind: 'phone', state: 'Booted'},
+      {udid: 'BBB', name: 'Apple TV 4K', os: 'tvOS 27.2', kind: 'tv', state: 'Shutdown'},
+      {udid: 'CCC', name: 'Apple TV 4K', os: 'tvOS 27.1', kind: 'tv', state: 'Shutdown'},
+    ];
+    expect(fmtDevices([], [], sims)).toEqual(['✓ iPhone 17  iOS 27.0  AAA', 'simulators: Apple TV 4K']);
+    expect(fmtDevices([], [], [])).toEqual(['no devices online']);
   });
 });

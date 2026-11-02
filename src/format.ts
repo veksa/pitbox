@@ -30,14 +30,21 @@ export const fmtServices = (services: ServiceState[]): string[] => {
   });
 };
 
-export const fmtDevices = (devices: AndroidDevice[], avds?: {name: string; kind: string}[]): string[] => {
+export type SimRow = {udid: string; name: string; os: string; kind?: string; state?: string};
+
+export const fmtDevices = (devices: AndroidDevice[], avds?: {name: string; kind: string}[], sims: SimRow[] = []): string[] => {
   const out = devices.map(d => `${d.state === 'device' ? '✓' : '✗'} ${d.serial}${d.avd ? `  ${d.avd}` : ''}${d.kind ? ` (${d.kind})` : ''}${d.model ? `  ${d.model}` : ''}${d.state !== 'device' ? `  ${d.state}` : ''}`);
-  if (!devices.length) out.push('no devices online');
+  const booted = sims.filter(s => !s.state || s.state === 'Booted');
+  // Booted simulators are online devices too; the udid is there for names that repeat.
+  out.push(...booted.map(s => `✓ ${s.name}  ${s.os}${s.kind && s.kind !== 'phone' ? ` (${s.kind})` : ''}  ${s.udid}`));
+  if (!devices.length && !booted.length) out.push('no devices online');
   if (avds) {
     const running = new Set(devices.map(d => d.avd));
     const idle = avds.filter(a => !running.has(a.name));
     if (idle.length) out.push(`avds: ${idle.map(a => `${a.name}${a.kind !== 'phone' ? `(${a.kind})` : ''}`).join(', ')}`);
   }
+  const idleSims = [...new Set(sims.filter(s => s.state && s.state !== 'Booted').map(s => s.name))];
+  if (idleSims.length) out.push(`simulators: ${idleSims.join(', ')}`);
   return out;
 };
 
@@ -57,12 +64,12 @@ export const fmtDev = (d: DevserverStatus, detailed = false): string[] => {
   return out;
 };
 
-export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; exposed: number[]; dev?: DevserverStatus}): string => {
+export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; simulators?: SimRow[]; exposed: number[]; dev?: DevserverStatus}): string => {
   const out = [...fmtServices(r.services)];
   if (r.dev) out.push(...fmtDev(r.dev));
   if (r.mock) out.push(`${r.mock.running ? '✓' : '·'} llm-mock :${r.mock.port} ${r.mock.running ? `${r.mock.requests} requests` : 'stopped'}`);
   out.push(...fmtActors(r.actors));
-  out.push(...fmtDevices(r.devices));
+  out.push(...fmtDevices(r.devices, undefined, r.simulators));
   if (r.exposed.length) out.push(`forwarded to devices: ${r.exposed.join(', ')}`);
   return out.join('\n');
 };
@@ -162,7 +169,10 @@ export const formatResult = (method: string, r: unknown): string => {
       ].join('\n');
     }
     case 'perf':
-      return x.reset ? 'frame stats reset — interact, then read perf' : `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
+      if (x.reset) return String(x.note ?? 'frame stats reset — interact, then read perf');
+      // Without a frame counter (simulators) only the memory line, not a row of question marks.
+      if (x.frames === undefined) return `memory ${x.memoryMb ?? '?'} MB${x.note ? ` · ${x.note}` : ''}`;
+      return `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
     case 'visual':
       return x.status === 'saved' ? `baseline saved: ${x.baseline}` : x.status === 'match' ? `matches ${x.name} (score ${x.score})` : `differs from ${x.name}: score ${x.score}, ${Math.round((x.changedShare as number) * 1000) / 10}% of the screen, regions ${(x.regions as number[][]).map(r => `[${r.join(',')}]`).join(' ')}\ncurrent: ${x.current}\nbaseline: ${String(x.baseline).replace(/\.json$/, '.jpg')}`;
     case 'media':
@@ -233,7 +243,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'docs':
       return x.docs ? `docs: ${(x.docs as string[]).join(', ') || 'none configured'}` : (x.lines as string[]).join('\n') || '(no matches)';
     case 'devices':
-      return fmtDevices(x.devices as AndroidDevice[], x.avds as {name: string; kind: string}[]).join('\n');
+      return fmtDevices(x.devices as AndroidDevice[], x.avds as {name: string; kind: string}[], x.simulators as SimRow[] | undefined).join('\n');
     case 'doctor':
       return fmtDoctor(x as unknown as DoctorReport);
     case 'tool':
@@ -247,23 +257,23 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'tools':
       return (r as {name: string; description: string; params: Record<string, string>}[]).map(t => `${t.name}(${Object.keys(t.params).join(', ')}) — ${t.description}`).join('\n') || 'no tools configured';
     case 'boot':
-      return x.already ? `${x.avd} already running as ${x.serial}` : `${x.avd} booted as ${x.serial} in ${seconds(x.ms as number)}`;
+      return x.already ? `${x.avd ?? x.name} already running as ${x.serial ?? x.udid}` : `${x.avd ?? x.name} booted as ${x.serial ?? x.udid} in ${seconds(x.ms as number)}`;
     case 'install':
-      return `installed on ${x.serial} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
+      return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
     case 'open':
     {
       const b = x.bundle as {kind: string; kb: number; ms: number; note?: string} | undefined;
       const parts = [
-        x.totalMs !== undefined ? `activity ${x.totalMs} ms` : '',
+        x.totalMs !== undefined ? `${x.udid ? 'launch' : 'activity'} ${x.totalMs} ms` : '',
         x.jsMs !== undefined ? `JS running at ${seconds(x.jsMs as number)}` : '',
         b ? `${b.kind} bundle ${(b.kb / 1024).toFixed(1)} MB in ${b.ms} ms${b.note ? `, ${b.note}` : ''}` : '',
       ].filter(Boolean);
-      return `opened ${x.target} on ${x.serial}${parts.length ? ` (${parts.join(' · ')})` : ''}`;
+      return `opened ${x.target} on ${x.serial ?? x.udid}${parts.length ? ` (${parts.join(' · ')})` : ''}`;
     }
     case 'screenshot':
       return `${x.file} (${Math.round((x.bytes as number) / 1024)} KB)`;
     case 'shutdown':
-      return x.gone ? `${x.serial} shut down in ${seconds(x.ms as number)}` : `${x.serial} still listed after ${seconds(x.ms as number)}`;
+      return x.gone ? `${x.serial ?? x.udid} shut down in ${seconds(x.ms as number)}` : `${x.serial ?? x.udid} still listed after ${seconds(x.ms as number)}`;
     case 'apps':
       return (x.packages as string[]).join('\n') || 'no third-party packages';
     default:
