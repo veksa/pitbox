@@ -174,9 +174,27 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
   private fun motion(downTime: Long, action: Int, x: Float, y: Float): MotionEvent =
     MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
 
+  /**
+   * Asynchronous: a synchronous injection waits until the app's UI thread has handled the event, which on a
+   * busy thread (a playing video) costs seconds per event. Gesture timing comes from the sleeps between events;
+   * the host waits for the UI to settle afterwards.
+   */
   private fun inject(e: MotionEvent) {
-    ui.injectInputEvent(e, true)
+    injectEvent(e)
     e.recycle()
+  }
+
+  /**
+   * From Android 14 the two-argument injection also waits for animations to end — on a screen with a playing
+   * video they never do, and every event costs a 5 s timeout. The three-argument form skips that wait.
+   */
+  private val injectNoAnimationWait: java.lang.reflect.Method? = if (Build.VERSION.SDK_INT >= 34) {
+    runCatching { UiAutomation::class.java.getMethod("injectInputEvent", android.view.InputEvent::class.java, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType) }.getOrNull()
+  } else null
+
+  private fun injectEvent(e: android.view.InputEvent) {
+    val m = injectNoAnimationWait
+    if (m != null) m.invoke(ui, e, false, false) else ui.injectInputEvent(e, false)
   }
 
   private fun tap(x: Int, y: Int, hold: Long) {
@@ -211,9 +229,9 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     val now = SystemClock.uptimeMillis()
     val source = if (code in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_CENTER) InputDevice.SOURCE_DPAD else InputDevice.SOURCE_KEYBOARD
     val down = KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, meta, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source)
-    ui.injectInputEvent(down, true)
+    injectEvent(down)
     val up = KeyEvent(now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, meta, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source)
-    ui.injectInputEvent(up, true)
+    injectEvent(up)
   }
 
   /** The node at the centre of `bounds` that is editable, or the focused editable node when no bounds are given. */
@@ -307,5 +325,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 4
+  const val VERSION = 6
 }

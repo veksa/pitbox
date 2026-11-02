@@ -12,7 +12,7 @@ import {AndroidError} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
-export const RUNNER_VERSION = 4;
+export const RUNNER_VERSION = 6;
 const DEVICE_PORT = 7912;
 
 export const runnerApk = (): string => {
@@ -66,7 +66,7 @@ export class AndroidRunner {
     this.#teardown();
     await this.#ensureInstalled();
     await this.#driver.shell(this.serial, `am force-stop ${RUNNER_PACKAGE}`);
-    const child = spawn(this.#driver.adbPath, ['-s', this.serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'port', String(DEVICE_PORT), `${RUNNER_PACKAGE}/.RunnerInstrumentation`], {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
+    const child = spawn(this.#driver.adbPath, ['-s', this.serial, 'shell', 'am', 'instrument', '-w', '-r', '--no-hidden-api-checks', '-e', 'port', String(DEVICE_PORT), `${RUNNER_PACKAGE}/.RunnerInstrumentation`], {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
     this.#child = child;
     let output = '';
     await new Promise<void>((resolve, reject) => {
