@@ -115,7 +115,7 @@ export class DevServer {
         if (!file || IGNORED.test(String(file))) return;
         this.proxy.generation++;
         if (this.#debounce) clearTimeout(this.#debounce);
-        this.#debounce = setTimeout(() => void this.prewarm(), 1500);
+        this.#debounce = setTimeout(() => void this.prewarm(), 800);
       });
       this.#watcher.on('error', () => undefined);
     } catch {
@@ -164,7 +164,7 @@ export class DevServer {
       }
       try {
         if (this.proxy.opts.bytecode) {
-          const r = await this.proxy.bytecodeFor(url, `localhost:${this.port}`);
+          const r = await this.proxy.bundleFor(url, `localhost:${this.port}`, true);
           results.push({platform, ms: Date.now() - t0, ok: !r.error, note: r.error ? `bundler answered ${r.status}` : r.cached ? 'bytecode cached' : 'bytecode compiled'});
         } else {
           const res = await fetch(`http://127.0.0.1:${this.internalPort}${url}`, {headers: {host: `localhost:${this.port}`}});

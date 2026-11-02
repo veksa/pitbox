@@ -82,12 +82,15 @@ describe('proxy', () => {
   const get = (url: string, accept?: string) =>
     fetch(`http://127.0.0.1:${port}${url}`, {headers: accept ? {accept} : {}}).then(async r => ({status: r.status, body: await r.text()}));
 
-  it('answers the native main bundle with bytecode built from the eager bundle, then from cache', async () => {
+  it('never makes the device wait for a compile: source first, bytecode from cache once it is ready', async () => {
     const a = await get('/main.bundle?platform=android&lazy=true', 'multipart/mixed');
     expect(a.status).toBe(200);
-    expect(a.body).toBe('HBC:var src = "/main.bundle?platform=android&lazy=false";');
+    expect(a.body).toBe('var src = "/main.bundle?platform=android&lazy=false";');
+    await proxy.whenIdle();
     const b = await get('/main.bundle?platform=android&lazy=true', 'multipart/mixed');
-    expect(b.body).toBe(a.body);
+    expect(b.body).toBe('HBC:var src = "/main.bundle?platform=android&lazy=false";');
+    const c = await get('/main.bundle?platform=android&lazy=true', 'multipart/mixed');
+    expect(c.body).toBe(b.body);
     expect(compiles).toBe(1);
     expect(proxy.stats.cacheHits).toBeGreaterThanOrEqual(1);
     expect(proxy.mainUrls.get('android')).toBe('/main.bundle?platform=android&lazy=true');

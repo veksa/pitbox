@@ -47,7 +47,6 @@ export class DevProxy {
   /** Upgraded (WebSocket) connections, which the HTTP server no longer tracks. */
   readonly #sockets = new Set<net.Socket>();
   readonly #served = new Map<string, {generation: number; key: string}>();
-  readonly #inflight = new Map<string, Promise<{bytecode: Buffer; cached: boolean; status: number; error?: Buffer}>>();
 
   constructor(opts: ProxyOptions) {
     this.opts = opts;
@@ -83,47 +82,67 @@ export class DevProxy {
     if (this.stats.requests.length > 20) this.stats.requests.shift();
   }
 
-  /** Source from the bundler, compiled (or taken from cache) — shared by device requests and prewarming. */
-  bytecodeFor(url: string, host: string): Promise<{bytecode: Buffer; cached: boolean; status: number; error?: Buffer}> {
-    const bc = this.opts.bytecode;
-    if (!bc) throw new Error('bytecode is off');
-    const pending = this.#inflight.get(url);
+  readonly #compiling = new Map<string, Promise<Buffer>>();
+
+  /** Resolves once every background compile has finished (tests, prewarm reporting). */
+  async whenIdle() {
+    await Promise.allSettled([...this.#compiling.values()]);
+  }
+
+  #compile(key: string, source: Buffer): Promise<Buffer> {
+    const bc = this.opts.bytecode!;
+    const pending = this.#compiling.get(key);
     if (pending) return pending;
     const job = (async () => {
-      const generation = this.generation;
-      const served = this.#served.get(url);
-      if (served && served.generation === generation) {
-        const hit = bc.cache.get(served.key);
-        if (hit) {
-          this.stats.cacheHits++;
-          return {bytecode: hit, cached: true, status: 200};
-        }
-      }
-      const res = await fetch(`http://127.0.0.1:${this.opts.upstreamPort}${eagerUrl(url)}`, {headers: {accept: 'application/javascript', host}});
-      const source = Buffer.from(await res.arrayBuffer());
-      if (res.status !== 200 || /json/.test(res.headers.get('content-type') ?? '')) {
-        return {bytecode: Buffer.alloc(0), cached: false, status: res.status, error: source};
-      }
-      const key = Cache.key(source);
-      let bytecode = bc.cache.get(key);
-      let cached = true;
-      if (!bytecode) {
-        const t0 = Date.now();
-        bytecode = await bc.compile(source);
-        this.stats.compiles++;
-        this.stats.lastCompileMs = Date.now() - t0;
-        bc.cache.put(key, bytecode);
-        cached = false;
-      } else {
-        this.stats.cacheHits++;
-      }
-      this.stats.lastSourceBytes = source.length;
+      const t0 = Date.now();
+      const bytecode = await bc.compile(source);
+      this.stats.compiles++;
+      this.stats.lastCompileMs = Date.now() - t0;
       this.stats.lastBytecodeBytes = bytecode.length;
-      this.#served.set(url, {generation, key});
-      return {bytecode, cached, status: 200};
-    })().finally(() => this.#inflight.delete(url));
-    this.#inflight.set(url, job);
+      bc.cache.put(key, bytecode);
+      return bytecode;
+    })();
+    job.catch(e => (this.stats.lastError = (e as Error).message)).finally(() => this.#compiling.delete(key));
+    this.#compiling.set(key, job);
     return job;
+  }
+
+  /**
+   * The main bundle for a URL: bytecode when it is ready (or `wait` is set), otherwise the eager source now with
+   * the compile carrying on in the background — so a device is never slower than with the bundler alone.
+   */
+  async bundleFor(url: string, host: string, wait: boolean): Promise<{kind: 'bytecode' | 'source'; body: Buffer; cached: boolean; status: number; error?: boolean}> {
+    const bc = this.opts.bytecode;
+    if (!bc) throw new Error('bytecode is off');
+    const generation = this.generation;
+    const served = this.#served.get(url);
+    if (served && served.generation === generation) {
+      const hit = bc.cache.get(served.key);
+      if (hit) {
+        this.stats.cacheHits++;
+        return {kind: 'bytecode', body: hit, cached: true, status: 200};
+      }
+    }
+    const res = await fetch(`http://127.0.0.1:${this.opts.upstreamPort}${eagerUrl(url)}`, {headers: {accept: 'application/javascript', host}});
+    const source = Buffer.from(await res.arrayBuffer());
+    if (res.status !== 200 || /json/.test(res.headers.get('content-type') ?? '')) {
+      return {kind: 'source', body: source, cached: false, status: res.status, error: true};
+    }
+    this.stats.lastSourceBytes = source.length;
+    const key = Cache.key(source);
+    const hit = bc.cache.get(key);
+    if (hit) {
+      this.stats.cacheHits++;
+      this.#served.set(url, {generation, key});
+      return {kind: 'bytecode', body: hit, cached: true, status: 200};
+    }
+    const compile = this.#compile(key, source).then(b => {
+      this.#served.set(url, {generation, key});
+      return b;
+    });
+    if (wait) return {kind: 'bytecode', body: await compile, cached: false, status: 200};
+    compile.catch(() => undefined);
+    return {kind: 'source', body: source, cached: false, status: 200};
   }
 
   async #handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -135,15 +154,15 @@ export class DevProxy {
 
     if (native && this.opts.bytecode) {
       try {
-        const r = await this.bytecodeFor(url, req.headers.host ?? `localhost:${this.opts.port}`);
+        const r = await this.bundleFor(url, req.headers.host ?? `localhost:${this.opts.port}`, false);
         if (r.error) {
-          res.writeHead(r.status, {'content-type': 'application/json'}).end(r.error);
-          this.#record({at: t0, url, kind: 'bytecode', ms: Date.now() - t0, bytes: r.error.length, status: r.status, note: 'bundler error'});
+          res.writeHead(r.status, {'content-type': 'application/json'}).end(r.body);
+          this.#record({at: t0, url, kind: 'source', ms: Date.now() - t0, bytes: r.body.length, status: r.status, note: 'bundler error'});
           return;
         }
-        res.writeHead(200, {'content-type': 'application/javascript', 'content-length': r.bytecode.length, 'cache-control': 'no-store'});
-        res.end(r.bytecode);
-        this.#record({at: t0, url, kind: 'bytecode', ms: Date.now() - t0, bytes: r.bytecode.length, status: 200, note: r.cached ? 'cached' : 'compiled'});
+        res.writeHead(200, {'content-type': 'application/javascript', 'content-length': r.body.length, 'cache-control': 'no-store'});
+        res.end(r.body);
+        this.#record({at: t0, url, kind: r.kind, ms: Date.now() - t0, bytes: r.body.length, status: 200, note: r.kind === 'bytecode' ? 'cached' : 'bytecode not ready, compiling in background'});
         return;
       } catch (e) {
         // Fall back to source: a broken compiler must not take the app down with it.
