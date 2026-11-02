@@ -16,3 +16,5 @@ android/build/
 android/.gradle/
 android/.cxx/
 xcuserdata/
+.build/
+.swiftpm/

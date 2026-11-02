@@ -24,7 +24,12 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   in-flight requests count toward "the UI has settled".
 - **No dev launcher needed**: the Android connect library (autolinked, debug builds only) points the app at the
   dev server from a link — `pitbox qr` puts it in a QR code for a phone, `open` uses it on emulators.
-- **UI automation on Android** through pitbox's own runner: the screen as short lines with refs, actions that
+  On an iOS or tvOS simulator `open` needs no library at all: it saves the dev server in the app's defaults
+  (`RCT_jsLocation`, where React Native looks) and passes it as launch arguments. Native apps read named hosts
+  with the Swift package `PitboxConnect` (this repository; `PitboxConnect.url("api")`,
+  `PitboxConnect.handle(url)` for the `pitbox.<bundle id>://connect` link on devices).
+- **UI automation on Android and Apple simulators** through pitbox's own runners (UiAutomation; XCUITest built
+  on the Mac on first use): the screen as short lines with refs, actions that
   wait for the UI to settle and answer with what changed, exact gestures (double tap, swipe velocity), D-pad
   keys and focus for TV. A finger can be held across calls (inspect a scrubber mid-drag). Taps on a screen
   with a playing video take milliseconds (the platform's wait-for-animations is skipped).
