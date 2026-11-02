@@ -285,3 +285,13 @@ describe('watch and window helpers', () => {
     expect(swipeArea(snap, 3840, 2160)).toEqual([0, 200, 600, 900]);
   });
 });
+
+describe('screens', () => {
+  it('finds the lit screen of a foldable and the png after screencap warnings', async () => {
+    const {physicalDisplays, pngFrom} = await import('./drivers/android/formfactor.ts');
+    const dump = '  DisplayDeviceInfo{"Built-in Screen": uniqueId="local:111", 1080 x 2364, state OFF, x}\n  DisplayDeviceInfo{"Built-in Screen": uniqueId="local:222", 2076 x 2152, state ON, y}\n  DisplayDeviceInfo{"Overlay": uniqueId="overlay:1", state ON}';
+    expect(physicalDisplays(dump)).toEqual([{id: '111', on: false}, {id: '222', on: true}]);
+    const png = Buffer.concat([Buffer.from('[Warning] Multiple displays were found\n'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2])]);
+    expect([...pngFrom(png)]).toEqual([0x89, 0x50, 0x4e, 0x47, 1, 2]);
+  });
+});

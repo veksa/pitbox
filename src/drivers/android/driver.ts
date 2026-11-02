@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
-import {car, posture, rotate, wear, windowMode} from './formfactor.ts';
+import {car, physicalDisplays, pngFrom, posture, rotate, wear, windowMode} from './formfactor.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
@@ -417,11 +417,17 @@ export class AndroidDriver {
   }
 
   async screenshot(serial: string, file: string): Promise<{file: string; bytes: number}> {
-    const r = await this.adb(['exec-out', 'screencap', '-p'], serial, {timeoutMs: 20_000, encoding: 'buffer'});
+    // A foldable has two screens and screencap takes the first one, lit or not: the screen that is on is asked
+    // for by its id.
+    const screens = physicalDisplays(await this.shell(serial, 'dumpsys display').catch(() => ''));
+    const lit = screens.find(d => d.on);
+    const display = screens.length > 1 && lit ? ['-d', lit.id] : [];
+    const r = await this.adb(['exec-out', 'screencap', ...display, '-p'], serial, {timeoutMs: 20_000, encoding: 'buffer'});
     if (!r.buffer?.length) throw new AndroidError(`screencap failed: ${r.stderr.trim()}`);
+    const png = pngFrom(r.buffer);
     fs.mkdirSync(path.dirname(file), {recursive: true});
-    fs.writeFileSync(file, r.buffer);
-    return {file, bytes: r.buffer.length};
+    fs.writeFileSync(file, png);
+    return {file, bytes: png.length};
   }
 
   async key(serial: string, keys: string[]): Promise<void> {

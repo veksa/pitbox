@@ -263,3 +263,15 @@ export const car = async (shell: Shell, serial: string, op: string, args: string
   await new Promise(r => setTimeout(r, 800));
   return {op};
 };
+
+// ---- screens ------------------------------------------------------------------------------------------------------
+
+/** The device's built-in screens (`dumpsys display`): their SurfaceFlinger ids and whether each is on. */
+export const physicalDisplays = (dump: string): {id: string; on: boolean}[] =>
+  [...dump.matchAll(/DisplayDeviceInfo\{[^\n]*?uniqueId="local:(\d+)"[^\n]*?state (\w+)/g)].map(m => ({id: m[1]!, on: m[2] === 'ON'}));
+
+/** The PNG in screencap's output, without the warnings it can print before it. */
+export const pngFrom = (out: Buffer): Buffer => {
+  const at = out.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  return at > 0 ? out.subarray(at) : out;
+};
