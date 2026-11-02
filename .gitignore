@@ -1,0 +1,10 @@
+node_modules/
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+dist/
+build/
+.gradle/
+DerivedData/
+*.log
+.DS_Store
