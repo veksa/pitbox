@@ -132,6 +132,24 @@ Rules that came out of it:
   restarted (Windows console close; EPIPE on the next log write) — now detached with logs written straight to
   files, covered by a test that runs a real daemon exit.
 
+### P3: pitbox's own Android runner
+
+An instrumentation APK (650 KB, no AndroidX) on `UiAutomation`, reached over `adb forward`, one persistent
+connection. Same app, same emulator.
+
+| | Value |
+|---|---|
+| tree on the device | ~50–150 ms (`uiautomator dump`: 1–3 s) |
+| ping | 9 ms |
+| press → settled → diff | 0.7–1.5 s, including waiting for late effects (a sheet that animates on the next frame) |
+| home screen snapshot | 40 lines, ~1.5 KB (~430 tokens): buttons folded with their labels, children a control's description already carries dropped |
+| a 14-step flow (cold start, search, typing, deep link route, a database check, back navigation) | **26.5 s, one call, a one-line verdict** |
+| a recorded flow replayed (4 steps) | 5.5 s, selectors by id and text, no coordinates |
+
+Done by hand by an agent, the same 14 steps are 14+ turns, each re-reading the whole context (~400K tokens
+on average in the baseline below); in a flow they are one turn. A failing step comes back with its line, the
+error, a screenshot path and the screen as text, so the next turn can act without another snapshot.
+
 ### Token baseline
 
 33 Claude Code sessions that drove devices through an MCP automation server:

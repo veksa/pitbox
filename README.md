@@ -18,6 +18,12 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **Dev server** — your bundler (`yarn start`) behind pitbox's proxy: a native file watcher on every platform
   (Metro crawls every directory on Windows otherwise), the main bundle built before the device asks, and, with
   `bytecode: true`, Hermes bytecode compiled on the host so the app skips parsing megabytes of source.
+- **UI automation on Android** through pitbox's own runner: the screen as short lines with refs, actions that
+  wait for the UI to settle and answer with what changed, exact gestures (double tap, swipe velocity), D-pad
+  keys and focus for TV.
+- **Flows** — a line-per-step script the daemon runs on its own (`open`, `goto <route>`, `as <user>`, `press`,
+  `fill`, `scroll … until`, `wait`, `expect`, `tool … contains`, …): one call, one verdict, and on failure the
+  line, the error and the screen. Sessions can be recorded into flows.
 - **Doctor** — known failures with remedies (`doctor --fix`), plus your own rules.
 - **Docs** — the lines of a long checklist or knowledge base that a step needs, not the whole file.
 - **MCP server** over stdio; the CLI prints the same compact text.
