@@ -65,6 +65,14 @@ export const serve = async (configFile?: string) => {
   const info: DaemonInfo = {pid: process.pid, port: address.port, token, config: file, root, startedAt: Date.now(), version: VERSION};
   fs.writeFileSync(daemonFile(stateDir), JSON.stringify(info, null, 2));
   engine.startWatching();
+  // A stray rejection in one request must not take the stand down with it; it goes to the log instead.
+  const stamp = () => new Date().toISOString();
+  process.on('uncaughtException', e => process.stderr.write(`${stamp()} uncaught: ${e.stack ?? e}
+`));
+  process.on('unhandledRejection', e => process.stderr.write(`${stamp()} unhandled rejection: ${(e as Error)?.stack ?? e}
+`));
+  process.on('exit', code => process.stderr.write(`${stamp()} daemon exiting with ${code}
+`));
   process.on('SIGINT', () => void shutdown(0));
   process.on('SIGTERM', () => void shutdown(0));
   process.stdout.write(`pitbox daemon ${process.pid} on 127.0.0.1:${address.port} for ${root}\n`);
