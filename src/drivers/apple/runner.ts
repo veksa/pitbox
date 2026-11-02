@@ -74,11 +74,15 @@ const build = async (kind: SimKind): Promise<Built> => {
   const src = runnerSources();
   if (!fs.existsSync(path.join(src, 'PitboxRunner.xcodeproj'))) throw new AppleError(`runner sources missing: ${src}`);
   const xcode = (await run('xcodebuild', ['-version'], {timeoutMs: 20_000})).stdout.match(/Build version (\S+)/)?.[1] ?? 'unknown';
-  const dir = path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'apple-runner', `${sourceHash(src)}-${xcode}`, destination.replace(/\s+/g, '-'));
+  const cache = path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'apple-runner');
+  const version = `${sourceHash(src)}-${xcode}`;
+  const dir = path.join(cache, version, destination.replace(/\s+/g, '-'));
   const find = () => {
     const products = path.join(dir, 'Build', 'Products');
     return fs.existsSync(products) ? fs.readdirSync(products).find(f => f.endsWith('.xctestrun')) : undefined;
   };
+  // Builds of older runner sources or another Xcode are never used again (each is hundreds of MB).
+  if (fs.existsSync(cache)) for (const v of fs.readdirSync(cache)) if (v !== version) fs.rmSync(path.join(cache, v), {recursive: true, force: true});
   const existing = find();
   if (existing) return {xctestrun: path.join(dir, 'Build', 'Products', existing), built: false, ms: Date.now() - t0};
   fs.mkdirSync(dir, {recursive: true});
