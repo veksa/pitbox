@@ -17,6 +17,8 @@ export type FlowHost = {
   setDevice: (name: string) => Promise<void>;
   visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
   screenshot: (name?: string, full?: boolean) => Promise<string>;
+  /** JS errors the app reported since `since`: a passing flow still mentions them. */
+  jsErrors?: (since: number) => Promise<{summary: string; lines: string[]}[]>;
 };
 
 export type FlowResult = {
@@ -166,7 +168,7 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
       if (depth === 0) {
         try {
           const ui = await host.ui();
-          const crashes = ui.crashesSince(t0);
+          const crashes = await ui.crashesSince(t0);
           if (crashes.length) failed.crashes = crashes;
           failed.screen = (await ui.snapshot()).lines.slice(0, 40);
           failed.screenshot = await host.screenshot(`failed-line-${s.line}`);
@@ -176,6 +178,9 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
       }
       return {ok: false, steps: done, ms: Date.now() - t0, failed, notes};
     }
+  }
+  if (depth === 0 && host.jsErrors) {
+    for (const e of await host.jsErrors(t0).catch(() => [])) notes.push(`! JS error: ${e.summary}`, ...e.lines.slice(0, 3).map(l => `    ${l}`));
   }
   return {ok: true, steps: done, ms: Date.now() - t0, notes};
 };

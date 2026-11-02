@@ -10,6 +10,7 @@ import {WebSocketServer, type WebSocket} from 'ws';
 import type {BytecodeCache, Compiler} from './hermes.ts';
 import {BytecodeCache as Cache} from './hermes.ts';
 import {injectInApp, inAppScript} from './inapp.ts';
+import {formatFrames, injectionOf, parseStack, symbolicate, unshift, type Injection} from './symbolicate.ts';
 
 export type BundleRequest = {at: number; url: string; kind: 'bytecode' | 'source' | 'lazy'; ms: number; bytes: number; status: number; note?: string};
 
@@ -30,6 +31,8 @@ export type ProxyOptions = {
   bytecode?: {compile: Compiler; cache: BytecodeCache};
   /** Splice the in-app script into the main bundle. */
   inApp?: boolean;
+  /** App directory: symbolicated paths are shown relative to it. */
+  root?: string;
 };
 
 export type NetRule = {
@@ -42,6 +45,9 @@ export type NetRule = {
   body?: unknown;
   ms?: number;
 };
+
+/** A JS error that reached the app's global handler, with its stack mapped to source files. */
+export type JsError = {at: number; app: number; platform?: string; message: string; fatal: boolean; frames: string[]; code?: string; symbolicated: boolean};
 
 export type AppHello = {bundle: string; gen: number; platform: string; startedAt: number};
 export type AppInfo = {id: number; remote: string; connectedAt: number; hello?: AppHello};
@@ -82,6 +88,10 @@ export class DevProxy {
   #appSeq = 0;
   #reqSeq = 0;
   readonly #replies = new Map<number, (data: unknown) => void>();
+  /** Where the in-app script went in each bundle, by bundle id. */
+  readonly #injections = new Map<string, Injection>();
+  readonly errors: JsError[] = [];
+  readonly #symbolicating = new Set<Promise<void>>();
 
   constructor(opts: ProxyOptions) {
     this.opts = opts;
@@ -171,7 +181,13 @@ export class DevProxy {
     // Rebuilding the same output (an edit undone) still means "up to date as of this generation".
     this.builds.set(bundle, {generation: Math.max(generation, known?.generation ?? 0), at: known?.at ?? Date.now()});
     this.latest.set(platform, bundle);
-    const body = this.opts.inApp ? injectInApp(source, inAppScript({bundle, gen: generation, platform, http: `http://${host}`, ws: `ws://${host}/pitbox/app`})) : source;
+    let body: Buffer = source;
+    if (this.opts.inApp) {
+      const script = inAppScript({bundle, gen: generation, platform, http: `http://${host}`, ws: `ws://${host}/pitbox/app`});
+      body = injectInApp(source, script);
+      const at = injectionOf(source.toString('utf8'), script);
+      if (at) this.#injections.set(bundle, at);
+    }
     if (!bc) return {kind: 'source', body, cached: false, status: 200, bundle};
     const key = Cache.key(body);
     const hit = bc.cache.get(key);
@@ -231,6 +247,28 @@ export class DevProxy {
     return (await Promise.all(asks)).filter((x): x is {app: AppInfo; data: T} => !!x);
   }
 
+  #onError(app: AppSession, msg: {message?: string; name?: string; stack?: string; fatal?: boolean}) {
+    const name = msg.name && msg.name !== 'Error' ? `${msg.name}: ` : '';
+    const raw = unshift(parseStack(String(msg.stack ?? '')), app.hello ? this.#injections.get(app.hello.bundle) : undefined);
+    const e: JsError = {at: Date.now(), app: app.id, platform: app.hello?.platform, message: `${name}${String(msg.message ?? '')}`.slice(0, 500), fatal: !!msg.fatal, frames: formatFrames(raw, this.opts.root ?? process.cwd()), symbolicated: false};
+    this.errors.push(e);
+    if (this.errors.length > 30) this.errors.shift();
+    const job = symbolicate(this.opts.upstreamPort, raw).then(r => {
+      if (!r.ok) return;
+      e.frames = formatFrames(r.frames, this.opts.root ?? process.cwd());
+      e.code = r.code;
+      e.symbolicated = true;
+    });
+    this.#symbolicating.add(job);
+    void job.finally(() => this.#symbolicating.delete(job));
+  }
+
+  /** JS errors received since `since` (ms epoch), once their symbolication is done or `waitMs` has passed. */
+  async errorsSince(since: number, waitMs = 3000): Promise<JsError[]> {
+    if (this.#symbolicating.size) await Promise.race([Promise.allSettled([...this.#symbolicating]), new Promise(r => setTimeout(r, waitMs))]);
+    return this.errors.filter(e => e.at >= since);
+  }
+
   #onApp(ws: WebSocket, remote: string) {
     const app: AppSession = {id: ++this.#appSeq, ws, remote, connectedAt: Date.now()};
     this.#apps.set(app.id, app);
@@ -245,6 +283,8 @@ export class DevProxy {
         app.hello = {bundle: String(msg.bundle), gen: Number(msg.gen), platform: String(msg.platform), startedAt: Number(msg.startedAt)};
         this.#send({type: 'rules', rules: this.rules}, app);
         if (this.trace) this.#send({type: 'trace', id: this.trace}, app);
+      } else if (msg.type === 'error') {
+        this.#onError(app, msg as unknown as {message?: string; name?: string; stack?: string; fatal?: boolean});
       } else if (msg.type === 'reply' && msg.reqId !== undefined) {
         this.#replies.get(msg.reqId)?.(msg.data);
         this.#replies.delete(msg.reqId);

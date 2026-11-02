@@ -66,6 +66,7 @@ export class DevServer {
       upstreamPort: this.internalPort,
       bytecode: this.hermesc ? {compile: hermesCompiler(this.hermesc, path.join(stateDir, 'bytecode', 'work')), cache: new BytecodeCache(path.join(stateDir, 'bytecode'))} : undefined,
       inApp: cfg.inApp ?? (cfg.adapter ?? 'metro') !== 'command',
+      root: this.root,
     });
     try {
       const saved = JSON.parse(fs.readFileSync(this.#stateFile, 'utf8')) as {mainUrls?: Record<string, string>};

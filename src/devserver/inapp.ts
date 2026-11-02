@@ -3,7 +3,8 @@
 //
 // It tells the daemon which bundle is running (freshness), logs network requests and stamps them with a W3C
 // `traceparent`, applies network rules from the daemon (fail, mock, delay; freeze or fail a WebSocket), and
-// answers how many requests are in flight (so UI settling can wait for the network too).
+// answers how many requests are in flight (so UI settling can wait for the network too). JS errors that reach
+// the global handler go to the daemon with their raw stack, which the proxy symbolicates.
 //
 // Written as plain ES2017 inside a function that is serialised with `toString()`: Hermes runs it as is.
 
@@ -14,7 +15,7 @@ export type InAppConfig = {bundle: string; gen: number; platform: string; http: 
 function pitboxInApp(cfg: InAppConfig) {
   var g: any = globalThis as any;
   if (g.__pitbox) return;
-  var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false};
+  var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false, errors: [], ch: null};
   g.__pitbox = state;
   var seq = 0;
   var hex = function (n: number) {
@@ -77,6 +78,30 @@ function pitboxInApp(cfg: InAppConfig) {
         return;
       }
       return send.apply(xhr, args);
+    };
+  }
+
+  // Errors are seen before whichever handler the app installs (LogBox, a crash reporter), and passed on.
+  var report = function (e: any, fatal: boolean) {
+    var msg = {type: 'error', message: String((e && e.message) || e), name: e && e.name, stack: e && typeof e.stack === 'string' ? e.stack : '', fatal: !!fatal, at: Date.now()};
+    var ch = state.ch;
+    if (ch && ch.readyState === 1) ch.send(JSON.stringify(msg));
+    else if (state.errors.length < 20) state.errors.push(msg);
+  };
+  var EU = g.ErrorUtils;
+  if (EU && EU.setGlobalHandler && EU.getGlobalHandler) {
+    var wrap = function (h: any) {
+      return function (e: any, fatal: boolean) {
+        try {
+          report(e, fatal);
+        } catch (x) {}
+        if (h) return h(e, fatal);
+      };
+    };
+    var setHandler = EU.setGlobalHandler;
+    setHandler.call(EU, wrap(EU.getGlobalHandler()));
+    EU.setGlobalHandler = function (h: any) {
+      return setHandler.call(EU, wrap(h));
     };
   }
 
@@ -158,6 +183,9 @@ function pitboxInApp(cfg: InAppConfig) {
     }
     ch.onopen = function () {
       ch.send(JSON.stringify({type: 'hello', bundle: cfg.bundle, gen: cfg.gen, platform: cfg.platform, startedAt: Date.now()}));
+      state.ch = ch;
+      var pending = state.errors.splice(0);
+      for (var i = 0; i < pending.length; i++) ch.send(JSON.stringify(pending[i]));
     };
     ch.onmessage = function (ev: any) {
       var msg: any;
@@ -182,6 +210,7 @@ function pitboxInApp(cfg: InAppConfig) {
       }
     };
     ch.onclose = function () {
+      if (state.ch === ch) state.ch = null;
       setTimeout(function () {
         connect(Math.min(delay * 2, 10000));
       }, delay);

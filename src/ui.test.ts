@@ -99,7 +99,7 @@ describe('flows', () => {
         return {ms: 0, snapshot: snapshotOf()};
       },
       focus: async () => ({}),
-      crashesSince: () => [],
+      crashesSince: async () => [],
     } as unknown as AndroidUi;
     const host: FlowHost = {
       ui: async () => ui,

@@ -3,7 +3,7 @@
 
 import {spawn, type ChildProcess} from 'node:child_process';
 
-export type AppEvent = {at: number; kind: 'crash' | 'anr' | 'native-crash'; summary: string; lines: string[]};
+export type AppEvent = {at: number; kind: 'crash' | 'anr' | 'native-crash' | 'js-error'; summary: string; lines: string[]};
 
 /** Parses logcat lines (`-v epoch`) into crash and ANR events of one package. */
 export class CrashParser {

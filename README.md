@@ -30,8 +30,9 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   with a playing video take milliseconds (the platform's wait-for-animations is skipped).
 - **Checks instead of screenshots** — `media` (is the video playing, or black), `visual` (the screen against a
   baseline, changed regions in pixels), `focus_map` (D-pad reachability, traps, irreversible moves), `perf`
-  (janky frames, frame-time percentiles, memory), `app_tree` (the React tree from inside the app). Crashes
-  and ANRs come back with the step they happened in, with the stack.
+  (janky frames, frame-time percentiles, memory), `app_tree` (the React tree from inside the app). Crashes,
+  ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files and lines
+  by the bundler, bytecode included.
 - **Named states** — an emulator snapshot plus the project's backend dump, restored in seconds.
 - **Several devices and variants** — a flow can switch devices (`device <avd>`); `matrix` runs a flow over
   devices × font scales × themes × locales, with full-size screenshots per variant (store screenshots).

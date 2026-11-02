@@ -1,6 +1,7 @@
 // The in-app script runs inside the app; here it runs in a sandbox with fake XMLHttpRequest and WebSocket.
 
 import http from 'node:http';
+import path from 'node:path';
 import vm from 'node:vm';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {WebSocket as WsClient} from 'ws';
@@ -10,7 +11,7 @@ import {freePort} from './util/net.ts';
 
 const cfg = {bundle: 'abc123', gen: 4, platform: 'android', http: 'http://localhost:8081', ws: 'ws://localhost:8081/pitbox/app'};
 
-const sandbox = () => {
+const sandbox = (opts: {errorUtils?: boolean} = {}) => {
   const sent: string[] = [];
   const sockets: FakeWs[] = [];
   class FakeXhr {
@@ -51,6 +52,14 @@ const sandbox = () => {
     }
   }
   const g: Record<string, unknown> = {XMLHttpRequest: FakeXhr, WebSocket: FakeWs, setTimeout, Date, Math, JSON, Array, String, Map, Set};
+  if (opts.errorUtils) {
+    let handler: ((e: unknown, fatal: boolean) => void) | undefined = () => undefined;
+    g.ErrorUtils = {
+      setGlobalHandler: (h: typeof handler) => (handler = h),
+      getGlobalHandler: () => handler,
+      fire: (e: unknown, fatal: boolean) => handler?.(e, fatal),
+    };
+  }
   g.globalThis = g;
   vm.createContext(g);
   vm.runInContext(inAppScript(cfg), g);
@@ -102,6 +111,23 @@ describe('in-app script', () => {
   });
 });
 
+describe('js errors from inside the app', () => {
+  it('sees errors before the handler the app installs, passes them on, and sends them once connected', () => {
+    const {g, sent, sockets} = sandbox({errorUtils: true});
+    const eu = g.ErrorUtils as {setGlobalHandler: (h: (e: unknown, fatal?: boolean) => void) => void; fire: (e: unknown, fatal: boolean) => void};
+    const seen: unknown[] = [];
+    eu.setGlobalHandler(e => seen.push(e));
+    eu.fire(new Error('early'), true);
+    expect(seen).toHaveLength(1);
+    const channel = sockets.find(s => s.url === cfg.ws)!;
+    (channel as unknown as {readyState: number}).readyState = 1;
+    channel.onopen!();
+    const msgs = sent.map(x => JSON.parse(x.split(' ').slice(1).join(' ')));
+    expect(msgs.find(m => m.type === 'error')).toMatchObject({message: 'early', fatal: true});
+    expect(msgs.find(m => m.type === 'error').stack).toContain('early');
+  });
+});
+
 describe('react tree from inside the app', () => {
   it('lists host components with ids, labels and text, nested', () => {
     const {sockets, sent, g} = sandbox();
@@ -126,13 +152,28 @@ describe('proxy with the in-app script', () => {
   let proxy: DevProxy;
   let port: number;
   let version = 'v1';
+  const root = path.resolve('/app');
 
   beforeAll(async () => {
     const upPort = await freePort();
     port = await freePort();
-    upstream = http.createServer((_req, res) => res.writeHead(200, {'content-type': 'application/javascript'}).end(`var v="${version}";\n__r(1);\n__r(0);`));
+    upstream = http.createServer((req, res) => {
+      if (req.url === '/symbolicate') {
+        // Stands in for the bundler: names the file after the function and keeps the position it was given.
+        let body = '';
+        req.on('data', d => (body += d));
+        req.on('end', () => {
+          const {stack} = JSON.parse(body) as {stack: {methodName: string; lineNumber: number; column: number}[]};
+          res.writeHead(200, {'content-type': 'application/json'}).end(
+            JSON.stringify({stack: stack.map(f => ({...f, file: path.join(root, 'src', `${f.methodName}.ts`)})), codeFrame: {content: '  1 | x\n\u001b[31m>\u001b[0m 2 | boom()\n'}}),
+          );
+        });
+        return;
+      }
+      res.writeHead(200, {'content-type': 'application/javascript'}).end(`var v="${version}";\n__r(1);\n__r(0);`);
+    });
     await new Promise<void>(r => upstream.listen(upPort, '127.0.0.1', () => r()));
-    proxy = new DevProxy({port, upstreamPort: upPort, inApp: true});
+    proxy = new DevProxy({port, upstreamPort: upPort, inApp: true, root});
     await proxy.start();
   });
 
@@ -160,6 +201,17 @@ describe('proxy with the in-app script', () => {
     await new Promise(r => setTimeout(r, 100));
     expect(proxy.apps()[0]?.hello?.bundle).toBe(bundle);
     expect((await proxy.query<{inflight: number}>('idle'))[0]?.data.inflight).toBe(2);
+
+    // Frames: one above the in-app script, one inside it (pitbox's own, dropped), one below it (shifted back).
+    const scriptLines = inAppScript({...cfg, bundle, http: `http://127.0.0.1:${port}`, ws: `ws://127.0.0.1:${port}/pitbox/app`}).split('\n').length - 1;
+    const url = `http://127.0.0.1:${port}/index.bundle?platform=android`;
+    const stack = ['Error: boom', `    at above (${url}:1:5)`, `    at inside (${url}:4:1)`, `    at below (address at ${url}:${3 + scriptLines}:2)`, '    at apply (native)'].join('\n');
+    const t0 = Date.now();
+    ws.send(JSON.stringify({type: 'error', message: 'boom', name: 'TypeError', stack, fatal: true}));
+    await new Promise(r => setTimeout(r, 100));
+    const [e] = await proxy.errorsSince(t0);
+    expect(e).toMatchObject({message: 'TypeError: boom', fatal: true, symbolicated: true, code: '2 | boom()'});
+    expect(e!.frames).toEqual(['above  src/above.ts:1:5', 'below  src/below.ts:3:2']);
 
     version = 'v2';
     await fetch(`http://127.0.0.1:${port}/index.bundle?platform=android`, {headers: {accept: 'multipart/mixed'}});

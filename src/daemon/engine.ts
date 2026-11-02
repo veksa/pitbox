@@ -157,6 +157,7 @@ export class Engine {
           proxy.setTrace(id);
           return id;
         },
+        jsErrors: since => this.#jsErrors(since),
         networkIdle: async timeoutMs => {
           const proxy = this.#dev?.proxy;
           if (!proxy || !proxy.apps().length) return;
@@ -188,8 +189,21 @@ export class Engine {
     return fs.readFileSync(file, 'utf8');
   }
 
+  /** JS errors from the apps on the dev server, as crash events. */
+  async #jsErrors(since: number) {
+    const proxy = this.#dev?.proxy;
+    if (!proxy) return [];
+    return (await proxy.errorsSince(since)).map(e => ({
+      at: e.at,
+      kind: 'js-error' as const,
+      summary: `${e.message}${e.fatal ? ' (fatal)' : ''}`,
+      lines: [...e.frames, ...(e.code ? [`> ${e.code}`] : [])],
+    }));
+  }
+
   #flowHost(device?: string, variant?: string): FlowHost {
     return {
+      jsErrors: since => this.#jsErrors(since),
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
         await this.#needAndroid().resolve(name);
@@ -553,6 +567,12 @@ export class Engine {
       if (!this.#dev) throw new Error('no devserver in the config');
       const answers = await this.#dev.proxy.query<Record<string, unknown>[]>('log', {limit: num(p, 'limit') ?? 30});
       return {apps: answers.map(a => ({app: a.app.id, platform: a.app.hello?.platform, entries: a.data}))};
+    },
+
+    appErrors: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      const errors = await this.#dev.proxy.errorsSince(Date.now() - (num(p, 'minutes') ?? 30) * 60_000);
+      return {errors: errors.slice(-(num(p, 'limit') ?? 5))};
     },
 
     appTree: async (p: Params) => {

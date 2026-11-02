@@ -7,6 +7,7 @@ import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
+import type {JsError} from './devserver/proxy.ts';
 import type {ActResult, FocusMap} from './ui/android.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
@@ -76,11 +77,14 @@ export const fmtDoctor = (r: DoctorReport): string => {
 
 export const fmtTool = (r: ToolResult): string => `${r.code === 0 ? '' : `exit ${r.timedOut ? 'timeout' : r.code} · `}${seconds(r.ms)}\n${r.output}`.trimEnd();
 
+const broken = (c: {kind: string}) =>
+  c.kind === 'anr' ? 'app not responding (ANR)' : c.kind === 'native-crash' ? 'app crashed (native)' : c.kind === 'js-error' ? 'JS error' : 'app crashed';
+
 export const fmtAct = (r: ActResult): string => {
   // A slow action says where its time went, so the next turn knows whether the app or the tool was slow.
   const slow = r.ms > 3000 && r.phases ? ` · slow: ${Object.entries(r.phases).filter(([, v]) => v >= 100).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
   const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}${slow}`;
-  const broke = (r.crashes ?? []).flatMap(c => [`! app ${c.kind === 'anr' ? 'not responding (ANR)' : c.kind === 'native-crash' ? 'crashed (native)' : 'crashed'}: ${c.summary}`, ...c.lines.slice(0, 4).map(l => `    ${l}`)]);
+  const broke = (r.crashes ?? []).flatMap(c => [`! ${broken(c)}: ${c.summary}`, ...c.lines.slice(0, c.kind === 'js-error' ? 6 : 4).map(l => `    ${l}`)]);
   if (!r.diff.changed) return [head, ...broke, 'no change on screen'].join('\n');
   return [head, ...broke, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
 };
@@ -92,7 +96,7 @@ export const fmtFlow = (r: FlowResult): string => {
     `✗ flow failed at line ${f.line}: ${f.step}`,
     `  ${f.error}`,
     `  after ${r.steps} passing steps, ${seconds(r.ms)}`,
-    ...(f.crashes ?? []).flatMap(c => [`  ! app ${c.kind === 'anr' ? 'not responding (ANR)' : 'crashed'}: ${c.summary}`, ...c.lines.slice(0, 6).map(l => `      ${l}`)]),
+    ...(f.crashes ?? []).flatMap(c => [`  ! ${broken(c)}: ${c.summary}`, ...c.lines.slice(0, 8).map(l => `      ${l}`)]),
     ...(f.screenshot ? [`  screenshot: ${f.screenshot}`] : []),
     ...(f.screen ? ['screen:', ...f.screen] : []),
     ...r.notes,
@@ -179,6 +183,13 @@ export const formatResult = (method: string, r: unknown): string => {
       const f = x as unknown as Freshness;
       if (!f.apps.length) return 'no app connected to the dev server — not started, a release build, or talking to another server';
       return f.apps.map(a => (a.fresh ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}` : `✗ app ${a.id} (${a.platform}) is stale: ${a.note}`)).join('\n');
+    }
+    case 'appErrors': {
+      const errors = x.errors as JsError[];
+      if (!errors.length) return 'no JS errors in the last 30 min';
+      return errors
+        .map(e => [`${seconds(Date.now() - e.at)} ago · app ${e.app}${e.fatal ? ' · fatal' : ''}: ${e.message}`, ...e.frames.map(l => `    ${l}`), ...(e.code ? [`    > ${e.code}`] : []), ...(e.symbolicated ? [] : ['    (not symbolicated: the bundler did not answer)'])].join('\n'))
+        .join('\n');
     }
     case 'appTree': {
       type TreeNode = {s: number; d: number; c: string; id?: string; l?: string; t?: string; hidden?: boolean};

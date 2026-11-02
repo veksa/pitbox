@@ -37,6 +37,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `expect` in flows — presence, absence, focus, playing, paused, `visual`.
 - `dev action=fresh` — does the app run the newest code? Ask before debugging a fix that seems not to work.
 - `inspect what=network`, `inspect what=tree` — the app's requests and its React tree, from inside.
+- `inspect what=errors` — recent JS errors with source stacks (`src/file.ts:31:39` and the line itself), also
+  the ones thrown at startup before any action. Errors during an action or a flow come back with it anyway.
 - `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory.
 - Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough.
 

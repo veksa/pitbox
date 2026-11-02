@@ -57,6 +57,7 @@ devserver
   qr [--lan]                    QR with the link that points the app at this dev server
   app-tree                      the React tree from inside the app (testIDs, labels, text): reaches what accessibility does not
   app-log [-n 30]               the app's recent network requests and socket events
+  app-errors [-n 5]             the app's recent JS errors, stacks mapped to source files
   net fail|mock|delay|freeze <match> [--kind http|ws] [--status 503] [--body '{…}'] [--ms 3000]
   net offline | net clear | net
 
@@ -218,6 +219,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'qr', params: {lan: flags.lan, terminal: true}};
     case 'app-tree':
       return {method: 'appTree', params: {limit: flags.lines}};
+    case 'app-errors':
+      return {method: 'appErrors', params: {limit: flags.lines}};
     case 'app-log':
       return {method: 'appLog', params: {limit: flags.lines}};
     case 'net':

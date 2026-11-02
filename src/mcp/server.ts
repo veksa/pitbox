@@ -115,9 +115,9 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   tool('wait', 'Wait for a target (gone: until it disappears; timeout s).', {target, gone: opt.bool(), timeout: opt.num(), device}, 'wait');
   tool(
     'inspect',
-    'Checks: media (video playing?), visual <name> (vs baseline; update, masks), focus, focus_map (D-pad audit), perf (reset first), tree (React tree from inside), network (app requests), screenshot (file path).',
-    {what: z.enum(['media', 'visual', 'focus', 'focus_map', 'perf', 'tree', 'network', 'screenshot']), target: opt.str(), name: opt.str(), update: opt.bool(), masks: opt.list(), reset: opt.bool(), device},
-    a => ({media: 'media', visual: 'visual', focus: 'focus', focus_map: 'focusMap', perf: 'perf', tree: 'appTree', network: 'appLog', screenshot: 'uiShot'})[a.what as string]!,
+    'Checks: media (video playing?), visual <name> (vs baseline; update, masks), focus, focus_map (D-pad audit), perf (reset first), tree (React tree from inside), network (app requests), errors (JS errors, source stacks), screenshot (file path).',
+    {what: z.enum(['media', 'visual', 'focus', 'focus_map', 'perf', 'tree', 'network', 'errors', 'screenshot']), target: opt.str(), name: opt.str(), update: opt.bool(), masks: opt.list(), reset: opt.bool(), device},
+    a => ({media: 'media', visual: 'visual', focus: 'focus', focus_map: 'focusMap', perf: 'perf', tree: 'appTree', network: 'appLog', errors: 'appErrors', screenshot: 'uiShot'})[a.what as string]!,
   );
 
   // Flows — run in the daemon: one call, one verdict.

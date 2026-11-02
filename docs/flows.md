@@ -1,8 +1,9 @@
 # Flows
 
 A flow is a plain text file, one step per line, that the pitbox daemon runs on its own. The caller makes one
-call and gets one verdict: `✓ flow passed: N steps in T`, or the failing line with the error, any crashes or
-ANRs, a screenshot path and the screen as text.
+call and gets one verdict: `✓ flow passed: N steps in T`, or the failing line with the error, any crashes,
+ANRs or JS errors (with source stacks), a screenshot path and the screen as text. A flow that passes still
+lists the JS errors the app threw on the way.
 
 ```
 # Cold start, search, a card by deep link, a database check.
