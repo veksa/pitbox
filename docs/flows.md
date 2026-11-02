@@ -71,7 +71,7 @@ locales.
 | `state <name>` | restores a named stand state (emulator snapshot + backend dump) |
 | `run <flow> key=value…` | runs another flow file with parameters (nesting up to 5 deep) |
 | `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge |
-| `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor |
+| `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor. On iPhone and iPad simulators it turns the device, and fails when the app stays as it was (a folded phone's cover screen, a portrait-only app) |
 | `window freeform [x,y,w,h]` · `window resize x,y,w,h` · `window fullscreen` | the app as a desktop-style window, resized, or fullscreen again (switching mode relaunches the app; freeform windows stay enabled in the device's settings) |
 
 ### Acting
