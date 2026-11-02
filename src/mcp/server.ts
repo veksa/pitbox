@@ -85,6 +85,7 @@ export const startMcp = async (opts: {config?: string} = {}) => {
   tool('network', 'Network conditions: speed profile (emulator) or offline/online (airplane mode).', {profile: z.enum(['full', 'lte', 'umts', 'edge', 'gsm', 'offline', 'online']), device}, 'network');
   tool('screenshot', 'Save a screenshot to a file and return its path (the image is not sent; read the file only if you need to look).', {file: z.string().optional(), device}, 'screenshot');
   tool('reverse', 'Forward every exposed stand port to every online device now (pitbox also does this on its own every few seconds).', {}, 'reverse');
+  tool('perf', 'App performance: reset=true starts a window; without it, frames rendered since then (janky share, frame-time p50/p90/p99) and memory.', {reset: z.boolean().optional(), device, pkg}, 'perf');
   tool('info', 'Device facts: model, Android version, SDK, ABI, display, free space.', {device}, 'info');
 
   // UI — through the on-device runner. Every action waits for the UI to settle and answers with what changed.

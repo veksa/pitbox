@@ -717,6 +717,12 @@ export class Engine {
 
     reverse: async () => ({applied: await this.ensureForwards(true), ports: exposedPorts(this.config)}),
 
+    perf: async (p: Params) => {
+      const a = this.#needAndroid();
+      const serial = await a.resolve(str(p, 'device'));
+      return a.perf(serial, this.#pkg(p), bool(p, 'reset'));
+    },
+
     info: async (p: Params) => {
       const a = this.#needAndroid();
       const serial = await a.resolve(str(p, 'device'));

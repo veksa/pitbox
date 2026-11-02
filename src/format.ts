@@ -157,6 +157,8 @@ export const formatResult = (method: string, r: unknown): string => {
         ...m.asymmetric.map(a => `not reversible: ${a}`),
       ].join('\n');
     }
+    case 'perf':
+      return x.reset ? 'frame stats reset — interact, then read perf' : `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
     case 'media':
       return `${x.playing ? 'playing' : x.black ? 'black' : x.moving ? 'moving (but dark)' : 'not moving'}${x.target ? ` ${x.target}` : ''} · motion ${x.motion} · brightness ${x.luma}`;
     case 'uiShot':

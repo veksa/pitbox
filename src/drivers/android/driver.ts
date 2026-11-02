@@ -10,6 +10,8 @@ import {avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
+export type PerfReport = {reset?: boolean; frames?: number; janky?: number; p50?: number; p90?: number; p99?: number; memoryMb?: number};
+
 export type NetworkProfile = 'full' | 'lte' | 'umts' | 'edge' | 'gsm' | 'offline' | 'online';
 
 export const KEYS: Record<string, number> = {
@@ -318,6 +320,31 @@ export class AndroidDriver {
   async reverseList(serial: string): Promise<number[]> {
     const r = await this.adb(['reverse', '--list'], serial, {timeoutMs: 10_000});
     return [...r.stdout.matchAll(/tcp:(\d+)\s+tcp:\d+/g)].map(m => Number(m[1])).sort((a, b) => a - b);
+  }
+
+  /**
+   * Frames the app rendered since the last reset (count, janky share, frame time percentiles) and its memory.
+   * `reset` starts a new window — measure an interaction by resetting before it and reading after.
+   */
+  async perf(serial: string, pkg: string, reset = false): Promise<PerfReport> {
+    if (reset) {
+      await this.shell(serial, `dumpsys gfxinfo ${pkg} reset`, 20_000);
+      return {reset: true};
+    }
+    const [gfx, mem] = await Promise.all([this.shell(serial, `dumpsys gfxinfo ${pkg}`, 20_000), this.shell(serial, `dumpsys meminfo ${pkg} | grep -E "TOTAL PSS|TOTAL:"`, 20_000)]);
+    const num = (re: RegExp) => {
+      const m = re.exec(gfx);
+      return m ? Number(m[1]) : undefined;
+    };
+    const pss = /TOTAL PSS:\s*(\d+)/.exec(mem)?.[1] ?? /TOTAL:\s*(\d+)/.exec(mem)?.[1];
+    return {
+      frames: num(/Total frames rendered:\s*(\d+)/),
+      janky: num(/Janky frames:\s*\d+\s*\(([\d.]+)%\)/),
+      p50: num(/50th percentile:\s*(\d+)ms/),
+      p90: num(/90th percentile:\s*(\d+)ms/),
+      p99: num(/99th percentile:\s*(\d+)ms/),
+      memoryMb: pss ? Math.round(Number(pss) / 1024) : undefined,
+    };
   }
 
   async info(serial: string): Promise<Record<string, string>> {
