@@ -294,6 +294,27 @@ export class AppleDriver {
     return {file, bytes: fs.statSync(file).size};
   }
 
+  /** The pid of a running app, from the simulator's launchd. */
+  async pid(udid: string, bundleId: string): Promise<number | undefined> {
+    const r = await this.simctl(['spawn', udid, 'launchctl', 'list'], {timeoutMs: 10_000});
+    const line = r.stdout.split('\n').find(l => l.includes(`UIKitApplication:${bundleId}[`));
+    const pid = Number(line?.split('\t')[0]);
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  }
+
+  /**
+   * Memory of the running app. A simulator app is a process of the Mac, so `ps` reads it directly. There is no
+   * frame counter like Android's gfxinfo: frames stay unknown rather than estimated.
+   */
+  async perf(udid: string, bundleId: string, reset = false): Promise<{reset?: boolean; memoryMb?: number; note?: string}> {
+    if (reset) return {reset: true, note: 'nothing to reset on a simulator: memory is read live, frames are not counted'};
+    const pid = await this.pid(udid, bundleId);
+    if (!pid) throw new AppleError(`${bundleId} is not running`, 'open it first');
+    const r = await run('ps', ['-o', 'rss=', '-p', String(pid)], {timeoutMs: 5000});
+    const kb = Number(r.stdout.trim());
+    return {memoryMb: Number.isFinite(kb) && kb > 0 ? Math.round(kb / 1024) : undefined, note: 'resident memory; frame stats are not available on simulators'};
+  }
+
   async info(udid: string): Promise<Record<string, string>> {
     const sim = (await this.simulators()).find(s => s.udid === udid);
     if (!sim) throw new AppleError(`unknown simulator ${udid}`);

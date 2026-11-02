@@ -954,7 +954,7 @@ export class Engine {
 
     perf: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
-      if (t.platform === 'apple') throw new Error('frame and memory stats on a simulator need the Apple runner (not there yet)');
+      if (t.platform === 'apple') return t.s.perf(t.id, this.#bundleId(p), bool(p, 'reset'));
       return t.a.perf(t.id, this.#pkg(p), bool(p, 'reset'));
     },
 
