@@ -11,7 +11,7 @@ import {AndroidError} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
-export const RUNNER_VERSION = 10;
+export const RUNNER_VERSION = 11;
 const DEVICE_PORT = 7912;
 /** The instrumentation's output on the device: its ready line or why it failed. */
 const RUNNER_OUT = '/data/local/tmp/pitbox-runner.out';

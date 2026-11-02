@@ -46,6 +46,8 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
       JSONObject()
     }
     "key" -> { key(req.getInt("code"), req.optInt("meta", 0)); JSONObject() }
+    "mouse" -> { mouse(req.getString("action"), req.getInt("x"), req.getInt("y"), req.optDouble("amount", -1.0).toFloat()); JSONObject() }
+    "rotary" -> { rotary(req.getDouble("amount").toFloat(), req.optInt("steps", 1)); JSONObject() }
     "touch" -> { touch(req.getString("phase"), req.optInt("x"), req.optInt("y")); JSONObject().put("down", touchDown != null) }
     "text" -> JSONObject().put("set", setText(req.getString("text"), req.optBoolean("append", false), req.optJSONArray("bounds")))
     "action" -> JSONObject().put("done", action(req.getJSONArray("bounds"), req.getString("action")))
@@ -197,6 +199,62 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
   private fun injectEvent(e: android.view.InputEvent) {
     val m = injectNoAnimationWait
     if (m != null) m.invoke(ui, e, false, false) else ui.injectInputEvent(e, false)
+  }
+
+  /** A one-pointer event from a given source and tool, with optional buttons and axis values. */
+  private fun pointerEvent(down: Long, action: Int, x: Int, y: Int, source: Int, tool: Int, buttons: Int = 0, axes: Map<Int, Float> = emptyMap()): MotionEvent {
+    val props = MotionEvent.PointerProperties().apply { id = 0; toolType = tool }
+    val coords = MotionEvent.PointerCoords().apply {
+      this.x = x.toFloat()
+      this.y = y.toFloat()
+      pressure = if (buttons != 0) 1f else 0f
+      size = 1f
+      for ((axis, v) in axes) setAxisValue(axis, v)
+    }
+    return MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, 1, arrayOf(props), arrayOf(coords), 0, buttons, 1f, 1f, 0, 0, source, 0)
+  }
+
+  /** The button an ACTION_BUTTON_PRESS/RELEASE is about; the setter is hidden, and without it the event is ignored. */
+  private val setActionButton: java.lang.reflect.Method? =
+    runCatching { MotionEvent::class.java.getMethod("setActionButton", Int::class.javaPrimitiveType) }.getOrNull()
+
+  /**
+   * Mouse input, for tablets, desktops and headsets: `hover` moves the pointer over a point, `right` clicks the
+   * secondary button there (context menus), `wheel` turns the wheel by `amount` notches (negative scrolls down).
+   */
+  private fun mouse(action: String, x: Int, y: Int, amount: Float) {
+    val down = SystemClock.uptimeMillis()
+    val src = InputDevice.SOURCE_MOUSE
+    val tool = MotionEvent.TOOL_TYPE_MOUSE
+    when (action) {
+      "hover" -> {
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_ENTER, x, y, src, tool))
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_MOVE, x, y, src, tool))
+      }
+      "right" -> {
+        val b = MotionEvent.BUTTON_SECONDARY
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_MOVE, x, y, src, tool))
+        inject(pointerEvent(down, MotionEvent.ACTION_DOWN, x, y, src, tool, b))
+        inject(pointerEvent(down, MotionEvent.ACTION_BUTTON_PRESS, x, y, src, tool, b).also { setActionButton?.invoke(it, b) })
+        SystemClock.sleep(40)
+        inject(pointerEvent(down, MotionEvent.ACTION_BUTTON_RELEASE, x, y, src, tool, 0).also { setActionButton?.invoke(it, b) })
+        inject(pointerEvent(down, MotionEvent.ACTION_UP, x, y, src, tool, 0))
+      }
+      "wheel" -> {
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_MOVE, x, y, src, tool))
+        inject(pointerEvent(down, MotionEvent.ACTION_SCROLL, x, y, src, tool, axes = mapOf(MotionEvent.AXIS_VSCROLL to amount)))
+      }
+      else -> throw IllegalArgumentException("mouse: hover, right or wheel")
+    }
+  }
+
+  /** A watch crown or rotating bezel: `steps` events of `amount` each (scrolling views read positive as up). */
+  private fun rotary(amount: Float, steps: Int) {
+    repeat(steps.coerceIn(1, 50)) {
+      val now = SystemClock.uptimeMillis()
+      inject(pointerEvent(now, MotionEvent.ACTION_SCROLL, 0, 0, InputDevice.SOURCE_ROTARY_ENCODER, MotionEvent.TOOL_TYPE_UNKNOWN, axes = mapOf(MotionEvent.AXIS_SCROLL to amount)))
+      SystemClock.sleep(30)
+    }
   }
 
   private fun tap(x: Int, y: Int, hold: Long) {
@@ -386,5 +444,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 10
+  const val VERSION = 11
 }
