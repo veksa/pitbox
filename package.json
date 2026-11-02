@@ -1,0 +1,28 @@
+{
+  "name": "@veksa/pitbox",
+  "version": "0.0.0",
+  "description": "Run, drive and debug apps on emulators, simulators and devices from one MCP server — fast and token-lean",
+  "license": "MIT",
+  "author": "Aleksandr Khizhnyi <mendler88@gmail.com>",
+  "type": "module",
+  "bin": {
+    "pitbox": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "mcp",
+    "agent",
+    "android",
+    "ios",
+    "tvos",
+    "visionos",
+    "android-tv",
+    "android-xr",
+    "emulator",
+    "simulator",
+    "e2e",
+    "automation"
+  ]
+}
