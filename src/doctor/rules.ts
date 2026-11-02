@@ -45,13 +45,15 @@ const adbServer: Rule = {
   title: 'the adb server answers',
   check: async ctx => {
     if (!ctx.android) return [];
-    const r = await run(ctx.android.adbPath, ['devices'], {timeoutMs: 6000});
+    // Two tries: other rules run adb at the same moment, and one slow answer under load is not a wedged server.
+    let r = await run(ctx.android.adbPath, ['devices'], {timeoutMs: 8000});
+    if (r.timedOut) r = await run(ctx.android.adbPath, ['devices'], {timeoutMs: 8000});
     if (!r.timedOut) return [];
     return [
       {
         rule: 'adb-server',
         severity: 'error',
-        message: 'the adb server does not answer within 6 s — every device looks offline and every call hangs',
+        message: 'the adb server did not answer twice in 8 s — every device looks offline and every call hangs',
         hint: 'a wedged server ignores kill-server; all adb processes must go',
         fix: () => restartAdb(ctx.android!.adbPath),
       },
@@ -170,6 +172,88 @@ const systemDialog: Rule = {
   },
 };
 
+/** CI mode makes Metro (and Expo) skip file watching: edits never reach the app, and it looks like a broken fix. */
+const ciDevServer: Rule = {
+  id: 'devserver-ci',
+  title: 'the dev server watches files',
+  check: async ctx => {
+    const env = {...process.env, ...ctx.config.devserver?.env};
+    if (!ctx.config.devserver || !env.CI || /^(0|false)$/i.test(env.CI)) return [];
+    return [{rule: 'devserver-ci', severity: 'warn', message: `CI=${env.CI} reaches the dev server: Metro does not watch files in CI mode, edits never arrive`, hint: 'unset CI for the dev server (devserver.env: {CI: "false"} or start the daemon without it)'}];
+  },
+};
+
+/** A run that stopped half-way (a matrix, a font-size check) leaves the device enlarged or resized for the next. */
+const leftoverDisplay: Rule = {
+  id: 'device-display',
+  title: 'device display settings are at their defaults',
+  check: async ctx => {
+    if (!ctx.android) return [];
+    const findings: Finding[] = [];
+    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      const out = await ctx.android.shell(d.serial, 'settings get system font_scale; wm size; wm density').catch(() => '');
+      const scale = Number(out.split('\n')[0]);
+      const sizeOverride = /Override size:/.test(out);
+      const densityOverride = /Override density:/.test(out);
+      if ((Number.isFinite(scale) && scale !== 1) || sizeOverride || densityOverride) {
+        findings.push({
+          rule: 'device-display',
+          severity: 'warn',
+          message: `${d.avd ?? d.serial}: ${[scale !== 1 && Number.isFinite(scale) ? `font scale ${scale}` : '', sizeOverride ? 'display size overridden' : '', densityOverride ? 'density overridden' : ''].filter(Boolean).join(', ')}`,
+          hint: 'probably left by an interrupted run; every screen and selector looks different until reset',
+          fix: async () => {
+            await ctx.android!.shell(d.serial, 'settings put system font_scale 1; wm size reset; wm density reset');
+            return `${d.avd ?? d.serial}: font scale 1, display size and density reset`;
+          },
+        });
+      }
+    }
+    return findings;
+  },
+};
+
+/** A release build on the device never asks the dev server for anything. */
+const releaseBuild: Rule = {
+  id: 'app-debuggable',
+  title: 'the installed app is a debug build when a dev server is configured',
+  check: async ctx => {
+    const pkg = ctx.config.app?.android;
+    if (!ctx.android || !pkg || !ctx.config.devserver) return [];
+    const findings: Finding[] = [];
+    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      const out = await ctx.android.shell(d.serial, `dumpsys package ${pkg} | grep -m1 "pkgFlags"`).catch(() => '');
+      if (out && !/DEBUGGABLE/.test(out)) {
+        findings.push({rule: 'app-debuggable', severity: 'warn', message: `${d.avd ?? d.serial}: ${pkg} is a release build — it runs its embedded bundle and never talks to the dev server`, hint: 'install a debug build to iterate (fresh will say no app is connected)'});
+      }
+    }
+    return findings;
+  },
+};
+
+/** Animations make waits slower and flakier; turning them off is the usual setting for automated runs. */
+const animations: Rule = {
+  id: 'device-animations',
+  title: 'animations are off for automated runs',
+  check: async ctx => {
+    if (!ctx.android) return [];
+    const findings: Finding[] = [];
+    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      const v = (await ctx.android.shell(d.serial, 'settings get global animator_duration_scale').catch(() => '')).trim();
+      if (v && v !== '0' && v !== '0.0') {
+        const shown = v === 'null' ? 'default (1)' : v;
+        findings.push({
+          rule: 'device-animations',
+          severity: 'info',
+          message: `${d.avd ?? d.serial}: animations on (${shown})`,
+          hint: 'off makes settling faster and steadier; leave them on when the check is about an animation',
+          fix: async () => (await ctx.android!.settings(d.serial, {animations: false})).join(', '),
+        });
+      }
+    }
+    return findings;
+  },
+};
+
 const servicesHealthy: Rule = {
   id: 'services',
   title: 'stand services answer their probes',
@@ -246,4 +330,4 @@ export const metroWindowsWatcher: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, servicesHealthy, dataPartition, metroWindowsWatcher];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, animations, servicesHealthy, dataPartition, metroWindowsWatcher];
