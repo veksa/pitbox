@@ -23,6 +23,11 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   the app runs the newest code or a stale bundle; the app's network log; network rules applied inside the app
   (fail, mock, delay, a WebSocket frozen open, offline); a `traceparent` on every request an action causes;
   in-flight requests count toward "the UI has settled".
+- **The app's JS runtime as tools** (through the bundler's debugger channel, next to a person's DevTools):
+  `js eval` runs an expression in the app (statements and promises fine, values as compact text); `js log
+  <file:line> [expr…]` is a logpoint — the values each time the line runs, locals included, without stopping the
+  app or editing code. Host bytecode carries no debug info for locals, so while logpoints exist the app gets
+  source (one reload); `js clear` brings bytecode back on the next start.
 - **No dev launcher needed**: the Android connect library (autolinked, debug builds only) points the app at the
   dev server from a link — `pitbox qr` puts it in a QR code for a phone, `open` uses it on emulators.
   On an iOS or tvOS simulator `open` needs no library at all: it saves the dev server in the app's defaults

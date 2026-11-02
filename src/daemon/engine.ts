@@ -696,6 +696,27 @@ export class Engine {
       return {rules: proxy.rules, apps: proxy.apps().length};
     },
 
+    jsEval: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      return this.#dev.js.evaluate(req(p, 'expr'), str(p, 'device'), (num(p, 'timeout') ?? 10) * 1000);
+    },
+
+    jsLog: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      const exprs = Array.isArray(p.exprs) ? p.exprs.map(String) : typeof p.exprs === 'string' ? [p.exprs] : [];
+      return this.#dev.js.log(req(p, 'at'), exprs, str(p, 'device'));
+    },
+
+    jsHits: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      return this.#dev.js.hits(str(p, 'id'), num(p, 'limit') ?? 20);
+    },
+
+    jsClear: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      return this.#dev.js.clear(str(p, 'id'));
+    },
+
     devReload: async () => {
       if (!this.#dev) throw new Error('no devserver in the config');
       await this.#dev.reload();

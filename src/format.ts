@@ -7,6 +7,7 @@ import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
+import type {EvalResult, Logpoint} from './devserver/jsdebug.ts';
 import type {JsError} from './devserver/proxy.ts';
 import type {ActResult, FocusMap} from './ui/device.ts';
 import type {FlowResult} from './flows/run.ts';
@@ -124,6 +125,9 @@ export const fmtObject = (o: unknown): string => {
 };
 
 /** Formats any engine result by method. */
+const fmtLogpoint = (lp: Logpoint) =>
+  `${lp.source ?? lp.file}:${lp.codeLine ?? lp.line}${lp.codeLine && lp.codeLine !== lp.line ? ` (no code at line ${lp.line})` : ''}${lp.exprs.length ? ` · ${lp.exprs.join(', ')}` : ''}`;
+
 export const formatResult = (method: string, r: unknown): string => {
   const x = r as Record<string, unknown>;
   switch (method) {
@@ -207,6 +211,34 @@ export const formatResult = (method: string, r: unknown): string => {
       const f = x as unknown as Freshness;
       if (!f.apps.length) return 'no app connected to the dev server — not started, a release build, or talking to another server';
       return f.apps.map(a => (a.fresh ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}` : `✗ app ${a.id} (${a.platform}) is stale: ${a.note}`)).join('\n');
+    }
+    case 'jsEval': {
+      const e = x as unknown as EvalResult;
+      const where = e.apps > 1 ? `  (in ${e.app}; ${e.apps} apps are debuggable — pick one with device)` : '';
+      return `${e.error !== undefined ? `! ${e.error}` : `= ${e.value}`}${where}`;
+    }
+    case 'jsLog': {
+      const lp = x.logpoint as Logpoint;
+      return [
+        `${lp.id} at ${fmtLogpoint(lp)}`,
+        ...(x.reloaded ? ['reloaded the app to source: host bytecode has no debug info for locals (js clear returns to bytecode on the next start)'] : []),
+        'the values come with: js hits',
+      ].join('\n');
+    }
+    case 'jsHits': {
+      const lps = x.logpoints as Logpoint[];
+      if (!lps.length) return 'no logpoints — set one with js log <file:line> [expr…]';
+      const now = Date.now();
+      const out = lps.flatMap(lp => [
+        `${lp.id} at ${fmtLogpoint(lp)} · ${lp.count} hit${lp.count === 1 ? '' : 's'}${lp.error ? ` · ! ${lp.error}` : ''}`,
+        ...lp.hits.map(h => `  ${seconds(now - h.at)} ago  ${h.v || '(hit)'}`),
+      ]);
+      if (x.paused) out.push(`(the app stopped at ${x.paused} other breakpoint(s) or debugger statement(s); pitbox let it go on)`);
+      return out.join('\n');
+    }
+    case 'jsClear': {
+      const ids = x.cleared as string[];
+      return `cleared ${ids.join(', ') || 'nothing'}${x.bytecodeBack ? ' · the app gets bytecode again on its next start' : ''}`;
     }
     case 'appErrors': {
       const errors = x.errors as JsError[];

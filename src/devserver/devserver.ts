@@ -8,6 +8,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 import type {DevserverConfig, ServiceConfig} from '../config/schema.ts';
 import {lanAddress} from '../util/lan.ts';
 import {BytecodeCache, findHermesc, hermesCompiler} from './hermes.ts';
+import {JsDebugger} from './jsdebug.ts';
 import {DevProxy, isNativeBundleRequest} from './proxy.ts';
 
 export const DEVSERVER = 'devserver';
@@ -47,6 +48,7 @@ export class DevServer {
   readonly port: number;
   readonly internalPort: number;
   readonly proxy: DevProxy;
+  readonly js: JsDebugger;
   readonly hermesc?: string;
   #watcher?: fs.FSWatcher;
   #debounce?: NodeJS.Timeout;
@@ -68,6 +70,7 @@ export class DevServer {
       inApp: cfg.inApp ?? (cfg.adapter ?? 'metro') !== 'command',
       root: this.root,
     });
+    this.js = new JsDebugger(this.proxy, this.internalPort, () => this.reload());
     try {
       const saved = JSON.parse(fs.readFileSync(this.#stateFile, 'utf8')) as {mainUrls?: Record<string, string>};
       for (const [p, u] of Object.entries(saved.mainUrls ?? {})) this.proxy.mainUrls.set(p, u);
@@ -119,6 +122,7 @@ export class DevServer {
   async stop() {
     this.#watcher?.close();
     this.#watcher = undefined;
+    this.js.stop();
     await this.proxy.stop();
   }
 

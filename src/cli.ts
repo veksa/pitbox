@@ -70,6 +70,9 @@ devserver
   app-tree                      the React tree from inside the app (testIDs, labels, text): reaches what accessibility does not
   app-log [-n 30]               the app's recent network requests and socket events
   app-errors [-n 5]             the app's recent JS errors, stacks mapped to source files
+  js eval <expr…>               evaluate in the app's JS runtime (statements and promises fine)
+  js log <file:line> [expr…]    a logpoint: the values each time the line runs, without stopping the app
+  js hits [id] [-n 20] · js clear [id]
   net fail|mock|delay|freeze <match> [--kind http|ws] [--status 503] [--body '{…}'] [--ms 3000]
   net offline | net clear | net
 
@@ -256,6 +259,14 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'appErrors', params: {limit: flags.lines}};
     case 'app-log':
       return {method: 'appLog', params: {limit: flags.lines}};
+    case 'js': {
+      const [sub, ...args] = rest;
+      if (sub === 'eval') return {method: 'jsEval', params: {expr: args.join(' '), timeout: flags.timeout, device}};
+      if (sub === 'log') return {method: 'jsLog', params: {at: args[0], exprs: args.slice(1), device}};
+      if (sub === 'hits' || sub === undefined) return {method: 'jsHits', params: {id: args[0], limit: flags.lines}};
+      if (sub === 'clear') return {method: 'jsClear', params: {id: args[0]}};
+      throw new Error('js eval <expr> | js log <file:line> [expr…] | js hits [id] | js clear [id]');
+    }
     case 'net':
       return {method: 'net', params: {action: rest[0] ?? 'list', match: rest[1], kind: flags.kind, status: flags.status, body: flags.body, ms: flags.ms}};
     case 'docs': {

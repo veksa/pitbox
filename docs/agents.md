@@ -63,6 +63,11 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory.
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.
+- `js action=eval expr=…` — read the app's state from inside (a store, a module's export, a feature flag);
+  promises are awaited. `js action=log at=src/Home.tsx:42 exprs=["user.id","items.length"]` → interact →
+  `js action=hits` — what the line saw each time it ran, without editing code or a rebuild; one failing
+  expression does not hide the others. `js action=clear` when done. The first logpoint reloads an app that runs
+  bytecode (the runtime needs source to read locals), so set it before reaching the screen you care about.
 - Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough.
 
 ## Network and backend

@@ -70,6 +70,13 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
       {action: z.enum(['status', 'fresh', 'prewarm', 'reload', 'qr']), lan: opt.bool()},
       a => ({status: 'devStatus', fresh: 'fresh', prewarm: 'devPrewarm', reload: 'devReload', qr: 'qr'})[a.action as string]!,
     );
+    // Typical answer: one line for eval (values cut at 4 KB), a few lines per logpoint for hits.
+    tool(
+      'js',
+      "The app's JS runtime: eval <expr> (global scope; statements and promises fine); log at=<file:line> exprs=[…] records the values each time the line runs (locals included), without stopping the app or editing code — a bytecode app reloads to source once; hits [id]; clear [id].",
+      {action: z.enum(['eval', 'log', 'hits', 'clear']), expr: opt.str(), at: opt.str(), exprs: opt.list(), id: opt.str(), timeout: opt.num(), device},
+      a => ({eval: 'jsEval', log: 'jsLog', hits: 'jsHits', clear: 'jsClear'})[a.action as string]!,
+    );
     tool(
       'net',
       'Network rules inside the app: fail, mock (status/body), delay (ms), freeze (WebSocket silent but open), offline, clear, list. match: URL substring or *.',
