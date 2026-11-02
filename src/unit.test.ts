@@ -166,3 +166,39 @@ describe('crash events', () => {
     expect(events[0]?.lines[0]).toBe('Process: com.example.app, PID: 4242');
   });
 });
+
+describe('mcp tools', () => {
+  it('route every tool and every action to an existing engine method, and stay small', async () => {
+    const {registerTools} = await import('./mcp/server.ts');
+    const {Engine} = await import('./daemon/engine.ts');
+    const dir = tmp();
+    const config = {app: {android: 'com.example.app'}, devserver: {}, actors: {peer: {start: 'x {name} {port}'}}, tools: {sql: {run: 'q {query}', params: {query: 'SQL'}}}};
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify(config));
+    const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
+    const methods = new Set(Object.keys(engine.methods));
+    type Handler = (a: Record<string, unknown>) => Promise<unknown>;
+    const tools: {name: string; schema: Record<string, {options?: string[]; def?: {values?: unknown}}>; handler: Handler; size: number}[] = [];
+    registerTools({registerTool: (name, def, handler) => tools.push({name, schema: def.inputSchema as never, handler: handler as Handler, size: JSON.stringify(def).length})}, config as never, async () => ({
+      call: async (method: string) => {
+        called.push(method);
+        throw new Error('stop');
+      },
+    }));
+    const called: string[] = [];
+    let checks = 0;
+    for (const t of tools) {
+      const enumKey = Object.keys(t.schema).find(k => k === 'action' || k === 'what');
+      const values = enumKey ? ((t.schema[enumKey] as unknown as {options: string[]}).options ?? []) : [undefined];
+      for (const v of values) {
+        called.length = 0;
+        await t.handler(enumKey ? {[enumKey]: v} : {});
+        expect(called.length, `${t.name} ${v ?? ''}`).toBe(1);
+        expect(methods.has(called[0]!), `${t.name} ${v ?? ''} → ${called[0]}`).toBe(true);
+        checks++;
+      }
+    }
+    // Every action of every tool was exercised, not skipped for want of enum options.
+    expect(checks).toBeGreaterThan(50);
+    expect(tools.length).toBeLessThanOrEqual(30);
+  });
+});
