@@ -114,13 +114,78 @@ export const killTree = (child: ChildProcess | number) => {
   }
 };
 
-/** Kills a process tree and waits until the root process is gone (up to `timeoutMs`). */
-export const killTreeAndWait = async (pid: number, timeoutMs = 5000): Promise<boolean> => {
-  if (process.platform === 'win32') {
-    await run('taskkill', ['/pid', String(pid), '/T', '/F'], {timeoutMs});
-  } else {
-    killTree(pid);
+export type ProcInfo = {pid: number; ppid: number; name: string; created: number};
+
+let tableCache: {at: number; procs: ProcInfo[]} | undefined;
+
+/**
+ * The Windows process table. Needed because a command started through Git Bash runs as a chain of processes
+ * (bash → bash → node → cmd → node) in which the root can exit while its descendants live on: they keep the
+ * dead root as their ParentProcessId, so the tree is still found from the root's pid.
+ */
+export const processTable = async (maxAgeMs = 1500): Promise<ProcInfo[]> => {
+  if (process.platform !== 'win32') return [];
+  if (tableCache && Date.now() - tableCache.at < maxAgeMs) return tableCache.procs;
+  const r = await run(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', `Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId),$([long]($_.CreationDate.ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds),$($_.Name)" }`],
+    {timeoutMs: 20_000},
+  );
+  const procs = r.stdout
+    .split(/\r?\n/)
+    .map(l => l.split(','))
+    .filter(p => p.length >= 4)
+    .map(([pid, ppid, created, ...name]) => ({pid: Number(pid), ppid: Number(ppid), created: Number(created), name: name.join(',')}));
+  tableCache = {at: Date.now(), procs};
+  return procs;
+};
+
+/** Descendants of `root` (alive or not) created at or after `since`, which guards against reused pids. */
+export const descendants = (procs: ProcInfo[], root: number, since = 0): number[] => {
+  const children = new Map<number, ProcInfo[]>();
+  for (const p of procs) {
+    if (p.pid === p.ppid) continue;
+    const list = children.get(p.ppid) ?? [];
+    list.push(p);
+    children.set(p.ppid, list);
   }
+  const out: number[] = [];
+  const queue = [root];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const c of children.get(cur) ?? []) {
+      if (seen.has(c.pid) || c.created < since - 2000) continue;
+      seen.add(c.pid);
+      out.push(c.pid);
+      queue.push(c.pid);
+    }
+  }
+  return out;
+};
+
+/** Pids of a tree that are still alive: the root and, on Windows, every descendant found from it. */
+export const liveTree = async (root: number, since = 0): Promise<number[]> => {
+  if (process.platform !== 'win32') return isAlive(root) ? [root] : [];
+  const procs = await processTable();
+  const alive = new Set(procs.map(p => p.pid));
+  return [root, ...descendants(procs, root, since)].filter(p => alive.has(p));
+};
+
+/** Kills a process tree — including descendants that outlived their root — and waits until it is gone. */
+export const killTreeAndWait = async (pid: number, timeoutMs = 5000, since = 0): Promise<boolean> => {
+  if (process.platform === 'win32') {
+    const pids = await liveTree(pid, since);
+    if (pids.length) await run('taskkill', ['/T', '/F', ...pids.flatMap(p => ['/PID', String(p)])], {timeoutMs});
+    tableCache = undefined;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!pids.some(isAlive)) return true;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    return !pids.some(isAlive);
+  }
+  killTree(pid);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!isAlive(pid)) return true;

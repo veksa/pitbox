@@ -16,7 +16,9 @@ const server = (port: number) => `${node} -e "require('http').createServer((q,s)
 const ctx = {root: dir, stateDir: path.join(dir, '.pitbox')};
 const managers: ServiceManager[] = [];
 
-afterAll(() => managers.forEach(m => m.killAll()));
+afterAll(async () => {
+  for (const m of managers) await m.killAll();
+});
 
 describe('services', () => {
   it('starts in dependency order, waits for health, logs, and stops', async () => {

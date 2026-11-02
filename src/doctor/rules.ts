@@ -137,19 +137,18 @@ export const metroWindowsWatcher: Rule = {
     if (process.platform !== 'win32') return [];
     const roots = new Set<string>([ctx.root, ...Object.values(ctx.config.services ?? {}).map(s => (s.cwd ? path.resolve(ctx.root, s.cwd) : ctx.root))]);
     const findings: Finding[] = [];
+    // Expo's fork is the file map an Expo project's Metro loads; the plain package is checked only without it.
+    const candidates = ['node_modules/@expo/metro-file-map/build/watchers/NativeWatcher.js', 'node_modules/metro-file-map/src/watchers/NativeWatcher.js'];
     for (const r of roots) {
-      for (const rel of ['node_modules/@expo/metro-file-map/build/watchers/NativeWatcher.js', 'node_modules/metro-file-map/src/watchers/NativeWatcher.js']) {
-        const file = path.join(r, rel);
-        if (!fs.existsSync(file)) continue;
-        const src = fs.readFileSync(file, 'utf8');
-        if (/platform\)\(\)\s*===\s*['"]darwin['"]/.test(src)) {
-          findings.push({
-            rule: 'metro-watcher',
-            severity: 'warn',
-            message: `${path.relative(ctx.root, file) || file}: native watcher is macOS-only, Metro will crawl every directory on start`,
-            hint: "patch isSupported() to allow 'win32' (a yarn/patch-package patch survives installs); measured ~39s → ~4s per start",
-          });
-        }
+      const file = candidates.map(c => path.join(r, c)).find(f => fs.existsSync(f));
+      if (!file) continue;
+      if (/platform\)\(\)\s*===\s*['"]darwin['"]/.test(fs.readFileSync(file, 'utf8'))) {
+        findings.push({
+          rule: 'metro-watcher',
+          severity: 'warn',
+          message: `${file}: native watcher is macOS-only, Metro will crawl every directory on start`,
+          hint: "patch isSupported() to allow 'win32' (a yarn/patch-package patch survives installs); measured ~39s → ~4s per start",
+        });
       }
     }
     return findings;

@@ -6,7 +6,7 @@ import path from 'node:path';
 import type {ChildProcess} from 'node:child_process';
 import type {ServiceConfig} from '../config/schema.ts';
 import {asArray} from '../config/schema.ts';
-import {isAlive, killTree, killTreeAndWait, runShell, spawnShell} from '../util/proc.ts';
+import {isAlive, killTree, killTreeAndWait, liveTree, runShell, spawnShell} from '../util/proc.ts';
 import {tailLines} from '../util/text.ts';
 import {checkProbe, waitForProbe} from './health.ts';
 
@@ -48,6 +48,26 @@ export const orderServices = (services: Record<string, ServiceConfig>, requested
   return out;
 };
 
+/**
+ * What stopping `names` takes: those services and everything that depends on them, dependents first.
+ * Their own dependencies keep running — stopping the API must not stop the database.
+ */
+export const stopOrder = (services: Record<string, ServiceConfig>, names: string[]): string[] => {
+  for (const n of names) if (!services[n]) throw new Error(`unknown service: ${n}`);
+  const affected = new Set(names);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [name, svc] of Object.entries(services)) {
+      if (!affected.has(name) && (svc.dependsOn ?? []).some(d => affected.has(d))) {
+        affected.add(name);
+        grew = true;
+      }
+    }
+  }
+  return orderServices(services, [...affected]).filter(n => affected.has(n)).reverse();
+};
+
 export class ServiceManager {
   readonly #ctx: StandContext;
   #services: Record<string, ServiceConfig>;
@@ -86,10 +106,10 @@ export class ServiceManager {
 
   #recoverPids() {
     try {
-      const pids = JSON.parse(fs.readFileSync(this.#pidFile, 'utf8')) as Record<string, {pid: number; startedAt: number}>;
-      for (const [name, {pid, startedAt}] of Object.entries(pids)) {
-        if (this.#services[name] && isAlive(pid)) {
-          this.#state.set(name, {name, status: 'up', pid, startedAt, expose: asArray(this.#services[name].expose), detail: 'recovered'});
+      const pids = JSON.parse(fs.readFileSync(this.#pidFile, 'utf8')) as Record<string, {pid?: number; startedAt: number; detached?: boolean}>;
+      for (const [name, {pid, startedAt, detached}] of Object.entries(pids)) {
+        if (this.#services[name]) {
+          this.#state.set(name, {name, status: 'up', pid, startedAt, detached, expose: asArray(this.#services[name].expose), detail: 'recovered'});
         }
       }
     } catch {
@@ -97,9 +117,21 @@ export class ServiceManager {
     }
   }
 
+  /** Whether a process pitbox started for this service is still running (its tree, on Windows). */
+  async #owned(known: ServiceState | undefined): Promise<boolean> {
+    if (!known) return false;
+    if (known.detached) return true;
+    if (known.pid === undefined) return false;
+    return (await liveTree(known.pid, known.startedAt ?? 0)).length > 0;
+  }
+
   #savePids() {
-    const pids: Record<string, {pid: number; startedAt: number}> = {};
-    for (const s of this.#state.values()) if (s.pid && s.startedAt && (s.status === 'up' || s.status === 'starting')) pids[s.name] = {pid: s.pid, startedAt: s.startedAt};
+    const pids: Record<string, {pid?: number; startedAt: number; detached?: boolean}> = {};
+    for (const s of this.#state.values()) {
+      if (!s.startedAt || (s.status !== 'up' && s.status !== 'starting')) continue;
+      if (s.pid) pids[s.name] = {pid: s.pid, startedAt: s.startedAt};
+      else if (s.detached) pids[s.name] = {startedAt: s.startedAt, detached: true};
+    }
     fs.mkdirSync(this.#ctx.stateDir, {recursive: true});
     fs.writeFileSync(this.#pidFile, JSON.stringify(pids, null, 2));
   }
@@ -118,7 +150,7 @@ export class ServiceManager {
         const svc = this.#services[name]!;
         const known = this.#state.get(name);
         if (known?.status === 'starting') return known;
-        const ours = (known?.pid !== undefined && isAlive(known.pid)) || known?.detached === true;
+        const ours = await this.#owned(known);
         if (!svc.health) {
           return this.#set(name, ours ? {status: 'up', detail: 'running (no probe)'} : {status: 'stopped', pid: undefined, detail: svc.start ? undefined : 'no probe, no start'});
         }
@@ -154,7 +186,7 @@ export class ServiceManager {
     if (svc.health) {
       const probe = await checkProbe(svc.health, {cwd, shell: this.#ctx.shell});
       if (probe.ok) {
-        const ours = (known?.pid !== undefined && isAlive(known.pid)) || known?.detached === true;
+        const ours = await this.#owned(known);
         return this.#set(name, {status: ours ? 'up' : 'external', detail: probe.detail});
       }
     } else if (known?.pid !== undefined && isAlive(known.pid)) {
@@ -224,15 +256,15 @@ export class ServiceManager {
 
   /** Stops what pitbox started; runs `stop` commands; leaves external processes alone unless they have one. */
   async down(names: string[] = []): Promise<ServiceState[]> {
-    const targets = (names.length ? orderServices(this.#services, names) : this.names()).reverse();
+    const targets = names.length ? stopOrder(this.#services, names) : orderServices(this.#services, this.names()).reverse();
     const results: ServiceState[] = [];
     for (const name of targets) {
       const svc = this.#services[name]!;
       const known = this.#state.get(name);
       let detail: string;
-      if (known?.pid !== undefined && isAlive(known.pid)) {
+      if (known?.pid !== undefined && (await liveTree(known.pid, known.startedAt ?? 0)).length) {
         this.#set(name, {status: 'stopped'});
-        const gone = await killTreeAndWait(known.pid);
+        const gone = await killTreeAndWait(known.pid, 8000, known.startedAt ?? 0);
         detail = gone ? `killed pid ${known.pid}` : `pid ${known.pid} did not exit`;
       } else if (svc.stop) {
         detail = 'ran stop';
@@ -274,8 +306,8 @@ export class ServiceManager {
     }
   }
 
-  /** Stops every process pitbox started (daemon shutdown). */
-  killAll() {
-    for (const s of this.#state.values()) if (s.pid && isAlive(s.pid)) killTree(s.pid);
+  /** Stops every process pitbox started, without running stop commands (tests). */
+  async killAll() {
+    for (const s of this.#state.values()) if (s.pid) await killTreeAndWait(s.pid, 5000, s.startedAt ?? 0);
   }
 }

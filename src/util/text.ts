@@ -1,8 +1,14 @@
 // Text helpers that keep agent-facing output small.
 
+// oxlint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/** Removes terminal colour and cursor codes — they cost tokens and carry nothing. */
+export const stripAnsi = (text: string) => text.replace(ANSI, '');
+
 /** The last `n` lines of a text, optionally only those matching a pattern. */
 export const tailLines = (text: string, n: number, grep?: string): string[] => {
-  let lines = text.split(/\r?\n/);
+  let lines = stripAnsi(text).split(/\r?\n/);
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
   if (grep) {
     const re = new RegExp(grep, 'i');

@@ -88,7 +88,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'appLogs':
       return ((x.lines as string[]) ?? []).length ? clipLines(x.lines as string[]).join('\n') : '(no lines)';
     case 'docs':
-      return x.docs ? `docs: ${(x.docs as string[]).join(', ') || 'none configured'}` : (x.lines as string[]).join('\n');
+      return x.docs ? `docs: ${(x.docs as string[]).join(', ') || 'none configured'}` : (x.lines as string[]).join('\n') || '(no matches)';
     case 'devices':
       return fmtDevices(x.devices as AndroidDevice[], x.avds as {name: string; kind: string}[]).join('\n');
     case 'doctor':

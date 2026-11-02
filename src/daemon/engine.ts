@@ -132,10 +132,13 @@ export class Engine {
     void tick();
   }
 
+  /**
+   * Daemon shutdown. Services keep running on purpose — keeping them warm is the point — and the next daemon
+   * adopts them from the pid file; only `down` stops them. Actors and the mock belong to the daemon and go.
+   */
   async stopAll() {
     if (this.#watchTimer) clearTimeout(this.#watchTimer);
     this.actors.stopAll();
-    this.services.killAll();
     await this.#mock?.stop();
   }
 
