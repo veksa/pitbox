@@ -46,6 +46,32 @@ Implications for pitbox:
   Health means a bundle request that completes;
 - a 15.6 MB dev bundle on every cold start is worth the host-side bytecode and on-device cache.
 
+### Rspack (Re.Pack 5.4, Rspack 2.3) against Metro
+
+Same app and host, Re.Pack with `babel-swc-loader`, the Expo modules plugin and SVGR; the bundle built
+without errors and inlined the same public environment values. It was not run on a device, so runtime
+parity is not proven.
+
+| Server | Cold: ready + first bundle | Warm: ready + first bundle | Edit → bundle | Bundle (raw / gzip) |
+|---|---|---|---|---|
+| Metro, stock watcher | 47.8 + 13.4 s | 38.8 + 2.6 s | 1.7–1.9 s | 15.6 / 2.6 MB |
+| **Metro, native watcher** | **4.3 + 9.2 s** | **3.9 + 2.6 s** | 0.85–1.7 s | 15.6 / 2.6 MB |
+| Rspack, memory cache only | 3.4 + 9.5 s | same as cold | 1.0 s | 16.8 / 2.4 MB |
+| Rspack, persistent cache | 3.4 + 10.2 s | 3.4 + 3.0–3.3 s | 0.95 s | 16.8 / 2.4 MB |
+
+**Finding: once the watcher is fixed, Metro and Rspack are even on this app** — ~13.5 s cold and ~6.5 s
+warm for both, edits within a second or two. Rspack's speed on paper comes from transforms, and a warm
+transform cache already makes them a minor part of the start. What remains is fixed cost in both: ~3.5 s of
+server start and ~3 s of serializing a 4,000-module graph.
+
+Implications for pitbox:
+
+- the default React Native adapter is `metro` with a native watcher; `rspack` stays optional for projects
+  that already use it — switching bundlers buys nothing measurable here and costs compatibility;
+- the remaining ~6.5 s per server start is avoided by never restarting it: the daemon keeps it warm;
+- serializing the whole graph on every first request (~2.6–3 s) is the next host-side target: keep the
+  serialized bundle and its bytecode ready before the device asks.
+
 ### Device side of a cold start (Android emulator, x86_64, API 36)
 
 Milestones from `logcat -v epoch`: the activity manager's `START`, React Native's bridgeless host
@@ -90,6 +116,10 @@ A device action's response is ~0.03% of what the turn costs; the rest is the con
 responses is noise — removing turns (flows run by the daemon, macro tools, one-call expectations) and keeping
 device work in small contexts is what moves the number.
 
-## Still to measure in P0
+## Summary of P0
 
-- Rspack (Re.Pack) against Metro on the same app.
+| Where the time goes | Today | With pitbox's approach |
+|---|---|---|
+| dev server start (Windows) | ~39 s warm, ~61 s cold | ~6.5 s once, then kept warm by the daemon |
+| app cold start on a dev build | 5.4–6.5 s (15.5 s after a server restart) | ~0.7 s on an embedded-bytecode build for verification |
+| agent turn during a device pass | ~405K tokens of context per action | turns removed by flows run in the daemon |
