@@ -58,6 +58,17 @@ describe('services', () => {
     expect(Date.now() - t0).toBeLessThan(10_000);
   }, 30_000);
 
+  it('keeps waiting for the probe when the start command exits 0 after launching in the background', async () => {
+    const port = await freePort();
+    const bg = path.join(dir, 'bg.cjs');
+    fs.writeFileSync(bg, `const {spawn} = require('child_process'); const c = spawn(process.execPath, ['-e', "setTimeout(() => require('http').createServer((q,s)=>s.end()).listen(${port}), 700)"], {detached: true, stdio: 'ignore'}); c.unref(); fs = require('fs'); fs.writeFileSync(${JSON.stringify(path.join(dir, 'bg.pid').replace(/\\/g, '/'))}, String(c.pid));`);
+    const m = new ServiceManager(ctx, {bg: {start: `${node} ${JSON.stringify(bg.replace(/\\/g, '/'))}`, health: `tcp:${port}`, startTimeout: 20}});
+    const [s] = await m.up();
+    expect(s?.status).toBe('up');
+    expect((await m.status())[0]?.status).toBe('up');
+    process.kill(Number(fs.readFileSync(path.join(dir, 'bg.pid'), 'utf8')));
+  }, 30_000);
+
   it('fails without a start command when nothing answers', async () => {
     const port = await freePort();
     const m = new ServiceManager(ctx, {ext: {health: `tcp:${port}`}});

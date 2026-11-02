@@ -22,6 +22,8 @@ export type ServiceState = {
   detail?: string;
   /** How long the last start took until healthy, ms. */
   startMs?: number;
+  /** Started by a command that exited after launching it in the background (pitbox has no pid). */
+  detached?: boolean;
   expose: number[];
 };
 
@@ -116,13 +118,13 @@ export class ServiceManager {
         const svc = this.#services[name]!;
         const known = this.#state.get(name);
         if (known?.status === 'starting') return known;
-        const ours = known?.pid !== undefined && isAlive(known.pid);
+        const ours = (known?.pid !== undefined && isAlive(known.pid)) || known?.detached === true;
         if (!svc.health) {
           return this.#set(name, ours ? {status: 'up', detail: 'running (no probe)'} : {status: 'stopped', pid: undefined, detail: svc.start ? undefined : 'no probe, no start'});
         }
         const probe = await checkProbe(svc.health, {cwd: this.#cwd(svc), shell: this.#ctx.shell});
         if (probe.ok) return this.#set(name, {status: ours ? 'up' : 'external', detail: probe.detail, ...(ours ? {} : {pid: undefined})});
-        if (ours) return this.#set(name, {status: 'down', detail: `process alive, probe failing: ${probe.detail}`});
+        if (ours) return this.#set(name, {status: 'down', detail: known?.detached ? `probe failing: ${probe.detail}` : `process alive, probe failing: ${probe.detail}`});
         return this.#set(name, {status: known?.status === 'failed' ? 'failed' : 'stopped', pid: undefined, detail: known?.status === 'failed' ? known.detail : probe.detail});
       }),
     );
@@ -152,7 +154,7 @@ export class ServiceManager {
     if (svc.health) {
       const probe = await checkProbe(svc.health, {cwd, shell: this.#ctx.shell});
       if (probe.ok) {
-        const ours = known?.pid !== undefined && isAlive(known.pid);
+        const ours = (known?.pid !== undefined && isAlive(known.pid)) || known?.detached === true;
         return this.#set(name, {status: ours ? 'up' : 'external', detail: probe.detail});
       }
     } else if (known?.pid !== undefined && isAlive(known.pid)) {
@@ -174,29 +176,40 @@ export class ServiceManager {
     });
     child.stdout?.pipe(log, {end: false});
     child.stderr?.pipe(log, {end: false});
-    let exited: string | undefined;
+    // A start command that exits with 0 launched something in the background (`docker compose up -d`): keep
+    // waiting for the probe. Any other exit before the service is healthy is a failure.
+    let failedExit: string | undefined;
+    let detachedStart = false;
     child.on('exit', (code, signal) => {
-      exited = `exited with ${signal ?? code}`;
-      log.write(`--- pitbox: process ${exited}\n`);
+      const how = `exited with ${signal ?? code}`;
+      log.write(`--- pitbox: process ${how}\n`);
       this.#children.delete(name);
       const cur = this.#state.get(name);
+      const starting = cur?.status === 'starting';
+      if (starting && code === 0 && svc.health) {
+        detachedStart = true;
+        this.#set(name, {pid: undefined, detached: true});
+        this.#savePids();
+        return;
+      }
+      if (starting) failedExit = how;
       if (cur && cur.pid === child.pid && cur.status !== 'stopped') {
-        this.#set(name, {status: cur.status === 'starting' ? 'failed' : 'down', detail: exited, pid: undefined});
+        this.#set(name, {status: starting ? 'failed' : 'down', detail: how, pid: undefined});
         this.#savePids();
       }
     });
     this.#children.set(name, child);
-    this.#set(name, {status: 'starting', pid: child.pid, startedAt: t0, detail: undefined});
+    this.#set(name, {status: 'starting', pid: child.pid, startedAt: t0, detail: undefined, detached: false});
     this.#savePids();
 
     if (!svc.health) {
       await new Promise(r => setTimeout(r, 1500));
-      if (exited) return this.#failed(name, exited);
+      if (failedExit) return this.#failed(name, failedExit);
       return this.#set(name, {status: 'up', startMs: Date.now() - t0, detail: 'running (no probe)'});
     }
-    const probe = await waitForProbe(svc.health, (svc.startTimeout ?? 120) * 1000, {cwd, shell: this.#ctx.shell, abort: () => exited});
+    const probe = await waitForProbe(svc.health, (svc.startTimeout ?? 120) * 1000, {cwd, shell: this.#ctx.shell, abort: () => failedExit});
     if (!probe.ok) {
-      if (!exited) killTree(child);
+      if (!failedExit && !detachedStart) killTree(child);
       return this.#failed(name, probe.detail);
     }
     return this.#set(name, {status: 'up', startMs: Date.now() - t0, detail: probe.detail});
@@ -233,7 +246,7 @@ export class ServiceManager {
         const r = await runShell(svc.stop, {cwd: this.#cwd(svc), shell: this.#ctx.shell, timeoutMs: 60000});
         if (r.code !== 0) detail += `; stop exited ${r.code}: ${r.stderr.trim().split('\n').pop() ?? ''}`;
       }
-      results.push(this.#set(name, {status: 'stopped', pid: undefined, detail}));
+      results.push(this.#set(name, {status: 'stopped', pid: undefined, detached: false, detail}));
     }
     this.#savePids();
     return results;
