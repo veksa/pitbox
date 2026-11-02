@@ -47,10 +47,13 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     }
     "key" -> { key(req.getInt("code"), req.optInt("meta", 0)); JSONObject() }
     "mouse" -> { mouse(req.getString("action"), req.getInt("x"), req.getInt("y"), req.optDouble("amount", -1.0).toFloat()); JSONObject() }
+    "touchnav" -> { touchNav(req.getString("gesture")); JSONObject() }
     "rotary" -> { rotary(req.getDouble("amount").toFloat(), req.optInt("steps", 1)); JSONObject() }
     "touch" -> { touch(req.getString("phase"), req.optInt("x"), req.optInt("y")); JSONObject().put("down", touchDown != null) }
     "text" -> JSONObject().put("set", setText(req.getString("text"), req.optBoolean("append", false), req.optJSONArray("bounds")))
     "action" -> JSONObject().put("done", action(req.getJSONArray("bounds"), req.getString("action")))
+    "node-actions" -> JSONObject().put("actions", nodeActions(req.getInt("window"), req.getJSONArray("bounds")))
+    "node-action" -> JSONObject().put("done", nodeAction(req.getInt("window"), req.getJSONArray("bounds"), req.getInt("action"), req.optJSONObject("args")))
     "screenshot" -> screenshot(req.optDouble("scale", 0.5), req.optInt("quality", 70))
     "relay" -> Relay.start(req.getJSONArray("ports"), req.optString("target", "10.0.2.2"))
     "relays" -> Relay.list()
@@ -248,6 +251,45 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     }
   }
 
+  /**
+   * A touchpad that navigates instead of pointing (the temple of AI glasses): swipes and taps sent as that very
+   * device, because the system turns them into D-pad focus moves only for a device whose ranges it knows.
+   */
+  private fun touchNav(gesture: String) {
+    val dev = InputDevice.getDeviceIds().toList().mapNotNull { InputDevice.getDevice(it) }
+      .firstOrNull { it.supportsSource(InputDevice.SOURCE_TOUCH_NAVIGATION) }
+      ?: throw IllegalStateException("no touch navigation device here (the temple touchpad of glasses)")
+    val src = InputDevice.SOURCE_TOUCH_NAVIGATION
+    val xr = dev.getMotionRange(MotionEvent.AXIS_X, src) ?: dev.getMotionRange(MotionEvent.AXIS_X)
+    val yr = dev.getMotionRange(MotionEvent.AXIS_Y, src) ?: dev.getMotionRange(MotionEvent.AXIS_Y)
+    val w = xr?.range ?: 1000f
+    val h = yr?.range ?: 1000f
+    val cx = (xr?.min ?: 0f) + w / 2
+    val cy = (yr?.min ?: 0f) + h / 2
+    val (dx, dy) = when (gesture) {
+      "forward" -> 0.4f * w to 0f
+      "back" -> -0.4f * w to 0f
+      "down" -> 0f to 0.4f * h
+      "up" -> 0f to -0.4f * h
+      "tap" -> 0f to 0f
+      else -> throw IllegalArgumentException("touchnav: forward, back, up, down or tap")
+    }
+    val down = SystemClock.uptimeMillis()
+    fun ev(action: Int, x: Float, y: Float): MotionEvent {
+      val props = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER }
+      val coords = MotionEvent.PointerCoords().apply { this.x = x; this.y = y; pressure = 1f; size = 1f }
+      return MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, 1, arrayOf(props), arrayOf(coords), 0, 0, 1f, 1f, dev.id, 0, src, 0)
+    }
+    inject(ev(MotionEvent.ACTION_DOWN, cx, cy))
+    val steps = if (gesture == "tap") 0 else 8
+    for (i in 1..steps) {
+      SystemClock.sleep(15)
+      inject(ev(MotionEvent.ACTION_MOVE, cx + dx * i / steps, cy + dy * i / steps))
+    }
+    SystemClock.sleep(if (gesture == "tap") 60 else 15)
+    inject(ev(MotionEvent.ACTION_UP, cx + dx, cy + dy))
+  }
+
   /** A watch crown or rotating bezel: `steps` events of `amount` each (scrolling views read positive as up). */
   private fun rotary(amount: Float, steps: Int) {
     repeat(steps.coerceIn(1, 50)) {
@@ -363,6 +405,44 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
   }
 
   /** An accessibility action on the node with exactly these bounds: click, scroll_forward, scroll_backward, focus. */
+  /** The node of window `window` (snapshot order) with exactly these bounds; bounds alone repeat across windows on XR. */
+  private fun nodeIn(window: Int, bounds: JSONArray): AccessibilityNodeInfo? {
+    val root = roots().getOrNull(window)?.first ?: return null
+    return findAt(root, bounds) { true }
+  }
+
+  /** The accessibility actions a node offers, standard and custom: what a shell lets an app's windows do. */
+  private fun nodeActions(window: Int, bounds: JSONArray): JSONArray {
+    val n = nodeIn(window, bounds) ?: throw IllegalArgumentException("no node at those bounds in window $window")
+    val out = JSONArray()
+    for (a in n.actionList) out.put(JSONObject().put("id", a.id).put("label", a.label?.toString() ?: actionName(a.id)))
+    return out
+  }
+
+  private fun actionName(id: Int): String = AccessibilityNodeInfo.AccessibilityAction::class.java.fields
+    .firstOrNull { f -> f.type == AccessibilityNodeInfo.AccessibilityAction::class.java && (runCatching { (f.get(null) as AccessibilityNodeInfo.AccessibilityAction).id }.getOrNull() == id) }
+    ?.name ?: id.toString()
+
+  /** Performs action `id` on a node; `args` become the action's integer, float or string arguments. */
+  private fun nodeAction(window: Int, bounds: JSONArray, id: Int, args: JSONObject?): Boolean {
+    val n = nodeIn(window, bounds) ?: throw IllegalArgumentException("no node at those bounds in window $window")
+    val b = Bundle()
+    if (args != null) for (k in args.keys()) {
+      when (val v = args.get(k)) {
+        is Int -> b.putInt(k, v)
+        is Double -> b.putFloat(k, v.toFloat())
+        is Boolean -> b.putBoolean(k, v)
+        else -> b.putString(k, v.toString())
+      }
+    }
+    // Some shells (XR system UI) answer an action only after the UI it opens has settled; the action itself has
+    // happened long before, so the wait is bounded.
+    var done = false
+    val t = kotlin.concurrent.thread { done = n.performAction(id, b) }
+    t.join(2000)
+    return if (t.isAlive) true else done
+  }
+
   private fun action(bounds: JSONArray, name: String): Boolean {
     val id = when (name) {
       "click" -> AccessibilityNodeInfo.ACTION_CLICK
@@ -444,5 +524,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 11
+  const val VERSION = 15
 }

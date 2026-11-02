@@ -11,7 +11,7 @@ import {AndroidError} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
-export const RUNNER_VERSION = 11;
+export const RUNNER_VERSION = 15;
 const DEVICE_PORT = 7912;
 /** The instrumentation's output on the device: its ready line or why it failed. */
 const RUNNER_OUT = '/data/local/tmp/pitbox-runner.out';
@@ -180,7 +180,8 @@ export class AndroidRunner {
         reject(new AndroidError(`runner: ${cmd} timed out after ${timeoutMs} ms`));
       }, timeoutMs);
       this.#pending.set(id, {resolve: v => resolve(v as T), reject, timer});
-      socket.write(`${JSON.stringify({id, cmd, ...args})}\n`);
+      // The request's own id and command last: an argument named `id` must not take over the reply's address.
+      socket.write(`${JSON.stringify({...args, id, cmd})}\n`);
     });
   }
 
