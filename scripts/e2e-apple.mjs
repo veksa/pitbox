@@ -1,5 +1,5 @@
 // pitbox against a real app on real simulators: builds examples/apple, then for every kind of Apple device that
-// has a simulator on this Mac (phone, tablet, tv, watch, xr) boots one, installs the app and runs the kind's flows
+// has a simulator on this Mac (phone, foldable, tablet, tv, watch, xr) boots one, installs the app and runs the kind's flows
 // through the CLI. A simulator that was already booted is left booted. macOS only.
 //
 //   yarn e2e:apple                                   every kind with a simulator
@@ -25,10 +25,11 @@ const products = path.join(example, 'build', 'Build', 'Products');
 
 /** Per kind: the build that runs there, its flows, and the flows that must fail with the app's crash. */
 const PLAN = {
-  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke'], fails: ['crash']},
-  tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke'], fails: []},
+  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate'], fails: ['crash']},
+  foldable: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke'], fails: ['crash'], cover: true},
+  tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'pointer'], fails: []},
   tv: {platform: 'tvOS Simulator', scheme: 'PitboxExample', app: 'Debug-appletvsimulator/PitboxExample.app', flows: ['tv'], fails: [], focusMap: true},
-  watch: {platform: 'watchOS Simulator', scheme: 'PitboxExampleWatch', app: 'Debug-watchsimulator/PitboxExampleWatch.app', flows: ['watch'], fails: ['crash']},
+  watch: {platform: 'watchOS Simulator', scheme: 'PitboxExampleWatch', app: 'Debug-watchsimulator/PitboxExampleWatch.app', flows: ['watch', 'crown'], fails: ['crash']},
   xr: {platform: 'visionOS Simulator', scheme: 'PitboxExample', app: 'Debug-xrsimulator/PitboxExample.app', flows: ['smoke'], fails: ['crash']},
 };
 
@@ -102,6 +103,16 @@ for (const kind of examples.includes('apple') ? wanted : []) {
       const r = pitbox(['run', flow, '--device', sim.udid]);
       console.log(r.out.split('\n').slice(0, 6).join('\n'));
       checks.push({name: `${flow} (fails with the crash)`, ok: r.out.startsWith('✗') && /app crashed: EXC_BREAKPOINT[\s\S]*_checkSubscript/.test(r.out)});
+    }
+    if (plan.cover) {
+      // Folded, the app is on the cover screen: info names it, a screenshot is of it, and it does not turn.
+      const info = pitbox(['info', '--device', sim.udid]);
+      checks.push({name: 'folded on the cover screen', ok: /fold: folded: cover screen/.test(info.out)});
+      const shot = pitbox(['screenshot', '--device', sim.udid]);
+      checks.push({name: 'screenshot of the lit screen', ok: shot.code === 0 && /\.png \(\d+ KB\)/.test(shot.out)});
+      const turn = pitbox(['rotate', '90', '--device', sim.udid]);
+      pitbox(['rotate', '0', '--device', sim.udid]);
+      checks.push({name: 'cover screen does not turn', ok: turn.code !== 0 && /stayed portrait/.test(turn.out)});
     }
     if (plan.focusMap) {
       const r = pitbox(['focusmap', '--device', sim.udid]);
