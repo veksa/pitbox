@@ -110,6 +110,45 @@ function pitboxInApp(cfg: InAppConfig) {
     g.WebSocket = Patched;
   }
 
+  // The React tree as the app renders it, through the dev tools hook React Native installs in development:
+  // host components with a testID, an accessibility label or text. Reaches what accessibility does not (panels
+  // outside the accessibility tree, views marked not important).
+  var reactTree = function (limit: number) {
+    var hook = g.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    if (!hook || !hook.getFiberRoots || !hook.renderers) return {error: 'no React dev tools hook in this bundle'};
+    var out: any[] = [];
+    var textOf = function (fiber: any): string {
+      var p = fiber.memoizedProps;
+      if (typeof p === 'string' || typeof p === 'number') return String(p);
+      if (p && (typeof p.children === 'string' || typeof p.children === 'number')) return String(p.children);
+      var s = '';
+      for (var c = fiber.child; c && s.length < 120; c = c.sibling) s += textOf(c);
+      return s;
+    };
+    var walk = function (fiber: any, depth: number, surface: number) {
+      for (var f = fiber; f && out.length < limit; f = f.sibling) {
+        var p = f.memoizedProps || {};
+        if (typeof f.type === 'string') {
+          var id = p.testID || p.nativeID;
+          var label = p.accessibilityLabel || p['aria-label'];
+          var isText = /Text$/.test(f.type);
+          var text = isText ? textOf(f) : '';
+          if (id || label || text) out.push({s: surface, d: depth, c: f.type.replace(/^RCT/, ''), id: id, l: label, t: text || undefined, hidden: p.accessibilityElementsHidden || p.importantForAccessibility === 'no-hide-descendants' || undefined});
+          if (isText) continue;
+        }
+        if (f.child) walk(f.child, depth + (typeof f.type === 'string' ? 1 : 0), surface);
+      }
+    };
+    var surface = 0;
+    hook.renderers.forEach(function (_r: any, rid: any) {
+      var roots = hook.getFiberRoots(rid);
+      if (roots) roots.forEach(function (root: any) {
+        walk(root.current && root.current.child, 0, surface++);
+      });
+    });
+    return {surfaces: surface, nodes: out, truncated: out.length >= limit};
+  };
+
   var connect = function (delay: number) {
     var ch: any;
     try {
@@ -138,7 +177,7 @@ function pitboxInApp(cfg: InAppConfig) {
       } else if (msg.type === 'trace') {
         state.trace = msg.id || null;
       } else if (msg.type === 'query') {
-        var data: any = msg.what === 'log' ? state.log.slice(-(msg.limit || 30)) : {inflight: state.inflight, quietMs: Date.now() - state.last, sockets: state.sockets.length};
+        var data: any = msg.what === 'log' ? state.log.slice(-(msg.limit || 30)) : msg.what === 'tree' ? reactTree(msg.limit || 600) : {inflight: state.inflight, quietMs: Date.now() - state.last, sockets: state.sockets.length};
         ch.send(JSON.stringify({type: 'reply', reqId: msg.reqId, data: data}));
       }
     };

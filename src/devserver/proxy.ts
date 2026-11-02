@@ -211,7 +211,7 @@ export class DevProxy {
   }
 
   /** Asks every connected app; resolves with the answers that arrive within `timeoutMs`. */
-  async query<T = unknown>(what: 'idle' | 'log', extra: Record<string, unknown> = {}, timeoutMs = 2000): Promise<{app: AppInfo; data: T}[]> {
+  async query<T = unknown>(what: 'idle' | 'log' | 'tree', extra: Record<string, unknown> = {}, timeoutMs = 2000): Promise<{app: AppInfo; data: T}[]> {
     const asks = [...this.#apps.values()].map(
       app =>
         new Promise<{app: AppInfo; data: T} | undefined>(resolve => {

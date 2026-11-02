@@ -50,7 +50,7 @@ const sandbox = () => {
       return true;
     }
   }
-  const g: Record<string, unknown> = {XMLHttpRequest: FakeXhr, WebSocket: FakeWs, setTimeout, Date, Math, JSON, Array, String};
+  const g: Record<string, unknown> = {XMLHttpRequest: FakeXhr, WebSocket: FakeWs, setTimeout, Date, Math, JSON, Array, String, Map, Set};
   g.globalThis = g;
   vm.createContext(g);
   vm.runInContext(inAppScript(cfg), g);
@@ -99,6 +99,25 @@ describe('in-app script', () => {
     channel.onmessage!({data: JSON.stringify({type: 'rules', rules: []})});
     app.dispatchEvent({type: 'message', data: 'after'});
     expect(app.received).toEqual(['before', 'after']);
+  });
+});
+
+describe('react tree from inside the app', () => {
+  it('lists host components with ids, labels and text, nested', () => {
+    const {sockets, sent, g} = sandbox();
+    const text = {type: 'RCTText', memoizedProps: {children: 'Get started'}, child: null, sibling: null};
+    const button = {type: 'RCTView', memoizedProps: {testID: 'watch', accessibilityLabel: 'Get started'}, child: text, sibling: null};
+    const wrapper = {type: () => null, memoizedProps: {}, child: button, sibling: null};
+    const screen = {type: 'RCTView', memoizedProps: {testID: 'home'}, child: wrapper, sibling: null};
+    g.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {renderers: new Map([[1, {}]]), getFiberRoots: () => new Set([{current: {child: screen}}])};
+    const channel = sockets.find(x => x.url === cfg.ws)!;
+    channel.onmessage!({data: JSON.stringify({type: 'query', what: 'tree', reqId: 3})});
+    const reply = JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' '));
+    expect(reply.data.nodes).toEqual([
+      {s: 0, d: 0, c: 'View', id: 'home'},
+      {s: 0, d: 1, c: 'View', id: 'watch', l: 'Get started'},
+      {s: 0, d: 2, c: 'Text', t: 'Get started'},
+    ]);
   });
 });
 
