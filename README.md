@@ -26,13 +26,24 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   dev server from a link — `pitbox qr` puts it in a QR code for a phone, `open` uses it on emulators.
 - **UI automation on Android** through pitbox's own runner: the screen as short lines with refs, actions that
   wait for the UI to settle and answer with what changed, exact gestures (double tap, swipe velocity), D-pad
-  keys and focus for TV.
+  keys and focus for TV. A finger can be held across calls (inspect a scrubber mid-drag). Taps on a screen
+  with a playing video take milliseconds (the platform's wait-for-animations is skipped).
+- **Checks instead of screenshots** — `media` (is the video playing, or black), `visual` (the screen against a
+  baseline, changed regions in pixels), `focus_map` (D-pad reachability, traps, irreversible moves), `perf`
+  (janky frames, frame-time percentiles, memory), `app_tree` (the React tree from inside the app). Crashes
+  and ANRs come back with the step they happened in, with the stack.
+- **Named states** — an emulator snapshot plus the project's backend dump, restored in seconds.
+- **Several devices and variants** — a flow can switch devices (`device <avd>`); `matrix` runs a flow over
+  devices × font scales × themes × locales, with full-size screenshots per variant (store screenshots).
+- **Forwards that really work** — when `adb reverse` lists its forwards but carries no data, emulators switch to
+  a relay inside the runner through the emulator's host alias.
 - **Flows** — a line-per-step script the daemon runs on its own (`open`, `goto <route>`, `as <user>`, `press`,
   `fill`, `scroll … until`, `wait`, `expect`, `tool … contains`, …): one call, one verdict, and on failure the
   line, the error and the screen. Sessions can be recorded into flows.
 - **Doctor** — known failures with remedies (`doctor --fix`), plus your own rules.
 - **Docs** — the lines of a long checklist or knowledge base that a step needs, not the whole file.
-- **MCP server** over stdio; the CLI prints the same compact text.
+- **MCP server** over stdio; the CLI prints the same compact text. How an agent should use it:
+  [docs/agents.md](docs/agents.md).
 
 ## Quick start
 
