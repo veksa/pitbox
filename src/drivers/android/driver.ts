@@ -3,10 +3,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawn} from 'node:child_process';
+import {execFileSync} from 'node:child_process';
 import {launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
-import {avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
+import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
@@ -30,6 +30,46 @@ export const KEYS: Record<string, number> = {
   playpause: 85,
   appswitch: 187,
   wakeup: 224,
+};
+
+const lockDir = (avd: string) => path.join(avdHome(), `${avd}.avd`, 'hardware-qemu.ini.lock');
+
+/** Whether `pid` is a running emulator: a lock's pid can belong to an unrelated process by now (ids are reused). */
+const emulatorAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EPERM') return false;
+  }
+  try {
+    const out =
+      process.platform === 'win32'
+        ? execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV'], {encoding: 'utf8', windowsHide: true, timeout: 5000})
+        : execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {encoding: 'utf8', timeout: 5000});
+    return /qemu|emulator/i.test(out);
+  } catch {
+    return true;
+  }
+};
+
+/** Whether a running emulator holds the AVD (its lock names a live emulator process). */
+export const avdLocked = (avd: string): boolean => {
+  let pid = NaN;
+  try {
+    pid = Number(fs.readFileSync(path.join(lockDir(avd), 'pid'), 'utf8').trim());
+  } catch {
+    return false;
+  }
+  return Number.isInteger(pid) && pid > 0 && emulatorAlive(pid);
+};
+
+/** A lock left by an emulator that died: the next one would refuse the AVD. */
+const clearStaleAvdLock = (avd: string) => {
+  try {
+    if (fs.existsSync(lockDir(avd)) && !avdLocked(avd)) fs.rmSync(lockDir(avd), {recursive: true, force: true});
+  } catch {
+    // unreadable lock: the emulator decides
+  }
 };
 
 export class AndroidError extends Error {
@@ -116,6 +156,7 @@ export class AndroidDriver {
     if (!listAvds().includes(avd)) throw new AndroidError(`unknown AVD "${avd}"`, `available: ${listAvds().join(', ') || 'none'}`);
     const emulator = findEmulator();
     if (!emulator) throw new AndroidError('emulator binary not found', 'install the Android Emulator SDK package');
+    clearStaleAvdLock(avd);
     const args = ['-avd', avd, '-no-boot-anim', '-no-audio'];
     if (opts.coldBoot !== false) args.push('-no-snapshot-load');
     if (opts.wipe) args.push('-wipe-data');
@@ -135,9 +176,15 @@ export class AndroidDriver {
   /** Shuts an emulator down and waits until adb no longer lists it (it takes ~20 s to save and exit). */
   async shutdown(serial: string, timeoutMs = 60_000): Promise<{ms: number; gone: boolean}> {
     const t0 = Date.now();
+    const avd = (await this.devices()).find(d => d.serial === serial)?.avd;
+    // Killing the emulator drops what the guest has not written out yet: an APK installed just before can be
+    // gone after the next boot while the package manager still lists it.
+    await this.adb(['shell', 'sync'], serial, {timeoutMs: 20_000}).catch(() => undefined);
     await this.adb(['emu', 'kill'], serial, {timeoutMs: 10_000});
     while (Date.now() - t0 < timeoutMs) {
-      if (!(await this.devices()).some(d => d.serial === serial)) return {ms: Date.now() - t0, gone: true};
+      // Gone from adb is not gone: the emulator still writes its disk and holds the AVD's lock for a few
+      // seconds, and a boot in that window exits without a word.
+      if (!(await this.devices()).some(d => d.serial === serial) && !(avd && avdLocked(avd))) return {ms: Date.now() - t0, gone: true};
       await new Promise(r => setTimeout(r, 1000));
     }
     return {ms: Date.now() - t0, gone: false};
@@ -167,6 +214,15 @@ export class AndroidDriver {
     return {ms: Date.now() - t0, replaced};
   }
 
+  /**
+   * Whether the user's storage is still locked: after a boot of a device with a screen lock, no ordinary app can
+   * start (its activities do not even resolve) until the PIN or pattern is entered.
+   */
+  async userLocked(serial: string): Promise<boolean> {
+    const out = await this.shell(serial, 'dumpsys user | grep -m1 "State:"').catch(() => '');
+    return /RUNNING_LOCKED/.test(out);
+  }
+
   async launcherActivity(serial: string, pkg: string): Promise<string> {
     const out = await this.shell(serial, `cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${pkg}`);
     let line = out.trim().split('\n').pop()?.trim();
@@ -175,7 +231,10 @@ export class AndroidDriver {
       const tv = await this.shell(serial, `cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER ${pkg}`);
       line = tv.trim().split('\n').pop()?.trim();
     }
-    if (!line || !line.includes('/')) throw new AndroidError(`no launcher activity for ${pkg}`, 'is the app installed? `apps` lists packages');
+    if (!line || !line.includes('/')) {
+      if (await this.userLocked(serial)) throw new AndroidError('the device is locked: no app can start until its screen lock is entered', 'unlock it once, or remove the screen lock in Settings → Security on this device');
+      throw new AndroidError(`no launcher activity for ${pkg}`, 'is the app installed? `apps` lists packages');
+    }
     return line;
   }
 
