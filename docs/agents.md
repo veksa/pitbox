@@ -27,6 +27,10 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   `state action=restore name=…` brings back a saved device + backend state in seconds.
 - **Gestures:** `touch` holds a finger across calls (inspect a scrubber while it is held); `swipe` takes a
   duration for velocity, and with `until` scrolls to a target; `press kind=doubletap` is a real double tap.
+- **Apple simulators:** the same tools. `device` takes a simulator name or udid, `install` a `.app` from a
+  simulator build. The first UI call builds and starts the XCUITest runner (about 15 s once, then cached).
+  XCUITest cannot hold a finger between calls (`touch`), and `network`, `perf`, display size and animations
+  are reported as unsupported. Apple TV has no touch: drive it with `key`.
 - **TV:** `key` with up/down/left/right/center/back; `inspect what=focus`; `inspect what=focus_map` audits
   D-pad reachability.
 

@@ -21,7 +21,7 @@ export default defineConfig({
 | Field | Meaning |
 |---|---|
 | `android` | Android package; the default for `open`, `stop`, `clear`, logs, perf |
-| `apple` | Apple bundle id (Apple driver) |
+| `apple` | Apple bundle id; the default for the same commands on a simulator, and the app the Apple runner reads |
 | `scheme` | the app's URL scheme |
 | `connect` | link that points the app at the dev server, used by `qr` and by `open` without a target. Placeholders: `{devserver}` (URL-encoded `http://host:port`), `{host}`, `{port}`. Default: pitbox's connect link `pitbox.<android>://connect?devserver={host}:{port}`, handled by the connect library in debug builds. With a dev launcher, its own link: `myapp://expo-development-client/?url={devserver}` |
 
@@ -91,6 +91,16 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 | `avd` | default emulator for `boot` |
 | `reverse` | extra host ports to forward besides the services' `expose` (React DevTools, for example) |
 | `forward` | how exposed ports reach devices: `reverse` (adb reverse), `relay` (pitbox's runner listens on the device and pipes to the emulator host alias 10.0.2.2), `auto` (default: adb reverse, switching an emulator to the relay when its forwards stop carrying data; remembered per AVD) |
+
+## apple
+
+| Field | Meaning |
+|---|---|
+| `simulator` | default simulator for `boot`: a name (`iPhone 17`; the newest runtime wins when names repeat) or a udid |
+
+Simulators share the Mac's network, so exposed ports need no forwarding. The UI runner (XCUITest) is built on
+first use per platform and cached under `~/Library/Caches/pitbox/apple-runner`; a changed runner source
+rebuilds it.
 
 ## actors
 
