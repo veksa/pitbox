@@ -16,7 +16,10 @@ final class Commands {
   static let shellId = "com.apple.springboard"
   #endif
 
+  /// A fresh handle for an app: one kept across a crash and relaunch points at the dead process and hangs
+  /// queries. The system shell never restarts, so its handle is kept.
   private func app(_ id: String) -> XCUIApplication {
+    if id != Self.shellId { return XCUIApplication(bundleIdentifier: id) }
     if let a = apps[id] { return a }
     let a = XCUIApplication(bundleIdentifier: id)
     apps[id] = a
@@ -71,6 +74,10 @@ final class Commands {
     case "fingerprint": return try Images.fingerprint(cols: Int(double(req, "cols", 54)), masks: rects(req["masks"]))
     case "frames": return try Images.frames(bounds: rects(req["bounds"].map { [$0] }).first, count: Int(double(req, "count", 4)), interval: double(req, "interval", 400) / 1000, size: Int(double(req, "size", 32)))
     case "relays": return ["relayed": [Int]()]
+    case "foreground":
+      // After a launch: wait until the app is in front, so the next tree is the app and not the shell.
+      guard let id = req["app"] as? String, !id.isEmpty else { return ["foreground": false] }
+      return ["foreground": app(id).wait(for: .runningForeground, timeout: double(req, "timeout", 5000) / 1000)]
     case "activate":
       // Starting the runner puts its own process in front; bring the app back when it was running.
       if let id = req["app"] as? String, !id.isEmpty {

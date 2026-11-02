@@ -703,7 +703,11 @@ export class Engine {
       if (t.platform === 'apple') {
         // No Swift connect library yet: only a link the project names itself is opened instead of the app.
         const target = str(p, 'target') ?? (this.config.app?.connect ? this.connectUrl() : undefined) ?? this.#bundleId(p);
-        return {udid: t.id, target, ...(await t.s.open(t.id, target, {relaunch: bool(p, 'relaunch'), bundleId: str(p, 'pkg') ?? this.config.app?.apple}))};
+        const r = await t.s.open(t.id, target, {relaunch: bool(p, 'relaunch'), bundleId: str(p, 'pkg') ?? this.config.app?.apple});
+        // A runner already attached reads the shell until the launched app comes to the front.
+        const ui = this.#uis.get(t.id);
+        if (ui && !target.includes('://')) await ui.runner.call('foreground', {}, 10_000).catch(() => undefined);
+        return {udid: t.id, target, ...r};
       }
       const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this
