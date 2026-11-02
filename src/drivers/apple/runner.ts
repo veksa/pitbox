@@ -20,7 +20,7 @@ export const runnerSources = (): string => {
   return path.resolve(here, '..', '..', '..', 'runners', 'apple');
 };
 
-const DESTINATIONS: Record<SimKind, string> = {phone: 'iOS Simulator', tablet: 'iOS Simulator', tv: 'tvOS Simulator', xr: 'visionOS Simulator', watch: 'watchOS Simulator'};
+const DESTINATIONS: Record<SimKind, string> = {phone: 'iOS Simulator', foldable: 'iOS Simulator', tablet: 'iOS Simulator', tv: 'tvOS Simulator', xr: 'visionOS Simulator', watch: 'watchOS Simulator'};
 
 /** A hash of the runner's sources: a changed runner is rebuilt without anyone bumping a number. */
 export const sourceHash = (dir: string): string => {
@@ -58,7 +58,7 @@ const builds = new Map<string, Promise<Built>>();
 
 /** Builds (or finds in the cache) the runner for a simulator kind; returns its .xctestrun file. */
 export const buildRunner = (kind: SimKind): Promise<Built> => {
-  const key = `${kind === 'tablet' ? 'phone' : kind}:${sourceHash(runnerSources())}`;
+  const key = `${kind === 'tablet' || kind === 'foldable' ? 'phone' : kind}:${sourceHash(runnerSources())}`;
   let b = builds.get(key);
   if (!b) {
     b = build(kind);

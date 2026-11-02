@@ -6,7 +6,7 @@ import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, swipeArea} from './ui/snapshot.ts';
-import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
+import {contentSize, foldState, isAppleBundle, parseDisplays, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
   devices: {
@@ -25,6 +25,19 @@ describe('apple driver', () => {
     expect(simKind('tvOS 27.2', 'Apple TV')).toBe('tv');
     expect(simKind('xrOS 3.0', 'Apple Vision Pro')).toBe('xr');
     expect(simKind('iOS 27.0', 'com.apple.CoreSimulator.SimDeviceType.iPad-Air')).toBe('tablet');
+    expect(simKind('iOS 27.1', 'com.apple.CoreSimulator.SimDeviceType.iPhone-Duo')).toBe('foldable');
+  });
+
+  it('finds the lit screen of a foldable and whether it is folded', () => {
+    const screen = (id: number, w: number, h: number, active: boolean) => ({displayId: id, name: `LCD-${id}`, active, backlightState: active ? 'activeOn' : 'off', primary: id === 1, nativeSize: [w, h]});
+    const folded = parseDisplays({result: {displays: [screen(1, 1398, 2034, true), screen(3, 2007, 2853, false)]}});
+    expect(folded.find(d => d.active)?.id).toBe(1);
+    expect(foldState(folded)).toBe('folded: cover screen 1398x2034');
+    const open = parseDisplays({result: {displays: [screen(1, 1398, 2034, false), screen(3, 2007, 2853, true)]}});
+    expect(foldState(open)).toBe('open: inner screen 2007x2853');
+    // A screen that says active but has its backlight off is not the one on show.
+    expect(parseDisplays({result: {displays: [{...screen(1, 10, 10, true), backlightState: 'off'}]}})[0]?.active).toBe(false);
+    expect(foldState(parseDisplays({result: {displays: [screen(1, 1179, 2556, true)]}}))).toBeUndefined();
   });
 
   it('parses simctl devices and picks by udid or name, newest runtime first', () => {

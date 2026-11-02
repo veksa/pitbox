@@ -7,9 +7,28 @@ import path from 'node:path';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
-export type SimKind = 'phone' | 'tablet' | 'tv' | 'xr' | 'watch';
+export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
 
 export type Simulator = {udid: string; name: string; state: string; runtime: string; os: string; kind: SimKind; available: boolean};
+
+/** One screen of a simulator; a foldable has two, and only one is lit at a time. */
+export type Display = {id: number; name: string; active: boolean; primary: boolean; width: number; height: number};
+
+/** `devicectl device info displays -j` → its screens. */
+export const parseDisplays = (json: unknown): Display[] => {
+  const list = (json as {result?: {displays?: Record<string, unknown>[]}})?.result?.displays ?? [];
+  return list.map(d => {
+    const size = (d.nativeSize as number[] | undefined) ?? [];
+    return {
+      id: Number(d.displayId),
+      name: String(d.name ?? ''),
+      active: d.active === true && d.backlightState !== 'off',
+      primary: d.primary === true,
+      width: Number(size[0] ?? 0),
+      height: Number(size[1] ?? 0),
+    };
+  });
+};
 
 export class AppleError extends Error {
   readonly hint?: string;
@@ -34,7 +53,9 @@ export const simKind = (runtime: string, deviceType: string): SimKind => {
   if (/tvOS/i.test(runtime)) return 'tv';
   if (/xrOS|visionOS/i.test(runtime)) return 'xr';
   if (/watchOS/i.test(runtime)) return 'watch';
-  return /iPad/i.test(deviceType) ? 'tablet' : 'phone';
+  if (/iPad/i.test(deviceType)) return 'tablet';
+  // A phone with a hinge: an outer (cover) screen and an inner one.
+  return /Duo|Fold/i.test(deviceType) ? 'foldable' : 'phone';
 };
 
 /** Android-style font scale → the nearest iOS Dynamic Type category. */
@@ -310,9 +331,25 @@ export class AppleDriver {
 
   async screenshot(udid: string, file: string): Promise<{file: string; bytes: number}> {
     fs.mkdirSync(path.dirname(file), {recursive: true});
-    const r = await this.simctl(['io', udid, 'screenshot', '--type=png', file], {timeoutMs: 20_000});
+    let r = await this.simctl(['io', udid, 'screenshot', '--type=png', file], {timeoutMs: 20_000});
+    // A foldable has two screens and simctl will not pick one: the lit one is what the user sees.
+    if (r.code !== 0 && /Cannot choose between \d+ displays/.test(r.stderr)) {
+      const lit = (await this.displays(udid)).find(d => d.active);
+      if (lit) r = await this.simctl(['io', udid, 'screenshot', '--type=png', `--display=${lit.id}`, file], {timeoutMs: 20_000});
+    }
     if (r.code !== 0 || !fs.existsSync(file)) throw new AppleError(`screenshot failed: ${r.stderr.trim().split('\n').pop()}`);
     return {file, bytes: fs.statSync(file).size};
+  }
+
+  /** The simulator's screens as CoreDevice reports them: which one is lit, and its size in pixels. */
+  async displays(udid: string): Promise<Display[]> {
+    const r = await run('xcrun', ['devicectl', 'device', 'info', 'displays', '--device', udid, '-q', '-j', '-'], {timeoutMs: 20_000});
+    if (r.code !== 0) return [];
+    try {
+      return parseDisplays(JSON.parse(r.stdout));
+    } catch {
+      return [];
+    }
   }
 
   /** The pid of a running app, from the simulator's launchd. */
@@ -340,9 +377,23 @@ export class AppleDriver {
     const sim = (await this.simulators()).find(s => s.udid === udid);
     if (!sim) throw new AppleError(`unknown simulator ${udid}`);
     const [appearance, size] = await Promise.all([this.simctl(['ui', udid, 'appearance']), this.simctl(['ui', udid, 'content_size'])]);
-    return {model: sim.name, os: sim.os, kind: sim.kind, state: sim.state, appearance: appearance.stdout.trim(), contentSize: size.stdout.trim()};
+    const out: Record<string, string> = {model: sim.name, os: sim.os, kind: sim.kind, state: sim.state, appearance: appearance.stdout.trim(), contentSize: size.stdout.trim()};
+    if (sim.kind === 'foldable' && sim.state === 'Booted') {
+      const fold = foldState(await this.displays(udid));
+      if (fold) out.fold = fold;
+    }
+    return out;
   }
 }
+
+/** Which screen of a foldable is lit: the smaller one is the cover (folded), the larger the inner (open). */
+export const foldState = (displays: Display[]): string | undefined => {
+  const lit = displays.find(d => d.active);
+  const other = displays.find(d => d !== lit && d.width * d.height > 0);
+  if (!lit || !other) return undefined;
+  const folded = lit.width * lit.height < other.width * other.height;
+  return `${folded ? 'folded: cover screen' : 'open: inner screen'} ${lit.width}x${lit.height}`;
+};
 
 /** CFBundleIdentifier of a built .app, read from its Info.plist (binary or XML). */
 export const bundleIdOf = async (app: string): Promise<string | undefined> => {
