@@ -1,11 +1,11 @@
-// UI automation on one Android device through the runner: snapshots, actions that settle and answer with what
-// changed, waits, scrolling to a target, focus (TV), downscaled screenshots, and recording into a flow.
+// UI automation on one device through its on-device runner: snapshots, actions that settle and answer with what
+// changed, waits, scrolling to a target, focus (TV), downscaled screenshots, and recording into a flow. The
+// runners of every platform speak the same JSON-lines protocol, so this class does not know which one it drives.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {KEYS, type AndroidDriver} from '../drivers/android/driver.ts';
-import {AndroidRunner} from '../drivers/android/runner.ts';
-import {CrashWatcher, type AppEvent} from '../drivers/android/events.ts';
+import {KEYS} from '../drivers/android/driver.ts';
+import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
 import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
@@ -28,9 +28,20 @@ export type VisualResult = {name: string; status: 'saved' | 'match' | 'changed';
 
 export type MediaResult = {target?: string; moving: boolean; black: boolean; playing: boolean; motion: number; luma: number};
 
-export class AndroidUi {
+/** An on-device runner: one request, one JSON answer. */
+export type UiRunner = {
+  call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
+  stop(): Promise<void>;
+};
+
+/** Crashes of the app under test, collected in the background. */
+export type CrashSource = {start(): void; stop(): void; since(t: number): AppEvent[]};
+
+const noCrashes: CrashSource = {start: () => undefined, stop: () => undefined, since: () => []};
+
+export class DeviceUi<R extends UiRunner = UiRunner> {
   readonly serial: string;
-  readonly runner: AndroidRunner;
+  readonly runner: R;
   last?: Snapshot;
   #size?: {width: number; height: number};
   /** Flow lines recorded since `record start`, or undefined when not recording. */
@@ -39,14 +50,14 @@ export class AndroidUi {
   readonly #hooks: UiHooks;
   #trace?: string;
 
-  readonly #crashes: CrashWatcher;
+  readonly #crashes: CrashSource;
 
-  constructor(driver: AndroidDriver, serial: string, hooks: UiHooks = {}, pkg?: string) {
+  constructor(serial: string, runner: R, hooks: UiHooks = {}, crashes: CrashSource = noCrashes) {
     this.#hooks = hooks;
     this.serial = serial;
-    this.#crashes = new CrashWatcher(driver.adbPath, serial, pkg);
+    this.#crashes = crashes;
     this.#crashes.start();
-    this.runner = new AndroidRunner(driver, serial);
+    this.runner = runner;
   }
 
   async size() {

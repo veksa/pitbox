@@ -1,12 +1,12 @@
 // Executes a flow against a host (the daemon's engine). Stops at the first failing step and reports it with
 // what is on screen, so the caller can act without taking another snapshot.
 
-import type {AndroidUi} from '../ui/android.ts';
+import type {DeviceUi} from '../ui/device.ts';
 import {matches, resolveTarget} from '../ui/snapshot.ts';
 import {kvArgs, parseFlow, unquote, validateFlow, type Step} from './flow.ts';
 
 export type FlowHost = {
-  ui: () => Promise<AndroidUi>;
+  ui: () => Promise<DeviceUi>;
   open: (target: string | undefined, relaunch: boolean) => Promise<void>;
   goto: (route: string, params: Record<string, string>) => Promise<void>;
   signIn: (user: string) => Promise<FlowResult>;

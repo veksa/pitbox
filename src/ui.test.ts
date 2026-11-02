@@ -1,7 +1,7 @@
 import {describe, expect, it} from 'vitest';
 import {fillRoute, parseFlow, tokenize, validateFlow} from './flows/flow.ts';
 import {runFlow, type FlowHost} from './flows/run.ts';
-import type {AndroidUi} from './ui/android.ts';
+import type {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, diffSnapshots, resolveTarget, selectorFor, type UiNode, type UiWindow} from './ui/snapshot.ts';
 
 const windows: UiWindow[] = [
@@ -100,7 +100,7 @@ describe('flows', () => {
       },
       focus: async () => ({}),
       crashesSince: async () => [],
-    } as unknown as AndroidUi;
+    } as unknown as DeviceUi;
     const host: FlowHost = {
       ui: async () => ui,
       open: async (t, r) => void calls.push(`open ${t ?? ''}${r ? '!' : ''}`),

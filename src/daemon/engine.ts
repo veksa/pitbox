@@ -19,7 +19,9 @@ import {describeTool, runTool} from '../stand/tools.ts';
 import {StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import {fillRoute} from '../flows/flow.ts';
-import {AndroidUi} from '../ui/android.ts';
+import {DeviceUi} from '../ui/device.ts';
+import {AndroidRunner} from '../drivers/android/runner.ts';
+import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
 import {httpAlive} from '../util/net.ts';
 
@@ -52,7 +54,7 @@ export class Engine {
   #watchTimer?: NodeJS.Timeout;
   #lastForwardCheck = 0;
   #dev?: DevServer;
-  readonly #uis = new Map<string, AndroidUi>();
+  readonly #uis = new Map<string, DeviceUi>();
 
   #states(): StateStore {
     return new StateStore({root: this.#loaded.root, stateDir: this.#loaded.stateDir, shell: this.config.shell}, this.config.states);
@@ -143,13 +145,13 @@ export class Engine {
   }
 
   /** The UI session of a device (one runner per device, kept between calls). */
-  async ui(device?: string): Promise<AndroidUi> {
+  async ui(device?: string): Promise<DeviceUi> {
     const t = await this.#target(device);
     if (t.platform === 'apple') throw new Error('UI automation on a simulator needs the Apple runner (not there yet)\nhint: open, install, logs, settings and screenshot work already');
     const {a, id: serial} = t;
     let ui = this.#uis.get(serial);
     if (!ui) {
-      ui = new AndroidUi(a, serial, {
+      ui = new DeviceUi(serial, new AndroidRunner(a, serial), {
         beforeAction: () => {
           const proxy = this.#dev?.proxy;
           if (!proxy || !proxy.apps().length) return undefined;
@@ -168,7 +170,7 @@ export class Engine {
             await new Promise(r => setTimeout(r, 150));
           }
         },
-      }, this.config.app?.android);
+      }, new CrashWatcher(a.adbPath, serial, this.config.app?.android));
       this.#uis.set(serial, ui);
     }
     return ui;

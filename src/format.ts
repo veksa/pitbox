@@ -8,7 +8,7 @@ import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
 import type {JsError} from './devserver/proxy.ts';
-import type {ActResult, FocusMap} from './ui/android.ts';
+import type {ActResult, FocusMap} from './ui/device.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
 import {clipLines, seconds} from './util/text.ts';
