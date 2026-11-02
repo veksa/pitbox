@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <application>
+    <!-- Applies the saved dev server before the app's own code runs. Off in release (res/values/pitbox.xml). -->
+    <provider
+      android:name="dev.pitbox.connect.PitboxConnectProvider"
+      android:authorities="${applicationId}.pitbox"
+      android:enabled="@bool/pitbox_connect_enabled"
+      android:exported="false"
+      android:initOrder="1000" />
+
+    <!-- pitbox.<applicationId>://connect?devserver=host:port — what `pitbox qr` encodes. Off in release. -->
+    <activity
+      android:name="dev.pitbox.connect.PitboxConnectActivity"
+      android:enabled="@bool/pitbox_connect_enabled"
+      android:excludeFromRecents="true"
+      android:exported="true"
+      android:noHistory="true"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="pitbox.${applicationId}" android:host="connect" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

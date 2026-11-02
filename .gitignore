@@ -12,3 +12,6 @@ DerivedData/
 runners/android/build/
 runners/android/.gradle/
 runners/android/local.properties
+android/build/
+android/.gradle/
+android/.cxx/

@@ -14,7 +14,10 @@
   },
   "files": [
     "dist",
-    "runners/android/pitbox-runner.apk"
+    "runners/android/pitbox-runner.apk",
+    "android/build.gradle",
+    "android/src",
+    "react-native.config.js"
   ],
   "engines": {
     "node": ">=22.18"
