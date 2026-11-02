@@ -685,7 +685,8 @@ export class Engine {
       if (!name) throw new Error('no device: pass an AVD or simulator name, or set android.avd / apple.simulator in the config');
       const a = this.android;
       const s = this.apple;
-      if (s && !(a?.avds().some(x => x.name === name)) && pickSimulator(await s.simulators(), name)) {
+      // Without an Android SDK an unknown name is a simulator's, so the answer lists the simulators there are.
+      if (s && !(a?.avds().some(x => x.name === name)) && (!a || pickSimulator(await s.simulators(), name))) {
         const r = await s.boot(name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless')});
         return {...r, platform: 'apple'};
       }
