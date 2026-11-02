@@ -10,6 +10,7 @@
 //   type " more text"
 //   key back | key down down center
 //   swipe up [ms] | swipe 540,1800,540,600 [ms]
+//   touch down id=seek | touch move 900,1500 | touch up    (a finger held across steps)
 //   scroll down until text="Popular items"
 //   wait text="Home" [seconds] | wait gone id=spinner [seconds]
 //   expect text="Welcome" | expect gone id=error | expect focus id=play
@@ -99,7 +100,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -119,6 +120,7 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'type':
       case 'key':
       case 'swipe':
+      case 'touch':
       case 'sleep':
       case 'run':
       case 'tool':

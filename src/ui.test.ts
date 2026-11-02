@@ -77,7 +77,7 @@ describe('flows', () => {
   it('substitutes parameters and validates before running', () => {
     const steps = parseFlow('# sign in\nfill id=email ${user}\nscroll down until text=Done\nfly away', {user: 'u@example.test'});
     expect(steps[0]).toMatchObject({line: 2, cmd: 'fill', args: ['id=email', 'u@example.test']});
-    expect(validateFlow(steps)).toEqual(['line 4: unknown step "fly" (open, open!, goto, as, press, longpress, doubletap, fill, type, key, swipe, scroll, wait, expect, tool, sleep, screenshot, run)']);
+    expect(validateFlow(steps)).toEqual([expect.stringMatching(/^line 4: unknown step "fly"/)]);
     expect(() => parseFlow('press ${missing}')).toThrow(/missing flow parameter/);
   });
 

@@ -136,6 +136,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'type':
     case 'uiKey':
     case 'swipe':
+    case 'touch':
     case 'scroll':
       return fmtAct(r as ActResult);
     case 'snapshot':

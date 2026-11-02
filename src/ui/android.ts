@@ -49,9 +49,9 @@ export class AndroidUi {
     this.recording?.push(line);
   }
 
-  async snapshot(opts: {system?: boolean} = {}): Promise<Snapshot> {
+  async snapshot(opts: {system?: boolean; bounds?: boolean} = {}): Promise<Snapshot> {
     const [tree, size] = await Promise.all([this.runner.call<{windows: UiWindow[]; nodes: UiNode[]}>('tree'), this.size()]);
-    this.last = buildSnapshot(tree.windows, tree.nodes, {system: opts.system, height: size.height});
+    this.last = buildSnapshot(tree.windows, tree.nodes, {system: opts.system, bounds: opts.bounds, height: size.height});
     return this.last;
   }
 
@@ -172,6 +172,29 @@ export class AndroidUi {
     await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
     this.record(`swipe ${spec}${durationMs !== 300 ? ` ${durationMs}` : ''}`);
     return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+  }
+
+  /**
+   * A finger held between calls: `down` on a target, `move` to another, `up`. Each answers with what changed,
+   * so a state that exists only while the finger is down (a scrubber's time label) can be seen.
+   */
+  async touch(phase: 'down' | 'move' | 'up', selector?: string): Promise<ActResult> {
+    const t0 = this.#begin();
+    let x = 0;
+    let y = 0;
+    let target: string | undefined;
+    const before = this.last ?? (await this.snapshot());
+    if (phase !== 'up') {
+      if (!selector) throw new Error(`touch ${phase} needs a target`);
+      const r = await this.#target(selector);
+      x = r.target.x;
+      y = r.target.y;
+      target = r.target.ref ?? `${x},${y}`;
+    }
+    await this.runner.call('touch', {phase, x, y});
+    this.record(`touch ${phase}${selector ? ` ${selector}` : ''}`);
+    const settled = await this.#settle(before, 150, 800, 300);
+    return {action: `touch ${phase}`, target, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   /** Swipes in `direction` until `selector` is on screen or the content stops moving. */

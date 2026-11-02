@@ -57,6 +57,9 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number):
     case 'key':
       await (await host.ui()).key(a);
       return;
+    case 'touch':
+      await (await host.ui()).touch(a[0] as 'down' | 'move' | 'up', a.slice(1).join(' ') || undefined);
+      return;
     case 'swipe': {
       const ms = a.length > 1 && /^\d+$/.test(a[a.length - 1]!) && !a[0]!.includes(',') ? Number(a[a.length - 1]) : 300;
       await (await host.ui()).swipe(a[0]!, ms);

@@ -37,6 +37,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   press|longpress|doubletap <@ref | id=… | text=… | label=… | words | x,y>
   fill <selector> <text> · type <text> · key back|home|up|down|left|right|center|enter|…|<keycode> …
   swipe up|down|left|right|x1,y1,x2,y2 [ms] · scroll down until <selector>
+  touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
   media [selector]              is it playing? motion and brightness of a region, compared on the device
 
@@ -73,7 +74,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -145,7 +146,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'key':
       return {method: 'uiKey', params: {device, keys: rest}};
     case 'snapshot':
-      return {method: 'snapshot', params: {device, system: flags.system}};
+      return {method: 'snapshot', params: {device, system: flags.system, bounds: flags.bounds}};
     case 'press':
     case 'longpress':
     case 'doubletap':
@@ -154,6 +155,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'fill', params: {device, target: rest.slice(0, -1).join(' '), text: rest[rest.length - 1]}};
     case 'type':
       return {method: 'type', params: {device, text: rest.join(' ')}};
+    case 'touch':
+      return {method: 'touch', params: {device, phase: rest[0], target: rest.slice(1).join(' ') || undefined}};
     case 'swipe':
       return {method: 'swipe', params: {device, direction: rest[0], duration: rest[1]}};
     case 'scroll':

@@ -611,7 +611,7 @@ export class Engine {
 
     snapshot: async (p: Params) => {
       const ui = await this.ui(str(p, 'device'));
-      const snap = await ui.snapshot({system: bool(p, 'system')});
+      const snap = await ui.snapshot({system: bool(p, 'system'), bounds: bool(p, 'bounds')});
       return {lines: snap.lines};
     },
 
@@ -619,6 +619,7 @@ export class Engine {
     fill: async (p: Params) => (await this.ui(str(p, 'device'))).fill(req(p, 'target'), req(p, 'text')),
     type: async (p: Params) => (await this.ui(str(p, 'device'))).type(req(p, 'text')),
     uiKey: async (p: Params) => (await this.ui(str(p, 'device'))).key(list(p, 'keys')),
+    touch: async (p: Params) => (await this.ui(str(p, 'device'))).touch(req(p, 'phase') as 'down' | 'move' | 'up', str(p, 'target')),
     swipe: async (p: Params) => (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300),
     scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 8),
 

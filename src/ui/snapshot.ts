@@ -79,6 +79,8 @@ export type SnapshotOptions = {
   system?: boolean;
   /** Screen height, to mark nodes below the fold. */
   height?: number;
+  /** Append each node's bounds `[l,t,r,b]` — for gestures that need coordinates. */
+  bounds?: boolean;
 };
 
 export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: SnapshotOptions = {}): Snapshot => {
@@ -152,6 +154,7 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
     if (n.id) parts.push(`#${n.id}`);
     const flags = [has(n, 'F') && 'focused', (has(n, 'X') || has(n, 'S')) && 'on', has(n, 'x') && !has(n, 'X') && 'off', has(n, 'd') && 'disabled', opts.height && n.b[1] >= opts.height && 'below'].filter(Boolean);
     if (flags.length) parts.push(`[${flags.join(' ')}]`);
+    if (opts.bounds) parts.push(`@[${n.b.join(',')}]`);
     lines.push(parts.join(' '));
   });
   return {windows, nodes, lines, refs, refOf};
