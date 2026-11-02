@@ -88,11 +88,16 @@ export const runShell = (command: string, opts: {cwd?: string; env?: NodeJS.Proc
   return run(shell.file, shell.args(command), opts);
 };
 
-/** Starts a long-lived command through the project shell, in its own process group where the OS has one. */
+/**
+ * Starts a long-lived command through the project shell, detached: its own process group on POSIX, its own
+ * hidden console on Windows. Without that a Windows child shares the daemon's console, and when the daemon
+ * exits the console's close event kills console processes deep in the child's tree — an API server under a
+ * file watcher dies while the watcher lives on, which looks like the server crashing on its own.
+ */
 export const spawnShell = (command: string, opts: SpawnOptions & {shell?: string} = {}): ChildProcess => {
   const shell = resolveShell(typeof opts.shell === 'string' ? opts.shell : undefined);
   const {shell: _ignored, ...rest} = opts;
-  return spawn(shell.file, shell.args(command), {windowsHide: true, detached: process.platform !== 'win32', ...rest});
+  return spawn(shell.file, shell.args(command), {windowsHide: true, detached: true, ...rest});
 };
 
 /** Kills a process and everything it started. */

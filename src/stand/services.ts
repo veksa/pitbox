@@ -197,17 +197,19 @@ export class ServiceManager {
     }
 
     const logFile = this.logFile(name);
-    const log = fs.createWriteStream(logFile, {flags: 'a'});
-    log.write(`\n--- pitbox start ${new Date().toISOString()} :: ${svc.start}\n`);
+    fs.appendFileSync(logFile, `\n--- pitbox start ${new Date().toISOString()} :: ${svc.start}\n`);
+    // The child writes straight into the log file. Piping through the daemon would tie the service to it: once
+    // the daemon exits, the next write hits a closed pipe and the service dies of EPIPE.
+    const fd = fs.openSync(logFile, 'a');
     const t0 = Date.now();
     const child = spawnShell(svc.start, {
       cwd,
       env: {...process.env, ...this.#ctx.env, ...svc.env, FORCE_COLOR: '0'},
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', fd, fd],
       shell: this.#ctx.shell,
     });
-    child.stdout?.pipe(log, {end: false});
-    child.stderr?.pipe(log, {end: false});
+    fs.closeSync(fd);
+    const log = {write: (line: string) => fs.appendFileSync(logFile, line)};
     // A start command that exits with 0 launched something in the background (`docker compose up -d`): keep
     // waiting for the probe. Any other exit before the service is healthy is a failure.
     let failedExit: string | undefined;
