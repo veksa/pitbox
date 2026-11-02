@@ -331,6 +331,22 @@ export const metroWindowsWatcher: Rule = {
   },
 };
 
+/** A device with a screen lock runs no app after a boot until someone unlocks it. */
+const deviceLocked: Rule = {
+  id: 'device-locked',
+  title: 'no device waits for its screen lock to be entered',
+  check: async ctx => {
+    if (!ctx.android) return [];
+    const findings: Finding[] = [];
+    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      if (await ctx.android.userLocked(d.serial)) {
+        findings.push({rule: 'device-locked', severity: 'error', message: `${d.avd ?? d.serial}: locked after boot — no app can start until the screen lock is entered`, hint: 'unlock it once, or remove the screen lock in Settings → Security (an AVD for tests is better without one)'});
+      }
+    }
+    return findings;
+  },
+};
+
 /** Android blocks plain HTTP since API 28: a debug build that may not use it never reaches the stand. */
 const cleartext: Rule = {
   id: 'android-cleartext',
@@ -347,4 +363,4 @@ const cleartext: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher];
