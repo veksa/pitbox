@@ -213,8 +213,9 @@ export class Engine {
       },
       ui: () => this.ui(device),
       open: async (target, relaunch) => {
-        await this.methods.open({device, target, relaunch});
+        const r = (await this.methods.open({device, target, relaunch})) as {totalMs?: number; jsMs?: number};
         (await this.ui(device)).record(`open${relaunch ? '!' : ''}${target ? ` ${JSON.stringify(target)}` : ''}`);
+        return {activityMs: r.totalMs, jsMs: r.jsMs};
       },
       goto: async (route, params) => {
         await this.#goto(device, route, params);
@@ -706,7 +707,19 @@ export class Engine {
       // Without a target, open the app through its connect link when there is one: it then always talks to this
       // dev server, whatever a launcher remembered.
       const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p);
-      return {serial, target, ...(await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg: str(p, 'pkg') ?? this.config.app?.android}))};
+      const t0 = Date.now();
+      const opened = await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg: str(p, 'pkg') ?? this.config.app?.android});
+      // A cold start of a dev build goes on after the activity: the bundle loads and starts running.
+      const proxy = this.#dev?.proxy;
+      if (!bool(p, 'relaunch') || !proxy?.listening || !proxy.opts.inApp) return {serial, target, ...opened};
+      const js = await proxy.startAfter(t0);
+      return {
+        serial,
+        target,
+        ...opened,
+        ...(js.runningAt ? {jsMs: js.runningAt - t0} : {}),
+        ...(js.bundle ? {bundle: {kind: js.bundle.kind, kb: Math.round(js.bundle.bytes / 1024), ms: js.bundle.ms, note: js.bundle.note}} : {}),
+      };
     },
 
     stopApp: async (p: Params) => {

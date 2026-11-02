@@ -123,6 +123,16 @@ describe('flows', () => {
     expect(calls).toEqual(['open !', 'press text=Next', 'goto item {"id":"7"}', 'device tv-1']);
   });
 
+  it('times a cold start up to the first check after it, and mentions JS errors of a passing flow', async () => {
+    const {host} = fakeHost([['Home']]);
+    host.open = async () => ({activityMs: 640, jsMs: 2900});
+    host.jsErrors = async () => [{summary: 'boom (fatal)', lines: ['onPress  src/a.ts:3:4']}];
+    const r = await runFlow(host, 'open!\nexpect gone text=Splash\nwait text=Home');
+    expect(r.ok).toBe(true);
+    expect(r.notes[0]).toMatch(/^cold start: activity 640 ms · JS running at 2\.9s · wait text=Home at /);
+    expect(r.notes.slice(1)).toEqual(['! JS error: boom (fatal)', '    onPress  src/a.ts:3:4']);
+  });
+
   it('stops at the first failure with the line, the error and the screen', async () => {
     const {host} = fakeHost([['Welcome']]);
     const r = await runFlow(host, 'open\npress text=Missing\npress text=Welcome');

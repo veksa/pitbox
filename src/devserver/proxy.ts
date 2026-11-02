@@ -91,6 +91,8 @@ export class DevProxy {
   /** Where the in-app script went in each bundle, by bundle id. */
   readonly #injections = new Map<string, Injection>();
   readonly errors: JsError[] = [];
+  /** When apps said hello (host clock), newest last. */
+  readonly #hellos: number[] = [];
   readonly #symbolicating = new Set<Promise<void>>();
 
   constructor(opts: ProxyOptions) {
@@ -247,6 +249,26 @@ export class DevProxy {
     return (await Promise.all(asks)).filter((x): x is {app: AppInfo; data: T} => !!x);
   }
 
+  /**
+   * The JS side of an app start after `since`: the main bundle request, then the moment the bundle started running
+   * (from the in-app script's hello). Gives up on the request after `requestMs` (not a dev build, or another server) and on the hello
+   * after `helloMs`.
+   */
+  async startAfter(since: number, requestMs = 8000, helloMs = 60_000): Promise<{bundle?: BundleRequest; runningAt?: number}> {
+    const until = (ms: number, done: () => boolean) =>
+      new Promise<void>(resolve => {
+        const end = Date.now() + ms;
+        const tick = () => (done() || Date.now() > end ? resolve() : setTimeout(tick, 100));
+        tick();
+      });
+    const request = () => this.stats.requests.find(r => r.at >= since && r.kind !== 'lazy');
+    const hello = () => this.#hellos.find(t => t >= since);
+    await until(requestMs, () => !!request() || !!hello());
+    if (!request() && !hello()) return {};
+    await until(helloMs, () => !!hello());
+    return {bundle: request(), runningAt: hello()};
+  }
+
   #onError(app: AppSession, msg: {message?: string; name?: string; stack?: string; fatal?: boolean}) {
     const name = msg.name && msg.name !== 'Error' ? `${msg.name}: ` : '';
     const raw = unshift(parseStack(String(msg.stack ?? '')), app.hello ? this.#injections.get(app.hello.bundle) : undefined);
@@ -281,6 +303,9 @@ export class DevProxy {
       }
       if (msg.type === 'hello') {
         app.hello = {bundle: String(msg.bundle), gen: Number(msg.gen), platform: String(msg.platform), startedAt: Number(msg.startedAt)};
+        // When the bundle started running, on the host's clock: the app says how long ago, not when.
+        this.#hellos.push(Date.now() - Math.max(0, Number((msg as {sinceStart?: number}).sinceStart) || 0));
+        if (this.#hellos.length > 20) this.#hellos.shift();
         this.#send({type: 'rules', rules: this.rules}, app);
         if (this.trace) this.#send({type: 'trace', id: this.trace}, app);
       } else if (msg.type === 'error') {

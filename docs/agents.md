@@ -40,6 +40,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `inspect what=errors` — recent JS errors with source stacks (`src/file.ts:31:39` and the line itself), also
   the ones thrown at startup before any action. Errors during an action or a flow come back with it anyway.
 - `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory.
+- `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
+  bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.
 - Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough.
 
 ## Network and backend

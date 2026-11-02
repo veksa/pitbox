@@ -15,6 +15,7 @@ export type InAppConfig = {bundle: string; gen: number; platform: string; http: 
 function pitboxInApp(cfg: InAppConfig) {
   var g: any = globalThis as any;
   if (g.__pitbox) return;
+  var scriptStart = Date.now();
   var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false, errors: [], ch: null};
   g.__pitbox = state;
   var seq = 0;
@@ -182,7 +183,7 @@ function pitboxInApp(cfg: InAppConfig) {
       return;
     }
     ch.onopen = function () {
-      ch.send(JSON.stringify({type: 'hello', bundle: cfg.bundle, gen: cfg.gen, platform: cfg.platform, startedAt: Date.now()}));
+      ch.send(JSON.stringify({type: 'hello', bundle: cfg.bundle, gen: cfg.gen, platform: cfg.platform, startedAt: scriptStart, sinceStart: Date.now() - scriptStart}));
       state.ch = ch;
       var pending = state.errors.splice(0);
       for (var i = 0; i < pending.length; i++) ch.send(JSON.stringify(pending[i]));

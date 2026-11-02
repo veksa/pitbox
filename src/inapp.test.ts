@@ -218,4 +218,22 @@ describe('proxy with the in-app script', () => {
     expect(proxy.latest.get('android')).not.toBe(bundle);
     ws.close();
   });
+
+  it('times an app start: the bundle request, then when the bundle started running', async () => {
+    expect(await proxy.startAfter(Date.now(), 200, 200)).toEqual({});
+    const t0 = Date.now();
+    await fetch(`http://127.0.0.1:${port}/index.bundle?platform=android`, {headers: {accept: 'multipart/mixed'}});
+    const started = proxy.startAfter(t0, 2000, 2000);
+    const ws = new WsClient(`ws://127.0.0.1:${port}/pitbox/app`);
+    await new Promise(r => ws.on('open', r));
+    // The bundle starts running after the launch, so the 40 ms it reports must not reach back before t0.
+    await new Promise(r => setTimeout(r, 60));
+    const sent = Date.now();
+    ws.send(JSON.stringify({type: 'hello', bundle: 'x', gen: 0, platform: 'android', startedAt: 0, sinceStart: 40}));
+    const r = await started;
+    expect(r.bundle?.kind).toBe('source');
+    expect(r.runningAt).toBeLessThanOrEqual(Date.now() - 40);
+    expect(r.runningAt).toBeGreaterThanOrEqual(sent - 40);
+    ws.close();
+  });
 });

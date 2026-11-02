@@ -4,10 +4,12 @@
 import type {DeviceUi} from '../ui/device.ts';
 import {matches, resolveTarget} from '../ui/snapshot.ts';
 import {kvArgs, parseFlow, unquote, validateFlow, type Step} from './flow.ts';
+import {seconds as fmtSeconds} from '../util/text.ts';
 
 export type FlowHost = {
   ui: () => Promise<DeviceUi>;
-  open: (target: string | undefined, relaunch: boolean) => Promise<void>;
+  /** Opens the app; a cold start reports how long the activity and the JS took to come up. */
+  open: (target: string | undefined, relaunch: boolean) => Promise<{activityMs?: number; jsMs?: number} | void>;
   goto: (route: string, params: Record<string, string>) => Promise<void>;
   signIn: (user: string) => Promise<FlowResult>;
   tool: (name: string, params: Record<string, string>) => Promise<{code: number | null; output: string}>;
@@ -36,12 +38,28 @@ const seconds = (s: string | undefined, fallback: number) => {
   return Number.isFinite(n) ? n * 1000 : fallback * 1000;
 };
 
-const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number): Promise<void> => {
+/** A cold start (`open!`) waiting for the first check after it, which marks the first screen. */
+type ColdStart = {pending?: {t0: number; activityMs?: number; jsMs?: number}};
+
+const coldNote = (c: NonNullable<ColdStart['pending']>, first?: Step) =>
+  `cold start: ${[
+    c.activityMs !== undefined ? `activity ${c.activityMs} ms` : '',
+    c.jsMs !== undefined ? `JS running at ${fmtSeconds(c.jsMs)}` : '',
+    first ? `${first.text} at ${fmtSeconds(Date.now() - c.t0)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')}`;
+
+const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, cold: ColdStart = {}): Promise<void> => {
   const a = s.args;
   switch (s.cmd) {
     case 'open':
-    case 'open!':
-      return host.open(a[0] ? unquote(a[0]) : undefined, s.cmd === 'open!');
+    case 'open!': {
+      const t0 = Date.now();
+      const r = await host.open(a[0] ? unquote(a[0]) : undefined, s.cmd === 'open!');
+      if (s.cmd === 'open!') cold.pending = {t0, activityMs: r?.activityMs, jsMs: r?.jsMs};
+      return;
+    }
     case 'goto':
       return host.goto(a[0]!, kvArgs(a.slice(1)));
     case 'as': {
@@ -159,10 +177,15 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
   const errors = validateFlow(steps);
   if (errors.length) return {ok: false, steps: 0, ms: 0, failed: {line: 0, step: 'validate', error: errors.join('; ')}, notes};
   let done = 0;
+  const cold: ColdStart = {};
   for (const s of steps) {
     try {
-      await runStep(host, s, notes, depth);
+      await runStep(host, s, notes, depth, cold);
       done++;
+      if (cold.pending && (s.cmd === 'wait' || s.cmd === 'expect') && s.args[0] !== 'gone') {
+        notes.push(coldNote(cold.pending, s));
+        cold.pending = undefined;
+      }
     } catch (e) {
       const failed: NonNullable<FlowResult['failed']> = {line: s.line, step: s.text, error: (e as Error).message};
       if (depth === 0) {
@@ -179,6 +202,7 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
       return {ok: false, steps: done, ms: Date.now() - t0, failed, notes};
     }
   }
+  if (cold.pending) notes.push(coldNote(cold.pending));
   if (depth === 0 && host.jsErrors) {
     for (const e of await host.jsErrors(t0).catch(() => [])) notes.push(`! JS error: ${e.summary}`, ...e.lines.slice(0, 3).map(l => `    ${l}`));
   }

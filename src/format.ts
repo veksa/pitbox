@@ -251,7 +251,15 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'install':
       return `installed on ${x.serial} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
     case 'open':
-      return `opened ${x.target} on ${x.serial}${x.totalMs !== undefined ? ` (activity in ${x.totalMs} ms)` : ''}`;
+    {
+      const b = x.bundle as {kind: string; kb: number; ms: number; note?: string} | undefined;
+      const parts = [
+        x.totalMs !== undefined ? `activity ${x.totalMs} ms` : '',
+        x.jsMs !== undefined ? `JS running at ${seconds(x.jsMs as number)}` : '',
+        b ? `${b.kind} bundle ${(b.kb / 1024).toFixed(1)} MB in ${b.ms} ms${b.note ? `, ${b.note}` : ''}` : '',
+      ].filter(Boolean);
+      return `opened ${x.target} on ${x.serial}${parts.length ? ` (${parts.join(' · ')})` : ''}`;
+    }
     case 'screenshot':
       return `${x.file} (${Math.round((x.bytes as number) / 1024)} KB)`;
     case 'shutdown':
