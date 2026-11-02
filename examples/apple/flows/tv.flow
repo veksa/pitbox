@@ -1,0 +1,11 @@
+# A remote instead of a finger: focus moves with the arrows, select presses.
+open!
+wait id=title 30
+key down
+expect focus id=greet
+key center
+expect text="Hello, stranger"
+key down
+expect focus id=fetch
+key center
+wait text~="hello from the stand" 10

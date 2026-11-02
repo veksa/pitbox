@@ -1,0 +1,11 @@
+# A watch: no text field, a short list, the same stand.
+tool reset
+open!
+wait id=title 60
+press id=greet
+expect text="Hello, stranger"
+press id=fetch
+wait text~="hello from the stand" 10
+tool hits contains "1"
+scroll down until text="Row 20"
+expect id=row_20

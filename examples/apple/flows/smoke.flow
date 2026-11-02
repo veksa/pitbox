@@ -1,0 +1,16 @@
+# The example app end to end: input, the stand on the Mac's network, scrolling, a deep link.
+tool reset
+open!
+wait id=title 30
+fill id=name "Ada"
+press id=greet
+expect text="Hello, Ada"
+press id=fetch
+wait text~="hello from the stand" 10
+tool hits contains "1"
+scroll down until text="Row 40"
+expect id=row_40
+goto detail id=42
+wait text="Detail 42" 10
+press id=back
+expect id=content_list
