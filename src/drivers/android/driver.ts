@@ -7,6 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
+import {posture, rotate, windowMode} from './formfactor.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
@@ -30,6 +31,36 @@ export const KEYS: Record<string, number> = {
   playpause: 85,
   appswitch: 187,
   wakeup: 224,
+  // Keyboards (tablets, desktops)
+  tab: 61,
+  space: 62,
+  escape: 111,
+  forward_del: 112,
+  page_up: 92,
+  page_down: 93,
+  move_home: 122,
+  move_end: 123,
+  // Media and TV remotes
+  play: 126,
+  pause: 127,
+  stop: 86,
+  next: 87,
+  previous: 88,
+  rewind: 89,
+  fast_forward: 90,
+  volume_up: 24,
+  volume_down: 25,
+  mute: 164,
+  channel_up: 166,
+  channel_down: 167,
+  guide: 172,
+  info: 165,
+  captions: 175,
+  settings: 176,
+  // Watch buttons
+  stem_primary: 264,
+  stem_1: 265,
+  stem_2: 266,
 };
 
 const lockDir = (avd: string) => path.join(avdHome(), `${avd}.avd`, 'hardware-qemu.ini.lock');
@@ -221,6 +252,21 @@ export class AndroidDriver {
   async userLocked(serial: string): Promise<boolean> {
     const out = await this.shell(serial, 'dumpsys user | grep -m1 "State:"').catch(() => '');
     return /RUNNING_LOCKED/.test(out);
+  }
+
+  /** Folds or unfolds a foldable: closed, half, open, rear, or reset (see formfactor.ts). */
+  posture(serial: string, name: string) {
+    return posture((s, c, t) => this.shell(s, c, t), serial, name);
+  }
+
+  /** Locks the rotation at 0/90/180/270, or `auto`. */
+  rotate(serial: string, rotation: string) {
+    return rotate((s, c, t) => this.shell(s, c, t), serial, rotation);
+  }
+
+  /** The app as a freeform window, fullscreen again, or a freeform window resized. */
+  window(serial: string, pkg: string, mode: string, bounds?: string) {
+    return windowMode((s, c, t) => this.shell(s, c, t), serial, pkg, () => this.launcherActivity(serial, pkg), mode, bounds);
   }
 
   async launcherActivity(serial: string, pkg: string): Promise<string> {
