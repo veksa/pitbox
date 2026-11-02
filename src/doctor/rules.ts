@@ -155,6 +155,21 @@ const forwardData: Rule = {
   },
 };
 
+const systemDialog: Rule = {
+  id: 'system-dialog',
+  title: 'no system dialog covers the screen',
+  check: async ctx => {
+    if (!ctx.systemDialogs) return [];
+    return (await ctx.systemDialogs()).map(d => ({
+      rule: 'system-dialog',
+      severity: 'error' as const,
+      message: `${d.serial}: "${d.title}" covers the screen — every wait and tap goes to the dialog`,
+      hint: 'emulators show it after a slow boot or under load; Wait keeps the process, Close app restarts it',
+      fix: ctx.dismissDialog ? () => ctx.dismissDialog!(d.serial) : undefined,
+    }));
+  },
+};
+
 const servicesHealthy: Rule = {
   id: 'services',
   title: 'stand services answer their probes',
@@ -231,4 +246,4 @@ export const metroWindowsWatcher: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, servicesHealthy, dataPartition, metroWindowsWatcher];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, servicesHealthy, dataPartition, metroWindowsWatcher];

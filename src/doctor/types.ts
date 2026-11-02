@@ -28,6 +28,9 @@ export type DoctorContext = {
   forwardHealth?: () => Promise<{serial: string; via: 'reverse' | 'relay'; carries: boolean}[]>;
   /** Moves an emulator's forwards onto the runner relay. */
   useRelay?: (serial: string) => Promise<string>;
+  /** System dialogs on top of each device ("… isn't responding"), and a way to dismiss one. */
+  systemDialogs?: () => Promise<{serial: string; title: string}[]>;
+  dismissDialog?: (serial: string) => Promise<string>;
 };
 
 export type Rule = {

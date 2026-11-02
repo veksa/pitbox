@@ -242,6 +242,25 @@ export class AndroidUi {
     return {x1, y1, x2, y2, duration: 250};
   }
 
+  /** A system dialog over everything ("System UI isn't responding", "… keeps stopping"), if there is one. */
+  systemDialog(snap: Snapshot = this.last!): string | undefined {
+    return snap?.windows.find(w => /isn.t responding|keeps stopping|has stopped/i.test(w.title))?.title;
+  }
+
+  /** Dismisses a system dialog: waits on a frozen app, closes a crashed one. */
+  async dismissSystemDialog(): Promise<string | undefined> {
+    const snap = await this.snapshot({system: true});
+    const title = this.systemDialog(snap);
+    if (!title) return undefined;
+    // Wait keeps a frozen process alive; Close app only when there is nothing to wait for.
+    const button = ['wait', 'close app', 'ok'].map(label => snap.nodes.find(n => (n.t ?? '').toLowerCase() === label)).find(Boolean);
+    if (!button) return `"${title}" has no Wait / Close app button`;
+    const x = Math.round((button.b[0] + button.b[2]) / 2);
+    const y = Math.round((button.b[1] + button.b[3]) / 2);
+    await this.runner.call('tap', {x, y});
+    return `dismissed "${title}" with ${button.t}`;
+  }
+
   /** Waits until `selector` matches (or stops matching with `gone`). */
   async wait(selector: string, opts: {gone?: boolean; timeoutMs?: number} = {}): Promise<{ms: number; snapshot: Snapshot}> {
     const t0 = Date.now();
@@ -249,7 +268,8 @@ export class AndroidUi {
     let snap = await this.snapshot();
     while (matches(snap, selector) === !!opts.gone) {
       if (Date.now() > deadline) {
-        throw new Error(`timed out after ${Math.round((opts.timeoutMs ?? 10_000) / 1000)}s waiting for ${opts.gone ? `"${selector}" to go` : `"${selector}"`}`);
+        const dialog = this.systemDialog(snap);
+        throw new Error(`timed out after ${Math.round((opts.timeoutMs ?? 10_000) / 1000)}s waiting for ${opts.gone ? `"${selector}" to go` : `"${selector}"`}${dialog ? ` — a system dialog is on top: "${dialog}" (doctor fix=true dismisses it)` : ''}`);
       }
       await new Promise(r => setTimeout(r, 300));
       snap = await this.snapshot();

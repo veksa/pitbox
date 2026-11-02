@@ -502,6 +502,13 @@ export class Engine {
       return {apps: answers.map(a => ({app: a.app.id, platform: a.app.hello?.platform, entries: a.data}))};
     },
 
+    appTree: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      type TreeNode = {s: number; d: number; c: string; id?: string; l?: string; t?: string; hidden?: boolean};
+      const answers = await this.#dev.proxy.query<{error?: string; surfaces?: number; nodes?: TreeNode[]; truncated?: boolean}>('tree', {limit: num(p, 'limit') ?? 600}, 5000);
+      return {apps: answers.map(a => ({app: a.app.id, platform: a.app.hello?.platform, ...a.data}))};
+    },
+
     net: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
       const proxy = this.#dev.proxy;
@@ -810,7 +817,20 @@ export class Engine {
     doctor: async (p: Params) => {
       const extra = await loadProjectRules(this.#loaded.root, this.config.doctor);
       return runDoctor(
-        {root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config), forwardHealth: () => this.forwardHealth(), useRelay: serial => this.useRelay(serial)},
+        {root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config), forwardHealth: () => this.forwardHealth(),
+          useRelay: serial => this.useRelay(serial),
+          systemDialogs: async () => {
+            const out: {serial: string; title: string}[] = [];
+            for (const d of (await this.android?.devices().catch(() => [])) ?? []) {
+              if (d.state !== 'device') continue;
+              const ui = await this.ui(d.serial);
+              const title = ui.systemDialog(await ui.snapshot({system: true}));
+              if (title) out.push({serial: d.serial, title});
+            }
+            return out;
+          },
+          dismissDialog: async serial => (await (await this.ui(serial)).dismissSystemDialog()) ?? 'no dialog',
+        },
         {fix: bool(p, 'fix'), only: list(p, 'only'), extra},
       );
     },

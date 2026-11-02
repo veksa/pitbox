@@ -180,6 +180,21 @@ export const formatResult = (method: string, r: unknown): string => {
       if (!f.apps.length) return 'no app connected to the dev server — not started, a release build, or talking to another server';
       return f.apps.map(a => (a.fresh ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}` : `✗ app ${a.id} (${a.platform}) is stale: ${a.note}`)).join('\n');
     }
+    case 'appTree': {
+      type TreeNode = {s: number; d: number; c: string; id?: string; l?: string; t?: string; hidden?: boolean};
+      const apps = x.apps as {app: number; error?: string; surfaces?: number; truncated?: boolean; nodes?: TreeNode[]}[];
+      const line = (n: TreeNode) => `${'  '.repeat(Math.min(n.d, 8))}${n.c}${n.t ? ` ${JSON.stringify(n.t.slice(0, 80))}` : ''}${n.l ? ` (${n.l.slice(0, 60)})` : ''}${n.id ? ` #${n.id}` : ''}${n.hidden ? ' [hidden from accessibility]' : ''}`;
+      // Depth relative to the shallowest node: wrappers above the first labelled node add nothing.
+      return (
+        apps
+          .map(a => {
+            if (a.error) return `app ${a.app}: ${a.error}`;
+            const min = Math.min(...(a.nodes ?? []).map(n => n.d));
+            return [`app ${a.app} · ${a.surfaces} surface(s) · ${a.nodes?.length} nodes${a.truncated ? ' (truncated)' : ''}`, ...(a.nodes ?? []).map(n => line({...n, d: n.d - min}))].join('\n');
+          })
+          .join('\n') || 'no app connected'
+      );
+    }
     case 'appLog':
       return (x.apps as {app: number; platform?: string; entries: Record<string, unknown>[]}[])
         .map(a => [`app ${a.app} (${a.platform ?? '?'})`, ...a.entries.map(e => (e.ws ? `  ws ${e.ev} ${e.ws}${e.rule ? ` [${e.rule}]` : ''}` : `  ${e.m} ${e.url} → ${e.s} in ${e.ms} ms${e.rule ? ` [${e.rule}]` : ''}`))].join('\n'))

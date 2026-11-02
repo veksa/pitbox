@@ -56,6 +56,7 @@ export const startMcp = async (opts: {config?: string} = {}) => {
     tool('dev_reload', 'Ask every connected app to reload its JS.', {}, 'devReload');
     tool('qr', 'The link that points the app at this dev server, as a QR image file (for a phone camera) and as text (for adb or a simulator). lan=true for phones on Wi-Fi.', {lan: z.boolean().optional()}, 'qr');
     tool('fresh', 'Does the running app execute the newest code? Reported from inside the app; answers stale with the reason (old bundle, rebuild pending) before you debug a fix that never arrived.', {}, 'fresh');
+    tool('app_tree', 'The UI as React renders it, from inside the app: components with testIDs, accessibility labels and text, including parts the accessibility tree does not show (XR panels, views hidden from accessibility). No coordinates.', {limit: z.number().int().optional()}, 'appTree');
     tool('app_network', "The app's recent network requests (method, URL, status, time) and socket events, from inside the app.", {limit: z.number().int().optional()}, 'appLog');
     tool(
       'net',
