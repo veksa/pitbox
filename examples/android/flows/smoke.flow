@@ -1,0 +1,16 @@
+# The example app end to end: input, the stand over forwarded ports, scrolling, a deep link.
+tool reset
+open!
+wait id=title 20
+fill id=name "Ada"
+press id=greet
+expect text="Hello, Ada"
+press id=fetch
+wait text~="hello from the stand" 10
+tool hits contains "1"
+scroll down until text="Row 40"
+expect label="row 40"
+goto detail id=42
+wait text="Detail 42" 10
+key back
+expect id=content_list

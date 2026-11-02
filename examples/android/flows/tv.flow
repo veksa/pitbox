@@ -1,0 +1,14 @@
+# A remote instead of a finger: focus moves with the D-pad, center presses.
+open!
+wait id=title 30
+# Nothing has focus until the first key: it lands on the first focusable view.
+key down
+expect focus id=name
+key down
+expect focus id=greet
+key center
+expect text="Hello, stranger"
+key down
+expect focus id=fetch
+key center
+wait text~="hello from the stand" 10

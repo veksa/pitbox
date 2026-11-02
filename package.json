@@ -31,7 +31,8 @@
     "compile": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "check-all": "yarn compile && yarn test",
-    "build-runner": "node scripts/build-runner.mjs"
+    "build-runner": "node scripts/build-runner.mjs",
+    "e2e": "node scripts/e2e.mjs"
   },
   "keywords": [
     "mcp",

@@ -18,3 +18,8 @@ android/.cxx/
 xcuserdata/
 .build/
 .swiftpm/
+examples/android/build/
+examples/android/app/build/
+examples/android/.gradle/
+examples/android/.kotlin/
+examples/android/local.properties

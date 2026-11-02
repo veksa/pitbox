@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Debug builds reach the dev server and the local stand over plain HTTP. -->
+    <application android:usesCleartextTraffic="true" tools:targetApi="28" />
+</manifest>
