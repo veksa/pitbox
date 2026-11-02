@@ -6,7 +6,7 @@ import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, swipeArea} from './ui/snapshot.ts';
-import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind} from './drivers/apple/driver.ts';
+import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
   devices: {
@@ -137,5 +137,17 @@ describe('apple driver', () => {
   it('builds a snapshot from a window without a package', () => {
     const snap = buildSnapshot([{type: 'ime', title: 'keyboard'} as never], [{p: -1, w: 0, c: 'Keyboard', b: [0, 500, 400, 800]}]);
     expect(snap.nodes).toHaveLength(1);
+  });
+
+  it('finds the window app of old and new Xcode layouts', () => {
+    const xcode = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-xcode-'));
+    const dev = path.join(xcode, 'Contents', 'Developer');
+    fs.mkdirSync(dev, {recursive: true});
+    expect(simulatorWindowApp(dev)).toBeUndefined();
+    fs.mkdirSync(path.join(xcode, 'Contents', 'Applications', 'DeviceHub.app'), {recursive: true});
+    expect(simulatorWindowApp(dev)).toBe(path.join(xcode, 'Contents', 'Applications', 'DeviceHub.app'));
+    fs.mkdirSync(path.join(dev, 'Applications', 'Simulator.app'), {recursive: true});
+    expect(simulatorWindowApp(dev)).toBe(path.join(dev, 'Applications', 'Simulator.app'));
+    fs.rmSync(xcode, {recursive: true, force: true});
   });
 });

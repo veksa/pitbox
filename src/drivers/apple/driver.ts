@@ -26,6 +26,10 @@ export const runtimeName = (id: string): string => {
   return m ? `${m[1]} ${m[2]!.replace(/-/g, '.')}` : id;
 };
 
+/** The app that shows simulator windows: Simulator.app in Xcode 26 and before, DeviceHub.app from Xcode 27. */
+export const simulatorWindowApp = (developerDir: string): string | undefined =>
+  [path.join(developerDir, 'Applications', 'Simulator.app'), path.join(path.dirname(developerDir), 'Applications', 'DeviceHub.app')].find(p => fs.existsSync(p));
+
 export const simKind = (runtime: string, deviceType: string): SimKind => {
   if (/tvOS/i.test(runtime)) return 'tv';
   if (/xrOS|visionOS/i.test(runtime)) return 'xr';
@@ -129,14 +133,14 @@ export class AppleDriver {
     throw new AppleError('several simulators booted', `pass a device: ${booted.map(s => s.udid).join(', ')}`);
   }
 
-  async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number} = {}): Promise<{udid: string; name: string; ms: number; already: boolean}> {
+  async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number} = {}): Promise<{udid: string; name: string; ms: number; already: boolean; note?: string}> {
     const t0 = Date.now();
     const sims = await this.simulators();
     const sim = pickSimulator(sims, selector);
     if (!sim) throw new AppleError(`unknown simulator "${selector}"`, `available: ${[...new Set(sims.map(s => s.name))].join(', ') || 'none — create one in Xcode › Devices'}`);
     if (sim.state === 'Booted' && !opts.wipe) {
-      if (!opts.headless) await this.#showWindow(sim.udid);
-      return {udid: sim.udid, name: sim.name, ms: 0, already: true};
+      const note = opts.headless ? undefined : await this.#showWindow(sim.udid);
+      return {udid: sim.udid, name: sim.name, ms: 0, already: true, ...(note ? {note} : {})};
     }
     if (opts.wipe) {
       if (sim.state === 'Booted') await this.simctl(['shutdown', sim.udid], {timeoutMs: 60_000});
@@ -147,13 +151,20 @@ export class AppleDriver {
     const timeoutMs = opts.timeoutMs ?? 240_000;
     const status = await this.simctl(['bootstatus', sim.udid, '-b'], {timeoutMs});
     if (status.timedOut) throw new AppleError(`${sim.name} did not finish booting in ${Math.round(timeoutMs / 1000)}s`, 'try `boot --wipe`');
-    if (!opts.headless) await this.#showWindow(sim.udid);
-    return {udid: sim.udid, name: sim.name, ms: Date.now() - t0, already: false};
+    const note = opts.headless ? undefined : await this.#showWindow(sim.udid);
+    return {udid: sim.udid, name: sim.name, ms: Date.now() - t0, already: false, ...(note ? {note} : {})};
   }
 
   /** Brings up Simulator.app on the device; the simulator itself runs without it. */
-  async #showWindow(udid: string) {
-    await run('open', ['-g', '-a', 'Simulator', '--args', '-CurrentDeviceUDID', udid], {timeoutMs: 10_000});
+  #windowApp?: Promise<string | undefined>;
+
+  /** Shows the simulator's window; a note when there is nothing to show it with. */
+  async #showWindow(udid: string): Promise<string | undefined> {
+    this.#windowApp ??= run('xcode-select', ['-p'], {timeoutMs: 10_000}).then(r => simulatorWindowApp(r.stdout.trim()));
+    const app = await this.#windowApp;
+    if (!app) return 'no Simulator or DeviceHub app in this Xcode: the simulator runs without a window';
+    const r = await run('open', ['-g', '-a', app, '--args', '-CurrentDeviceUDID', udid], {timeoutMs: 10_000});
+    return r.code === 0 ? undefined : `could not open ${path.basename(app)}: ${r.stderr.trim().split('\n').pop()}`;
   }
 
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {

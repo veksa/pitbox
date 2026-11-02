@@ -257,7 +257,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'tools':
       return (r as {name: string; description: string; params: Record<string, string>}[]).map(t => `${t.name}(${Object.keys(t.params).join(', ')}) — ${t.description}`).join('\n') || 'no tools configured';
     case 'boot':
-      return x.already ? `${x.avd ?? x.name} already running as ${x.serial ?? x.udid}` : `${x.avd ?? x.name} booted as ${x.serial ?? x.udid} in ${seconds(x.ms as number)}`;
+      return (x.already ? `${x.avd ?? x.name} already running as ${x.serial ?? x.udid}` : `${x.avd ?? x.name} booted as ${x.serial ?? x.udid} in ${seconds(x.ms as number)}`) + (x.note ? `\nnote: ${x.note}` : '');
     case 'install':
       return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
     case 'open':
