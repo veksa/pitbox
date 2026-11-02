@@ -20,7 +20,7 @@ export const runnerSources = (): string => {
   return path.resolve(here, '..', '..', '..', 'runners', 'apple');
 };
 
-const DESTINATIONS: Record<SimKind, string | undefined> = {phone: 'iOS Simulator', tablet: 'iOS Simulator', tv: 'tvOS Simulator', xr: 'visionOS Simulator', watch: undefined};
+const DESTINATIONS: Record<SimKind, string> = {phone: 'iOS Simulator', tablet: 'iOS Simulator', tv: 'tvOS Simulator', xr: 'visionOS Simulator', watch: 'watchOS Simulator'};
 
 /** A hash of the runner's sources: a changed runner is rebuilt without anyone bumping a number. */
 export const sourceHash = (dir: string): string => {
@@ -70,7 +70,6 @@ export const buildRunner = (kind: SimKind): Promise<Built> => {
 const build = async (kind: SimKind): Promise<Built> => {
   const t0 = Date.now();
   const destination = DESTINATIONS[kind];
-  if (!destination) throw new AppleError(`no runner for ${kind} simulators`, 'XCUITest does not run on watchOS');
   const src = runnerSources();
   if (!fs.existsSync(path.join(src, 'PitboxRunner.xcodeproj'))) throw new AppleError(`runner sources missing: ${src}`);
   const xcode = (await run('xcodebuild', ['-version'], {timeoutMs: 20_000})).stdout.match(/Build version (\S+)/)?.[1] ?? 'unknown';

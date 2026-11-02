@@ -12,6 +12,8 @@ final class Commands {
 
   #if os(tvOS)
   static let shellId = "com.apple.HeadBoard"
+  #elseif os(watchOS)
+  static let shellId = "com.apple.Carousel"
   #else
   static let shellId = "com.apple.springboard"
   #endif
@@ -106,6 +108,8 @@ final class Commands {
     let platform = "tvos"
     #elseif os(visionOS)
     let platform = "visionos"
+    #elseif os(watchOS)
+    let platform = "watchos"
     #else
     let platform = "ios"
     #endif

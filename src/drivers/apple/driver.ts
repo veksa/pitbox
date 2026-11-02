@@ -133,7 +133,7 @@ export class AppleDriver {
     const t0 = Date.now();
     const sims = await this.simulators();
     const sim = pickSimulator(sims, selector);
-    if (!sim) throw new AppleError(`unknown simulator "${selector}"`, `available: ${[...new Set(sims.filter(s => s.kind !== 'watch').map(s => s.name))].join(', ') || 'none — create one in Xcode › Devices'}`);
+    if (!sim) throw new AppleError(`unknown simulator "${selector}"`, `available: ${[...new Set(sims.map(s => s.name))].join(', ') || 'none — create one in Xcode › Devices'}`);
     if (sim.state === 'Booted' && !opts.wipe) {
       if (!opts.headless) await this.#showWindow(sim.udid);
       return {udid: sim.udid, name: sim.name, ms: 0, already: true};

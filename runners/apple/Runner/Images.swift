@@ -1,6 +1,7 @@
 // Screen images reduced on the device: a downscaled JPEG, a brightness grid for visual comparison, and
 // per-frame brightness and motion for media checks. Rectangles come in screen points.
 
+import ImageIO
 import UIKit
 import XCTest
 
@@ -42,18 +43,20 @@ enum Images {
     CGRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
   }
 
+  /// Downscaled with CoreGraphics and encoded with ImageIO: UIKit's renderer does not exist on watchOS.
   static func jpeg(scale: Double, quality: Double) throws -> [String: Any] {
     let (cg, _) = screen()
     let w = max(1, Int(Double(cg.width) * scale))
     let h = max(1, Int(Double(cg.height) * scale))
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    let out = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).jpegData(withCompressionQuality: CGFloat(quality)) { ctx in
-      // UIKit's y axis points down; draw through UIImage to keep the picture upright.
-      UIImage(cgImage: cg).draw(in: CGRect(x: 0, y: 0, width: w, height: h))
-      _ = ctx
-    }
-    return ["width": w, "height": h, "jpeg": out.base64EncodedString()]
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw RunnerError("no bitmap context") }
+    ctx.interpolationQuality = .medium
+    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+    guard let small = ctx.makeImage() else { throw RunnerError("downscale failed") }
+    let out = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { throw RunnerError("no jpeg encoder") }
+    CGImageDestinationAddImage(dest, small, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+    if !CGImageDestinationFinalize(dest) { throw RunnerError("jpeg encoding failed") }
+    return ["width": w, "height": h, "jpeg": (out as Data).base64EncodedString()]
   }
 
   static func fingerprint(cols: Int, masks: [CGRect]) throws -> [String: Any] {

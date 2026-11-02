@@ -676,7 +676,7 @@ export class Engine {
       return {
         devices: a ? await a.devices() : [],
         avds: a ? a.avds() : [],
-        ...(s ? {simulators: sims.filter(x => x.kind !== 'watch').map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state}))} : {}),
+        ...(s ? {simulators: sims.map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state}))} : {}),
       };
     },
 
