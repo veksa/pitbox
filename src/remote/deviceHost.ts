@@ -100,7 +100,7 @@ export const createDeviceHost = (token: string) => {
       return {};
     },
     // `ageMs` instead of a timestamp: the two machines' clocks need not agree.
-    crashes: async p => ({events: await watcher(need(p, 'udid'), s(p, 'bundleId')).since(Date.now() - Number(p.ageMs ?? 0)), now: Date.now()}),
+    crashes: async p => ({events: await watcher(need(p, 'udid'), s(p, 'bundleId')).since(Date.now() - Number(p.ageMs ?? 0), p.after as string[] | undefined, p.final === true), now: Date.now()}),
   };
 
   const server = http.createServer(async (req, res) => {

@@ -29,7 +29,7 @@ const PLAN = {
   tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke'], fails: []},
   tv: {platform: 'tvOS Simulator', scheme: 'PitboxExample', app: 'Debug-appletvsimulator/PitboxExample.app', flows: ['tv'], fails: [], focusMap: true},
   watch: {platform: 'watchOS Simulator', scheme: 'PitboxExampleWatch', app: 'Debug-watchsimulator/PitboxExampleWatch.app', flows: ['watch'], fails: ['crash']},
-  xr: {platform: 'visionOS Simulator', scheme: 'PitboxExample', app: 'Debug-xrsimulator/PitboxExample.app', flows: ['smoke'], fails: []},
+  xr: {platform: 'visionOS Simulator', scheme: 'PitboxExample', app: 'Debug-xrsimulator/PitboxExample.app', flows: ['smoke'], fails: ['crash']},
 };
 
 const pitbox = (args, opts = {}) => {

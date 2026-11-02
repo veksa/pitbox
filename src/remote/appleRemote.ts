@@ -151,9 +151,9 @@ export class RemoteAppleCrashes implements CrashSource {
     this.#begun = this.#remote.call('crashBegin', {udid: this.#udid, bundleId: this.#bundleId, front}, 15_000).catch(() => undefined);
   }
 
-  async since(t: number): Promise<AppEvent[]> {
+  async since(t: number, after?: string[], final?: boolean): Promise<AppEvent[]> {
     await this.#begun;
-    const r = await this.#remote.call<{events: AppEvent[]; now: number}>('crashes', {udid: this.#udid, bundleId: this.#bundleId, ageMs: Date.now() - t}, 30_000);
+    const r = await this.#remote.call<{events: AppEvent[]; now: number}>('crashes', {udid: this.#udid, bundleId: this.#bundleId, ageMs: Date.now() - t, after, final}, 90_000);
     // The Mac's times onto this machine's clock.
     const shift = Date.now() - r.now;
     return r.events.map(e => ({...e, at: e.at + shift}));

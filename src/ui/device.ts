@@ -41,7 +41,9 @@ export type CrashSource = {
   stop(): void;
   /** Called when an action begins with the apps the last snapshot showed, for sources that compare before and after. */
   begin?(front?: string[]): void;
-  since(t: number): AppEvent[] | Promise<AppEvent[]>;
+  /** `after`: the apps on screen once the action settled. */
+  /** `final`: a failed flow asks; a crash just after the last action still has its report on the way. */
+  since(t: number, after?: string[], final?: boolean): AppEvent[] | Promise<AppEvent[]>;
 };
 
 const noCrashes: CrashSource = {start: () => undefined, stop: () => undefined, since: () => []};
@@ -135,8 +137,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   }
 
   /** Crashes, ANRs and JS errors of the app since `since`, for an action's result. */
-  async crashesSince(since: number): Promise<AppEvent[]> {
-    const [native, js] = await Promise.all([Promise.resolve(this.#crashes.since(since)).catch(() => []), this.#hooks.jsErrors?.(since).catch(() => []) ?? []]);
+  async crashesSince(since: number, final = false): Promise<AppEvent[]> {
+    const [native, js] = await Promise.all([Promise.resolve(this.#crashes.since(since, this.last?.windows.map(w => w.pkg), final)).catch(() => []), this.#hooks.jsErrors?.(since).catch(() => []) ?? []]);
     return [...native, ...js].sort((a, b) => a.at - b.at);
   }
 

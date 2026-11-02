@@ -209,7 +209,7 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
       if (depth === 0) {
         try {
           const ui = await host.ui();
-          const crashes = await ui.crashesSince(t0);
+          const crashes = await ui.crashesSince(t0, true);
           if (crashes.length) failed.crashes = crashes;
           failed.screen = (await ui.snapshot()).lines.slice(0, 40);
           failed.screenshot = await host.screenshot(`failed-line-${s.line}`);

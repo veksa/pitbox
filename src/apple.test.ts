@@ -108,6 +108,33 @@ describe('apple driver', () => {
     expect(found.map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
   });
 
+  it('waits for a late report on visionOS when the window is gone though the process is still listed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    // launchctl still lists the crashed app while its report is written.
+    const driver = {
+      simctl: async () => ({stdout: '123\t0\tUIKitApplication:com.example.app[ab12]\n', stderr: '', code: 0, timedOut: false, ms: 0}),
+      simulators: async () => [{udid: 'AAA', kind: 'xr'}],
+    };
+    const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+    w.begin(['com.example.app']);
+    setTimeout(() => fs.writeFileSync(path.join(dir, 'MyApp-2026-01-02-100001.ips'), ips()), 600);
+    const found = await w.since(Date.parse('2026-01-02T10:00:00+02:00'), ['com.apple.SurfBoard']);
+    expect(found.map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
+    // With the app still on screen nothing is waited for.
+    w.begin(['com.example.app']);
+    expect(await w.since(Date.now(), ['com.example.app'])).toEqual([]);
+  });
+
+  it('waits for the report of a crash that came after the last action when a flow failed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
+    const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+    setTimeout(() => fs.writeFileSync(path.join(dir, 'MyApp-2026-01-02-100001.ips'), ips()), 600);
+    const t = Date.parse('2026-01-02T10:00:00+02:00');
+    expect(await w.since(t)).toEqual([]);
+    expect((await w.since(t, undefined, true)).map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
+  });
+
   it('lists booted simulators as online devices and idle ones by name', () => {
     const sims = [
       {udid: 'AAA', name: 'iPhone 17', os: 'iOS 27.0', kind: 'phone', state: 'Booted'},

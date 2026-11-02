@@ -124,13 +124,23 @@ export class AppleCrashWatcher {
     return out.sort((a, b) => a.at - b.at);
   }
 
-  async since(since: number): Promise<AppEvent[]> {
+  /**
+   * visionOS keeps a crashed app's process listed while it writes the report, which takes up to a minute: there
+   * the app is gone when its window is.
+   */
+  #slow?: Promise<boolean>;
+
+  async since(since: number, after?: string[], final = false): Promise<AppEvent[]> {
     let found = this.#scan(since);
     const was = await this.#wasRunning;
     this.#wasRunning = undefined;
+    if (found.length || !(was || final)) return found;
+    this.#slow ??= this.#driver.simulators().then(sims => sims.find(s => s.udid === this.#udid)?.kind === 'xr').catch(() => false);
+    const slow = await this.#slow;
+    const gone = (slow && !!after && !!this.#bundleId && !after.includes(this.#bundleId)) || !(await this.#running().catch(() => true));
     // The app died during the action and its report is not written yet: it takes the reporter a few seconds.
-    if (!found.length && was && !(await this.#running().catch(() => true))) {
-      const deadline = Date.now() + 8000;
+    if (gone) {
+      const deadline = Date.now() + (slow ? 60_000 : 8000);
       while (!found.length && Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 400));
         found = this.#scan(since);
