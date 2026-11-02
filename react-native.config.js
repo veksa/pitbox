@@ -1,5 +1,5 @@
-// React Native (and Expo) autolinking: the connect library under android/. iOS comes with the Apple driver.
-module.exports = {
+// React Native (and Expo) autolinking: the connect library under android/. ESM, as the package is "type": "module".
+export default {
   dependency: {
     platforms: {
       android: {
