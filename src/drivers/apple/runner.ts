@@ -51,8 +51,23 @@ const freePort = () =>
     });
   });
 
+type Built = {xctestrun: string; built: boolean; ms: number};
+
+/** One build per platform and source hash for the daemon's life: a failed build is not retried on every call. */
+const builds = new Map<string, Promise<Built>>();
+
 /** Builds (or finds in the cache) the runner for a simulator kind; returns its .xctestrun file. */
-export const buildRunner = async (kind: SimKind): Promise<{xctestrun: string; built: boolean; ms: number}> => {
+export const buildRunner = (kind: SimKind): Promise<Built> => {
+  const key = `${kind === 'tablet' ? 'phone' : kind}:${sourceHash(runnerSources())}`;
+  let b = builds.get(key);
+  if (!b) {
+    b = build(kind);
+    builds.set(key, b);
+  }
+  return b;
+};
+
+const build = async (kind: SimKind): Promise<Built> => {
   const t0 = Date.now();
   const destination = DESTINATIONS[kind];
   if (!destination) throw new AppleError(`no runner for ${kind} simulators`, 'XCUITest does not run on watchOS');
@@ -74,7 +89,8 @@ export const buildRunner = async (kind: SimKind): Promise<{xctestrun: string; bu
   );
   const file = find();
   if (r.code !== 0 || !file) {
-    const why = `${r.stdout}\n${r.stderr}`.split('\n').filter(l => /error:/.test(l)).slice(0, 3).join('\n') || r.stderr.trim().split('\n').slice(-3).join('\n');
+    const errors = [...new Set(`${r.stdout}\n${r.stderr}`.split('\n').filter(l => /^\S.*error:/.test(l)).map(l => l.replace(`${src}/`, '')))];
+    const why = errors.slice(0, 3).join('\n') || r.stderr.trim().split('\n').slice(-3).join('\n');
     throw new AppleError(`runner build failed for ${destination}:\n${why}`, /platform.*not installed|Unable to find a destination/i.test(r.stderr) ? `install the ${destination} runtime in Xcode › Settings › Components` : undefined);
   }
   return {xctestrun: path.join(dir, 'Build', 'Products', file), built: true, ms: Date.now() - t0};
@@ -141,6 +157,7 @@ export class AppleRunner {
       }
       await this.#connect(port).catch(() => new Promise(r => setTimeout(r, 400)));
     }
+    if (this.bundleId) await this.call('activate', {}, 30_000).catch(() => undefined);
   }
 
   #connect(port: number) {

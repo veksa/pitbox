@@ -55,18 +55,14 @@ final class Commands {
     case "tree": return try tree(req, maxAge: 0.05).value
     case "idle": return ["idle": try idle(req, quiet: double(req, "quiet", 300) / 1000, timeout: double(req, "timeout", 3000) / 1000)]
     case "focus": return try focus(req)
-    case "tap":
-      try noTouchOnTv()
-      coordinate(req).tap()
+    case "tap", "doubletap", "longpress":
+      #if os(tvOS)
+      throw RunnerError("tvOS has no touch — use key up/down/left/right/select")
+      #else
+      let c = coordinate(req)
+      if cmd == "tap" { c.tap() } else if cmd == "doubletap" { c.doubleTap() } else { c.press(forDuration: double(req, "hold", 800) / 1000) }
       return [:]
-    case "doubletap":
-      try noTouchOnTv()
-      coordinate(req).doubleTap()
-      return [:]
-    case "longpress":
-      try noTouchOnTv()
-      coordinate(req).press(forDuration: double(req, "hold", 800) / 1000)
-      return [:]
+      #endif
     case "swipe": return try swipe(req)
     case "touch": throw RunnerError("XCUITest cannot hold a finger between calls — use swipe or longpress")
     case "text": return try text(req)
@@ -75,6 +71,13 @@ final class Commands {
     case "fingerprint": return try Images.fingerprint(cols: Int(double(req, "cols", 54)), masks: rects(req["masks"]))
     case "frames": return try Images.frames(bounds: rects(req["bounds"].map { [$0] }).first, count: Int(double(req, "count", 4)), interval: double(req, "interval", 400) / 1000, size: Int(double(req, "size", 32)))
     case "relays": return ["relayed": [Int]()]
+    case "activate":
+      // Starting the runner puts its own process in front; bring the app back when it was running.
+      if let id = req["app"] as? String, !id.isEmpty {
+        let a = app(id)
+        if a.state != .notRunning && a.state != .unknown { a.activate() }
+      }
+      return [:]
     default: throw RunnerError("unknown command: \(cmd)")
     }
   }
@@ -88,12 +91,6 @@ final class Commands {
     return list.filter { $0.count == 4 }.map { b in
       CGRect(x: b[0].doubleValue, y: b[1].doubleValue, width: b[2].doubleValue - b[0].doubleValue, height: b[3].doubleValue - b[1].doubleValue)
     }
-  }
-
-  private func noTouchOnTv() throws {
-    #if os(tvOS)
-    throw RunnerError("tvOS has no touch — use key up/down/left/right/select")
-    #endif
   }
 
   private func info() -> [String: Any] {
@@ -153,10 +150,12 @@ final class Commands {
     return (value, signature)
   }
 
-  private func walk(_ n: XCUIElementSnapshot, parent: Int, window: Int, screen: CGRect, all: Bool, out: inout [[String: Any]], hasher: inout Hasher, depth: Int) {
+  private func walk(_ n: XCUIElementSnapshot, parent: Int, window: Int, screen: CGRect, all: Bool, out: inout [[String: Any]], hasher: inout Hasher, depth: Int, focused: Bool = false) {
     if depth > 80 { return }
     var index = parent
     let f = n.frame
+    // A skipped wrapper hands its focus down to the control that stands for it.
+    var passFocus = false
     let visible = !f.isEmpty && f.intersects(screen) && n.elementType != .application
     if visible {
       let type = n.elementType
@@ -168,6 +167,7 @@ final class Commands {
       // A wrapper without its own text around a control of the same size (a cell around its button) adds a
       // line that says nothing; the control stands for both.
       let wrapper = label.isEmpty && value.isEmpty && ident.isEmpty && Self.wraps(n, frame: f, depth: 6)
+      if wrapper && (n.hasFocus || focused) { passFocus = true }
       if !wrapper && (all || interactive || !label.isEmpty || !value.isEmpty || !ident.isEmpty) {
         let b = [Int(f.minX.rounded()), Int(f.minY.rounded()), Int(f.maxX.rounded()), Int(f.maxY.rounded())]
         var o: [String: Any] = ["p": parent, "w": window, "c": Self.typeNames[type] ?? "Other", "b": b]
@@ -186,9 +186,10 @@ final class Commands {
         var flags = ""
         if Self.tappable.contains(type) { flags += "c" }
         #if os(tvOS)
-        if interactive { flags += "f" }
+        // Focus lands on a list's items, never on the list.
+        if Self.tappable.contains(type) || isEditable { flags += "f" }
         #endif
-        if n.hasFocus { flags += "F" }
+        if n.hasFocus || (focused && (Self.tappable.contains(type) || isEditable)) { flags += "F" }
         if isEditable { flags += "e" }
         if Self.scrollable.contains(type) { flags += "s" }
         if Self.checkable.contains(type) {
@@ -208,7 +209,7 @@ final class Commands {
       }
     }
     for child in n.children {
-      walk(child, parent: index, window: window, screen: screen, all: all, out: &out, hasher: &hasher, depth: depth + 1)
+      walk(child, parent: index, window: window, screen: screen, all: all, out: &out, hasher: &hasher, depth: depth + 1, focused: passFocus || (focused && index == parent))
     }
   }
 
@@ -240,28 +241,33 @@ final class Commands {
 
   private func describe(_ e: XCUIElement) -> [String: Any] {
     let f = e.frame
-    var o: [String: Any] = ["c": Self.typeNames[e.elementType] ?? "Other", "b": [Int(f.minX), Int(f.minY), Int(f.maxX), Int(f.maxY)]]
+    var o: [String: Any] = ["c": Self.typeNames[e.elementType] ?? "Other", "b": [Int(f.minX.rounded()), Int(f.minY.rounded()), Int(f.maxX.rounded()), Int(f.maxY.rounded())]]
     if !e.identifier.isEmpty { o["id"] = e.identifier }
     if !e.label.isEmpty { o["t"] = e.label }
     return o
   }
 
+  /// The focused node as the tree reports it, so the host can match it against snapshot nodes exactly.
   private func focus(_ req: [String: Any]) throws -> [String: Any] {
-    let (a, _) = front(req)
     #if os(tvOS)
-    let focused = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasFocus == true"))
+    let nodes = (try tree(req, maxAge: 0).value["nodes"] as? [[String: Any]]) ?? []
+    if let hit = nodes.last(where: { ($0["f"] as? String ?? "").contains("F") }) { return ["input": hit] }
+    return [:]
     #else
-    let focused = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
+    let (a, _) = front(req)
+    let field = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
+    return field.exists ? ["input": describe(field)] : [:]
     #endif
-    return focused.exists ? ["input": describe(focused)] : [:]
   }
 
   // MARK: input
 
+  #if !os(tvOS)
   private func coordinate(_ req: [String: Any], x xKey: String = "x", y yKey: String = "y") -> XCUICoordinate {
     let (a, _) = front(req)
     return a.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: double(req, xKey, 0), dy: double(req, yKey, 0)))
   }
+  #endif
 
   private func swipe(_ req: [String: Any]) throws -> [String: Any] {
     #if os(tvOS)
