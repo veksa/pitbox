@@ -14,8 +14,15 @@ final class Commands {
   static let shellId = "com.apple.HeadBoard"
   #elseif os(watchOS)
   static let shellId = "com.apple.Carousel"
+  #elseif os(visionOS)
+  static let shellId = "com.apple.SurfBoard"
+  /// System alerts (permissions, "Open in …?") come from their own process on visionOS.
+  static let alertsId = "com.apple.RealityNotifications"
   #else
   static let shellId = "com.apple.springboard"
+  #endif
+  #if !os(visionOS)
+  static let alertsId = shellId
   #endif
 
   /// A fresh handle for an app: one kept across a crash and relaunch points at the dead process and hangs
@@ -61,7 +68,7 @@ final class Commands {
     switch cmd {
     case "ping": return ["version": runnerVersion]
     case "shutdown": return [:]
-    case "info": return info()
+    case "info": return info(req)
     case "tree": return try tree(req, maxAge: 0.05).value
     case "idle": return ["idle": try idle(req, quiet: double(req, "quiet", 300) / 1000, timeout: double(req, "timeout", 3000) / 1000)]
     case "focus": return try focus(req)
@@ -69,6 +76,13 @@ final class Commands {
       #if os(tvOS)
       throw RunnerError("tvOS has no touch — use key up/down/left/right/select")
       #else
+      #if os(visionOS)
+      // A synthesized touch at a point does not press a control on visionOS; the control under it is pressed.
+      if let e = control(at: CGPoint(x: double(req, "x", 0), y: double(req, "y", 0)), req) {
+        if cmd == "tap" { e.tap() } else if cmd == "doubletap" { e.doubleTap() } else { e.press(forDuration: double(req, "hold", 800) / 1000) }
+        return [:]
+      }
+      #endif
       let c = coordinate(req)
       if cmd == "tap" { c.tap() } else if cmd == "doubletap" { c.doubleTap() } else { c.press(forDuration: double(req, "hold", 800) / 1000) }
       return [:]
@@ -87,11 +101,12 @@ final class Commands {
       return ["foreground": app(id).wait(for: .runningForeground, timeout: double(req, "timeout", 5000) / 1000)]
     case "confirmOpen":
       // `simctl openurl` asks "Open in <app>?" in the shell before a link reaches the app. The question has two
-      // buttons, the confirming one last; its words depend on the system language. tvOS opens links directly.
+      // buttons, the confirming one last; its words depend on the system language. tvOS opens links directly;
+      // visionOS asks too.
       #if os(tvOS) || os(watchOS)
       return ["confirmed": false]
       #else
-      let alert = app(Self.shellId).alerts.firstMatch
+      let alert = systemAlert()
       guard alert.waitForExistence(timeout: double(req, "timeout", 3000) / 1000) else { return ["confirmed": false] }
       let buttons = alert.buttons.allElementsBoundByIndex
       guard buttons.count == 2 else { return ["confirmed": false] }
@@ -120,8 +135,10 @@ final class Commands {
     }
   }
 
-  private func info() -> [String: Any] {
-    let size = XCUIScreen.main.screenshot().image.size
+  private func info(_ req: [String: Any]) -> [String: Any] {
+    var size = XCUIScreen.main.screenshot().image.size
+    // visionOS has no screen to capture (a 1x1 image): the app's frame is the space its windows live in.
+    if size.width < 10 { size = front(req).0.frame.size }
     #if os(tvOS)
     let platform = "tvos"
     #elseif os(visionOS)
@@ -154,6 +171,15 @@ final class Commands {
   private static let checkable: Set<XCUIElement.ElementType> = [.switch, .toggle, .checkBox, .radioButton]
   private static let scrollable: Set<XCUIElement.ElementType> = [.scrollView, .table, .collectionView]
 
+  /// A system alert over the app; visionOS draws it as a plain element of its notifications process.
+  private func systemAlert() -> XCUIElement {
+    #if os(visionOS)
+    return app(Self.alertsId).otherElements["com.apple.RealityNotifications.CriticalSystemAlert"]
+    #else
+    return app(Self.alertsId).alerts.firstMatch
+    #endif
+  }
+
   /// The keyboard's frame in the tree being built.
   private var keyboard: CGRect?
 
@@ -165,7 +191,9 @@ final class Commands {
     var windows: [[String: Any]] = []
     var hasher = Hasher()
     let root = try a.snapshot()
-    let screen = root.frame.isEmpty ? CGRect(origin: .zero, size: XCUIScreen.main.screenshot().image.size) : root.frame
+    var screen = root.frame.isEmpty ? CGRect(origin: .zero, size: XCUIScreen.main.screenshot().image.size) : root.frame
+    // visionOS's shell has no frame and its screenshot is 1x1: nothing would be on screen.
+    if screen.width < 10 { screen = CGRect(x: -100_000, y: -100_000, width: 200_000, height: 200_000) }
     windows.append(["type": "app", "title": root.label, "pkg": id])
     keyboard = nil
     walk(root, parent: -1, window: 0, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
@@ -179,9 +207,9 @@ final class Commands {
     }
     // System alerts (permissions, notifications) live in the shell, not in the app.
     if id != Self.shellId {
-      let alert = app(Self.shellId).alerts.firstMatch
+      let alert = systemAlert()
       if alert.exists, let snap = try? alert.snapshot() {
-        windows.append(["type": "app", "title": snap.label, "pkg": Self.shellId])
+        windows.append(["type": "app", "title": snap.label, "pkg": Self.alertsId])
         walk(snap, parent: -1, window: windows.count - 1, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
       }
     }
@@ -314,9 +342,47 @@ final class Commands {
   // MARK: input
 
   #if !os(tvOS)
+  #if os(visionOS)
+  /// The smallest control whose frame holds the point, as an element to act on.
+  private func control(at point: CGPoint, _ req: [String: Any]) -> XCUIElement? {
+    element(at: point, req) { Self.tappable.contains($0) || Self.editable.contains($0) }
+  }
+
+  private func scroller(at point: CGPoint, _ req: [String: Any]) -> XCUIElement? {
+    element(at: point, req) { Self.scrollable.contains($0) }
+  }
+
+  private func element(at point: CGPoint, _ req: [String: Any], where wanted: (XCUIElement.ElementType) -> Bool) -> XCUIElement? {
+    let (a, _) = front(req)
+    guard let root = try? a.snapshot() else { return nil }
+    var best: XCUIElementSnapshot?
+    func visit(_ n: XCUIElementSnapshot) {
+      if wanted(n.elementType) && n.frame.contains(point) {
+        if best.map({ n.frame.width * n.frame.height < $0.frame.width * $0.frame.height }) ?? true { best = n }
+      }
+      n.children.forEach(visit)
+    }
+    visit(root)
+    guard let n = best else { return nil }
+    let all = a.descendants(matching: n.elementType)
+    let query = n.identifier.isEmpty ? all.matching(NSPredicate(format: "label == %@", n.label)) : all.matching(identifier: n.identifier)
+    return query.allElementsBoundByIndex.first { Self.same($0.frame, n.frame) }
+  }
+  #endif
+
   private func coordinate(_ req: [String: Any], x xKey: String = "x", y yKey: String = "y") -> XCUICoordinate {
     let (a, _) = front(req)
-    return a.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: double(req, xKey, 0), dy: double(req, yKey, 0)))
+    let x = double(req, xKey, 0), y = double(req, yKey, 0)
+    #if os(visionOS)
+    // An event from the application has no scene on visionOS; it goes through the window under the point.
+    let point = CGPoint(x: x, y: y)
+    // The smallest window under the point: the scene's own, not the full-space ones around it.
+    let under = a.windows.allElementsBoundByIndex.filter { $0.frame.contains(point) }
+    if let w = under.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) {
+      return w.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: x - w.frame.minX, dy: y - w.frame.minY))
+    }
+    #endif
+    return a.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0)).withOffset(CGVector(dx: x, dy: y))
   }
   #endif
 
@@ -324,10 +390,17 @@ final class Commands {
     #if os(tvOS)
     throw RunnerError("tvOS has no touch — use key up/down/left/right")
     #else
-    let from = coordinate(req, x: "x1", y: "y1")
-    let to = coordinate(req, x: "x2", y: "y2")
     let dx = double(req, "x2", 0) - double(req, "x1", 0)
     let dy = double(req, "y2", 0) - double(req, "y1", 0)
+    #if os(visionOS)
+    // A drag between points does not scroll on visionOS; the scroller under the start swipes itself.
+    if let e = scroller(at: CGPoint(x: double(req, "x1", 0), y: double(req, "y1", 0)), req) {
+      if abs(dy) >= abs(dx) { dy < 0 ? e.swipeUp(velocity: .slow) : e.swipeDown(velocity: .slow) } else { dx < 0 ? e.swipeLeft(velocity: .slow) : e.swipeRight(velocity: .slow) }
+      return [:]
+    }
+    #endif
+    let from = coordinate(req, x: "x1", y: "y1")
+    let to = coordinate(req, x: "x2", y: "y2")
     let seconds = max(0.05, double(req, "duration", 300) / 1000)
     let velocity = max(100, (dx * dx + dy * dy).squareRoot() / seconds)
     from.press(forDuration: 0.03, thenDragTo: to, withVelocity: XCUIGestureVelocity(CGFloat(velocity)), thenHoldForDuration: 0)
@@ -338,7 +411,18 @@ final class Commands {
   private func text(_ req: [String: Any]) throws -> [String: Any] {
     let (a, _) = front(req)
     let text = req["text"] as? String ?? ""
-    let field = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
+    var field = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
+    // visionOS does not report keyboard focus: the field the host aimed at, by its bounds. Typing into the
+    // element focuses it.
+    if !field.exists, let b = rects(req["bounds"].map { [$0] }).first {
+      let fields = a.descendants(matching: .any).matching(NSPredicate(format: "elementType IN %@", Self.editable.map { $0.rawValue })).allElementsBoundByIndex
+      if let hit = fields.first(where: { Self.same($0.frame, b) }) {
+        field = hit
+        #if !os(tvOS)
+        hit.tap()
+        #endif
+      }
+    }
     guard field.exists else { return ["set": false] }
     if !(req["append"] as? Bool ?? false) {
       let current = (field.value as? String) ?? ""
