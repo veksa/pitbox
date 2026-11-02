@@ -1,7 +1,7 @@
 import {defineConfig} from '@veksa/pitbox';
 
 export default defineConfig({
-  app: {android: 'dev.pitbox.rnexample', scheme: 'pitboxexample-rn'},
+  app: {android: 'dev.pitbox.rnexample', apple: 'dev.pitbox.rnexample', scheme: 'pitboxexample-rn'},
   devserver: {adapter: 'metro', bytecode: true, port: 8095},
   services: {
     stand: {start: 'node ../stand/server.mjs', health: 'http://127.0.0.1:4100/health', expose: 4100},
