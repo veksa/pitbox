@@ -157,7 +157,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'posture':
       return `${x.serial}: ${x.posture === 'reset' ? 'posture back to the hinge' : `posture ${x.posture}`} (states: ${(x.states as string[]).join(', ')})`;
     case 'rotate':
-      return `${x.serial}: ${x.rotation === 'auto' ? 'rotation follows the sensor' : `rotation locked at ${x.rotation}°`}`;
+      return `${x.serial ?? x.udid}: ${x.rotation === 'auto' ? 'rotation follows the sensor' : `rotation locked at ${x.rotation}°`}`;
     case 'window':
       return `${x.serial}: ${x.mode === 'fullscreen' ? 'app fullscreen' : x.mode === 'resize' ? `window resized to ${x.bounds}` : `app in a freeform window${x.bounds ? ` at ${x.bounds}` : ''}`}`;
     case 'snapshot':

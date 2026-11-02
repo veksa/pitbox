@@ -327,7 +327,7 @@ export class Engine {
   /** A change to the screen's shape on an Android device; the device's UI session measures the screen again. */
   async #reshape<T extends Record<string, unknown>>(device: string | undefined, op: (a: AndroidDriver, serial: string) => Promise<T>) {
     const t = await this.#target(device);
-    if (t.platform === 'apple') throw new Error('posture, rotate and window are Android-only for now');
+    if (t.platform === 'apple') throw new Error('posture and window are for Android: an Apple foldable cannot be folded from outside Xcode, and Apple simulators have no desktop windows');
     const r = await op(t.a, t.id);
     this.#uis.get(t.id)?.screenChanged();
     return {serial: t.id, ...r};
@@ -910,7 +910,17 @@ export class Engine {
       (await this.ui(str(p, 'device'))).mouse(req(p, 'action') as 'right' | 'hover' | 'wheel', str(p, 'target'), {direction: str(p, 'direction') as 'up' | 'down' | undefined, steps: num(p, 'steps')}),
     rotary: async (p: Params) => (await this.ui(str(p, 'device'))).rotary((str(p, 'direction') as 'up' | 'down' | undefined) ?? 'down', num(p, 'steps') ?? 3),
     posture: async (p: Params) => this.#reshape(str(p, 'device'), (a, serial) => a.posture(serial, req(p, 'value'))),
-    rotate: async (p: Params) => this.#reshape(str(p, 'device'), (a, serial) => a.rotate(serial, req(p, 'value'))),
+    rotate: async (p: Params) => {
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        // The runner turns the device: simctl has no orientation.
+        const ui = await this.ui(str(p, 'device'));
+        const r = await ui.runner.call<{rotation: string}>('rotate', {value: req(p, 'value')}, 15_000);
+        ui.screenChanged();
+        return {udid: t.id, rotation: r.rotation};
+      }
+      return this.#reshape(str(p, 'device'), (a, serial) => a.rotate(serial, req(p, 'value')));
+    },
     window: async (p: Params) => {
       const [mode, ...rest] = req(p, 'value').split(/\s+/);
       return this.#reshape(str(p, 'device'), (a, serial) => a.window(serial, this.#pkg(p), mode!, rest.join(',') || str(p, 'bounds')));
