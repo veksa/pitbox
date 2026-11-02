@@ -335,7 +335,19 @@ final class Commands {
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
       }
     }
+    let before = req["append"] as? Bool ?? false ? ((field.value as? String) ?? "") : ""
     if !text.isEmpty { field.typeText(text) }
+    // A controlled React Native input re-renders between keystrokes and can drop one that XCUITest typed
+    // meanwhile. Checked, and typed again key by key when the field does not hold what was typed.
+    if field.elementType != .secureTextField, let got = field.value as? String, got != before + text {
+      let shown = got == (field.placeholderValue ?? "") ? "" : got
+      if !shown.isEmpty { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: shown.count)) }
+      for ch in before + text {
+        field.typeText(String(ch))
+        Thread.sleep(forTimeInterval: 0.05)
+      }
+      return ["set": true, "retyped": true]
+    }
     return ["set": true]
   }
 
