@@ -163,6 +163,18 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     const err = pitbox(['run', 'js-error', '--device', avd]);
     head(err.out, 8);
     checks.push({name: 'js error with its source line', ok: err.out.startsWith('✓') && /! JS error: example js error/.test(err.out) && /App\.tsx:\d+:\d+/.test(err.out)});
+    const ev = pitbox(['js', 'eval', 'Promise.resolve(40 + 2)']);
+    head(ev.out, 2);
+    checks.push({name: 'js eval', ok: /^= 42/.test(ev.out)});
+    // A logpoint on the Greet button's line, which runs on every render: it must see the typed name.
+    const greetLine = fs.readFileSync(path.join(rnDir, 'App.tsx'), 'utf8').split('\n').findIndex(l => l.includes('testID="greet"')) + 1;
+    const lp = pitbox(['js', 'log', `App.tsx:${greetLine}`, 'name']);
+    head(lp.out, 2);
+    pitbox(['fill', 'id=name', 'Logpoint', '--device', avd]);
+    const hits = pitbox(['js', 'hits', '-n', '3']);
+    head(hits.out, 4);
+    checks.push({name: 'logpoint sees a local', ok: lp.code === 0 && /"Logpoint"/.test(hits.out)});
+    pitbox(['js', 'clear']);
   });
   pitbox(['down']);
   pitbox(['daemon', 'stop']);
