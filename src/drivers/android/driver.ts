@@ -148,10 +148,12 @@ export class AndroidDriver {
     let r = await this.adb(['install', '-r', '-d', '-g', apk], serial, {timeoutMs: 600_000});
     const out = `${r.stdout}\n${r.stderr}`;
     let replaced = false;
-    if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match/i.test(out)) {
+    // Another signature, or a higher version code on a build that is not debuggable: only uninstalling helps.
+    if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match|INSTALL_FAILED_VERSION_DOWNGRADE/i.test(out)) {
       const pkg = opts.pkg ?? /package (\S+) signatures/i.exec(out)?.[1] ?? /Package (\S+)/.exec(out)?.[1];
       if (!opts.replace || !pkg) {
-        throw new AndroidError('installed app has a different signature', `pass replace=true to uninstall ${pkg ?? 'it'} first (its data is lost)`);
+        const why = /DOWNGRADE/.test(out) ? 'a newer build is installed' : 'installed app has a different signature';
+        throw new AndroidError(why, `pass replace=true to uninstall ${pkg ?? 'it'} first (its data is lost)`);
       }
       await this.adb(['uninstall', pkg], serial, {timeoutMs: 60_000});
       r = await this.adb(['install', '-r', '-d', '-g', apk], serial, {timeoutMs: 600_000});
