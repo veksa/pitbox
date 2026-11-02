@@ -41,6 +41,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
   focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
+  visual <name> [--update] [--mask <selector>]   compare the screen with a baseline (stored on first use)
   media [selector]              is it playing? motion and brightness of a region, compared on the device
 
 flows
@@ -77,7 +78,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -170,6 +171,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'focus', params: {device}};
     case 'focusmap':
       return {method: 'focusMap', params: {device, max: flags.max}};
+    case 'visual':
+      return {method: 'visual', params: {device, name: rest[0], update: flags.update, masks: flags.mask}};
     case 'media':
       return {method: 'media', params: {device, target: rest.join(' ') || undefined, count: flags.count, interval: flags.interval}};
     case 'shot':

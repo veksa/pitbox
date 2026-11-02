@@ -6,6 +6,7 @@ import path from 'node:path';
 import {KEYS, type AndroidDriver} from '../drivers/android/driver.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher, type AppEvent} from '../drivers/android/events.ts';
+import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
 import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
@@ -20,6 +21,8 @@ export type UiHooks = {
 const quote = (s: string) => JSON.stringify(s);
 
 export type FocusMap = {start: string; reached: number; focusable: number; unreached: string[]; traps: string[]; asymmetric: string[]; presses: number; complete: boolean; ms: number};
+
+export type VisualResult = {name: string; status: 'saved' | 'match' | 'changed'; score?: number; changedShare?: number; regions?: Region[]; baseline: string; current?: string};
 
 export type MediaResult = {target?: string; moving: boolean; black: boolean; playing: boolean; motion: number; luma: number};
 
@@ -330,6 +333,34 @@ export class AndroidUi {
     const unreached = focusable.filter(n => !seen.has(keyOf(n)));
     const traps = [...edges.entries()].filter(([k, out]) => out.size === 4 && [...out.values()].every(v => v === k)).map(([k]) => label(seen.get(k)));
     return {start: label(start), reached: seen.size, focusable: focusable.length, unreached: unreached.map(label), traps, asymmetric, presses, complete: presses < maxPresses, ms: Date.now() - t0};
+  }
+
+  /**
+   * Compares the screen with a stored baseline (`dir/name.json` plus a JPEG to look at), or stores it when there
+   * is none or `update` is set. Masked targets (a video, a clock) are blanked on both sides.
+   */
+  async visual(name: string, dir: string, opts: {update?: boolean; masks?: string[]} = {}): Promise<VisualResult> {
+    const snap = await this.snapshot();
+    const masks = (opts.masks ?? []).map(m => {
+      const t = resolveTarget(snap, m);
+      if (!t.node) throw new Error(`mask "${m}" must be a node`);
+      return t.node.b;
+    });
+    const fp = await this.runner.call<Fingerprint>('fingerprint', {cols: 54, masks}, 20_000);
+    const base = path.join(dir, `${name}.json`);
+    fs.mkdirSync(dir, {recursive: true});
+    if (opts.update || !fs.existsSync(base)) {
+      fs.writeFileSync(base, JSON.stringify({cols: fp.cols, rows: fp.rows, width: fp.width, height: fp.height, grid: fp.grid}));
+      await this.screenshot(path.join(dir, `${name}.jpg`), 0.5, 75);
+      this.record(`visual ${name}${(opts.masks ?? []).map(m => ` mask ${m}`).join('')}`);
+      return {name, status: 'saved', baseline: base};
+    }
+    const diff = compareFingerprints(JSON.parse(fs.readFileSync(base, 'utf8')) as Fingerprint, fp);
+    this.record(`visual ${name}${(opts.masks ?? []).map(m => ` mask ${m}`).join('')}`);
+    if (diff.same) return {name, status: 'match', score: diff.score, changedShare: diff.changedShare, baseline: base};
+    const current = path.join(dir, `${name}.current.jpg`);
+    await this.screenshot(current, 0.5, 75);
+    return {name, status: 'changed', score: diff.score, changedShare: diff.changedShare, regions: diff.regions, baseline: base, current};
   }
 
   async focus(): Promise<{input?: UiNode; accessibility?: UiNode}> {

@@ -18,6 +18,7 @@
 //   tool sql query="select 1" contains "1"
 //   state signed-in              restore a named stand state (device snapshot + backend)
 //   device Pixel_8               the following steps run on another device (several devices in one flow)
+//   visual home mask id=player   compare with a stored baseline (stored on the first run)
 //   sleep 500
 //   screenshot [name]
 //   run sign-in user=viewer      another flow file
@@ -102,7 +103,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'state', 'device', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -125,6 +126,7 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'touch':
       case 'state':
       case 'device':
+      case 'visual':
       case 'sleep':
       case 'run':
       case 'tool':

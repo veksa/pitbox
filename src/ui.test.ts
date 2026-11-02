@@ -110,6 +110,7 @@ describe('flows', () => {
       loadFlow: () => 'press text=Next',
       state: async () => undefined,
       setDevice: async (d: string) => void calls.push(`device ${d}`),
+      visual: async () => ({status: 'match'}),
       screenshot: async n => `/shots/${n}.jpg`,
     };
     return {host, calls};
@@ -129,5 +130,19 @@ describe('flows', () => {
     expect(r.failed).toMatchObject({line: 2, step: 'press text=Missing', screenshot: '/shots/failed-line-2.jpg'});
     expect(r.failed?.error).toMatch(/nothing matches/);
     expect(r.failed?.screen?.[0]).toContain('Welcome');
+  });
+});
+
+describe('visual diff', () => {
+  it('matches the same grid and boxes the changed area in screen pixels', async () => {
+    const {compareFingerprints} = await import('./ui/visual.ts');
+    const grid = Array.from({length: 10 * 20}, () => 100);
+    const base = {cols: 10, rows: 20, width: 1000, height: 2000, grid};
+    expect(compareFingerprints(base, {...base, grid: [...grid]}).same).toBe(true);
+    const changed = [...grid];
+    for (const i of [33, 34, 43, 44]) changed[i] = 230;
+    const d = compareFingerprints(base, {...base, grid: changed});
+    expect(d.same).toBe(false);
+    expect(d.regions).toEqual([[300, 300, 500, 500]]);
   });
 });

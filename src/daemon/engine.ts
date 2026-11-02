@@ -170,6 +170,10 @@ export class Engine {
     return ui;
   }
 
+  #visualDir() {
+    return path.resolve(this.#loaded.root, this.config.visual ?? 'visual');
+  }
+
   #flowsDir() {
     return path.resolve(this.#loaded.root, this.config.flows ?? 'flows');
   }
@@ -199,6 +203,7 @@ export class Engine {
       signIn: user => runFlow(this.#flowHost(device), this.#loadFlow(this.#needSignIn()), {user}),
       tool: (name, params) => this.methods.tool({name, params}) as Promise<{code: number | null; output: string}>,
       loadFlow: name => this.#loadFlow(name),
+      visual: async (name, masks) => (await this.ui(device)).visual(name, this.#visualDir(), {masks}),
       state: async name => {
         await this.methods.stateRestore({name, device});
       },
@@ -684,6 +689,8 @@ export class Engine {
     focus: async (p: Params) => (await this.ui(str(p, 'device'))).focus(),
 
     focusMap: async (p: Params) => (await this.ui(str(p, 'device'))).focusMap(num(p, 'max') ?? 150),
+
+    visual: async (p: Params) => (await this.ui(str(p, 'device'))).visual(req(p, 'name'), this.#visualDir(), {update: bool(p, 'update'), masks: list(p, 'masks')}),
 
     media: async (p: Params) => (await this.ui(str(p, 'device'))).media(str(p, 'target'), {count: num(p, 'count'), intervalMs: num(p, 'interval')}),
 

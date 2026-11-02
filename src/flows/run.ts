@@ -15,6 +15,7 @@ export type FlowHost = {
   state: (name: string) => Promise<void>;
   /** Moves the following steps to another device (serial, AVD name or model). */
   setDevice: (name: string) => Promise<void>;
+  visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
   screenshot: (name?: string) => Promise<string>;
 };
 
@@ -115,6 +116,15 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number):
         const want = unquote(a.slice(i + 1).join(' '));
         if (!r.output.includes(want)) throw new Error(`tool ${a[0]} output does not contain ${JSON.stringify(want)}: ${r.output.slice(0, 300)}`);
       }
+      return;
+    }
+    case 'visual': {
+      // visual <name> [mask <selector>]…
+      const masks: string[] = [];
+      for (let i = 1; i < a.length; i++) if (a[i] === 'mask' && a[i + 1]) masks.push(a[++i]!);
+      const r = await host.visual(a[0]!, masks);
+      if (r.status === 'changed') throw new Error(`screen differs from baseline ${a[0]} (score ${r.score}; regions ${(r.regions ?? []).map(x => `[${x.join(',')}]`).join(' ')}); current: ${r.current}`);
+      if (r.status === 'saved') notes.push(`baseline saved: ${a[0]}`);
       return;
     }
     case 'device':
