@@ -352,6 +352,60 @@ export class AppleDriver {
     }
   }
 
+  /**
+   * Folds a foldable: `closed` (the cover screen) or `open` (the inner one) swing the hinge through recorded hinge
+   * motion, so the system and the app see the angle change; `swap` changes the lit screen at once without moving the
+   * hinge. A speed may follow: `open slow`. The lit screen is read before, and after until it has changed.
+   */
+  /**
+   * Folds a foldable the way Xcode's device window does: the hinge swings to a pose (closed 0°, half 130°, open
+   * 180°, or any angle) and the system moves the app between the screens; `swap` changes the lit screen at once
+   * without moving the hinge.
+   */
+  async fold(udid: string, value: string): Promise<{udid: string; posture: string; states: string[]; angle?: number; screen?: string; ms: number}> {
+    const t0 = Date.now();
+    const states = ['closed', 'half', 'open', 'swap', '<degrees>'];
+    const [posture = '', speed = 'fast'] = value.trim().split(/\s+/);
+    const sim = (await this.simulators()).find(s => s.udid === udid);
+    if (sim?.kind !== 'foldable') throw new AppleError(`${sim?.name ?? udid} has no hinge`, 'posture is for foldables');
+    const angle = posture in POSES ? POSES[posture] : /^\d+(\.\d+)?$/.test(posture) ? Number(posture) : undefined;
+    if (posture !== 'swap' && (angle === undefined || angle > 180)) throw new AppleError(`an Apple foldable takes ${states.join(', ')} (0-180)`, 'posture closed|half|open|<degrees> [fast|medium|slow] · posture swap');
+    const seconds = SPEEDS[speed];
+    if (seconds === undefined) throw new AppleError(`unknown hinge speed "${speed}"`, 'fast, medium or slow');
+    const folded = async () => {
+      const state = foldState(await this.displays(udid));
+      if (!state) throw new AppleError('cannot tell which screen is lit', 'devicectl device info displays answers nothing for this simulator');
+      return state.startsWith('folded');
+    };
+    const was = await folded();
+    // Only the ends of the swing say which screen must be lit; in between it is the system's choice.
+    const want = posture === 'swap' ? !was : angle === 0 ? true : angle! >= POSES.half! ? false : undefined;
+    const {foldTool} = await import('./fold.ts');
+    // The helper swings from where it last left the hinge; the lit screen is the guess for its first swing.
+    const args = posture === 'swap' ? ['swap', '0.5'] : ['hinge', String(angle), was ? '0' : '180', String(seconds)];
+    const r = await this.simctl(['spawn', udid, await foldTool(), ...args], {timeoutMs: 60_000});
+    if (r.code !== 0) throw new AppleError(`fold failed: ${(r.stderr || r.stdout).trim().split('\n').pop()}`);
+    const deadline = Date.now() + 8000;
+    while (want !== undefined && (await folded()) !== want) {
+      if (Date.now() > deadline) throw new AppleError(`the hinge moved but the simulator stayed ${want ? 'open' : 'folded'}`, posture === 'swap' ? 'its reason is in the simulator log: SBDisplayToolService' : 'the motion service did not take the hinge angle: see locationd in the simulator log');
+      await new Promise(res => setTimeout(res, 300));
+    }
+    const screen = foldState(await this.displays(udid));
+    return {udid, posture, states, ...(angle !== undefined ? {angle} : {}), ...(screen ? {screen} : {}), ms: Date.now() - t0};
+  }
+
+  /**
+   * Turns a foldable through its motion input, as Xcode's orientation picker does: the device window draws the
+   * turned phone and the system sees the new orientation. Rotation in degrees, as on Android.
+   */
+  async turn(udid: string, rotation: string): Promise<void> {
+    const orientation = TURNS[rotation === 'auto' ? '0' : rotation];
+    if (!orientation) throw new AppleError('rotate 0, 90, 180, 270 or auto');
+    const {foldTool} = await import('./fold.ts');
+    const r = await this.simctl(['spawn', udid, await foldTool(), 'orient', orientation], {timeoutMs: 30_000});
+    if (r.code !== 0) throw new AppleError(`turn failed: ${(r.stderr || r.stdout).trim().split('\n').pop()}`);
+  }
+
   /** The pid of a running app, from the simulator's launchd. */
   async pid(udid: string, bundleId: string): Promise<number | undefined> {
     const r = await this.simctl(['spawn', udid, 'launchctl', 'list'], {timeoutMs: 10_000});
@@ -385,6 +439,12 @@ export class AppleDriver {
     return out;
   }
 }
+
+/** Hinge angles of the poses in Xcode's device window, and how long a swing takes. */
+const POSES: Record<string, number> = {closed: 0, half: 130, open: 180};
+const SPEEDS: Record<string, number> = {fast: 0.8, medium: 1.5, slow: 3};
+/** Android rotations as the orientations the motion service takes. */
+const TURNS: Record<string, string> = {'0': 'portrait', '90': 'landscape-left', '180': 'pud', '270': 'landscape-right'};
 
 /** Which screen of a foldable is lit: the smaller one is the cover (folded), the larger the inner (open). */
 export const foldState = (displays: Display[]): string | undefined => {

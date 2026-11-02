@@ -328,7 +328,7 @@ export class Engine {
   /** A change to the screen's shape on an Android device; the device's UI session measures the screen again. */
   async #reshape<T extends Record<string, unknown>>(device: string | undefined, op: (a: AndroidDriver, serial: string) => Promise<T>) {
     const t = await this.#target(device);
-    if (t.platform === 'apple') throw new Error('posture and window are for Android: an Apple foldable cannot be folded from outside Xcode, and Apple simulators have no desktop windows');
+    if (t.platform === 'apple') throw new Error('window is for Android: Apple simulators have no desktop windows');
     const r = await op(t.a, t.id);
     this.#uis.get(t.id)?.screenChanged();
     return {serial: t.id, ...r};
@@ -946,10 +946,26 @@ export class Engine {
       (await this.ui(str(p, 'device'))).mouse(req(p, 'action') as 'right' | 'hover' | 'wheel', str(p, 'target'), {direction: str(p, 'direction') as 'up' | 'down' | undefined, steps: num(p, 'steps')}),
     touchpad: async (p: Params) => (await this.ui(str(p, 'device'))).touchpad(req(p, 'gesture') as 'forward' | 'back' | 'up' | 'down' | 'tap'),
     rotary: async (p: Params) => (await this.ui(str(p, 'device'))).rotary((str(p, 'direction') as 'up' | 'down' | undefined) ?? 'down', num(p, 'steps') ?? 3),
-    posture: async (p: Params) => this.#reshape(str(p, 'device'), (a, serial) => a.posture(serial, req(p, 'value'))),
+    posture: async (p: Params) => {
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        const r = await t.s.fold(t.id, req(p, 'value'));
+        this.#uis.get(t.id)?.screenChanged();
+        return r;
+      }
+      return this.#reshape(str(p, 'device'), (a, serial) => a.posture(serial, req(p, 'value')));
+    },
     rotate: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
+        // A foldable turns through its motion input, as Xcode's device window does: the runner's orientation
+        // would fight it, and the inner screen is wide even upright.
+        const sim = (await t.s.simulators()).find(s => s.udid === t.id);
+        if (sim?.kind === 'foldable') {
+          await t.s.turn(t.id, req(p, 'value'));
+          this.#uis.get(t.id)?.screenChanged();
+          return {udid: t.id, rotation: req(p, 'value')};
+        }
         // The runner turns the device: simctl has no orientation.
         const ui = await this.ui(str(p, 'device'));
         const r = await ui.runner.call<{rotation: string}>('rotate', {value: req(p, 'value')}, 15_000);

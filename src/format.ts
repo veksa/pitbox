@@ -156,7 +156,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'touchpad':
       return fmtAct(r as ActResult);
     case 'posture':
-      return `${x.serial}: ${x.posture === 'reset' ? 'posture back to the hinge' : `posture ${x.posture}`} (states: ${(x.states as string[]).join(', ')})`;
+      return `${x.serial ?? x.udid}: ${x.posture === 'reset' ? 'posture back to the hinge' : `posture ${x.posture}${x.already ? ' already' : ''}`}${x.angle !== undefined && String(x.angle) !== x.posture ? ` ${x.angle}°` : ''}${x.screen ? `, ${x.screen}` : ''} (states: ${(x.states as string[]).join(', ')})`;
     case 'rotate':
       return `${x.serial ?? x.udid}: ${x.rotation === 'auto' ? 'rotation follows the sensor' : `rotation locked at ${x.rotation}°`}`;
     case 'xr':

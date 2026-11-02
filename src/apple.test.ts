@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
-import {contentSize, foldState, isAppleBundle, parseDisplays, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
+import {AppleDriver, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
+
+vi.mock('./drivers/apple/fold.ts', () => ({foldTool: async () => '/tmp/fold'}));
 
 const list = JSON.stringify({
   devices: {
@@ -223,6 +225,37 @@ describe('apple driver', () => {
     expect(onlyClosedKeyboard(up, greeted)).toBe(false);
     expect(onlyClosedKeyboard(closed, closed)).toBe(false);
   });
+
+  it('folds a foldable only to a posture it has, and says when the screens did not change', async () => {
+    let lit = 1;
+    const spawned: string[][] = [];
+    const screens = () => [
+      {id: 1, name: 'LCD', active: lit === 1, primary: true, width: 1398, height: 2034},
+      {id: 3, name: 'LCD-1', active: lit === 3, primary: false, width: 2007, height: 2853},
+    ];
+    const make = (obeys: boolean) =>
+      Object.assign(Object.create(AppleDriver.prototype) as AppleDriver, {
+        simulators: async () => [{udid: 'AAA', name: 'Foldable', kind: 'foldable'}, {udid: 'BBB', name: 'Phone', kind: 'phone'}],
+        displays: async () => screens(),
+        simctl: async (args: string[]) => {
+          spawned.push(args.slice(3));
+          if (obeys) lit = lit === 1 ? 3 : 1;
+          return {stdout: 'done\n', stderr: '', code: 0, timedOut: false, ms: 0};
+        },
+      });
+    const d = make(true);
+    await expect(d.fold('BBB', 'open')).rejects.toThrow('has no hinge');
+    await expect(d.fold('AAA', 'rear')).rejects.toThrow('closed, half, open, swap');
+    await expect(d.fold('AAA', '200')).rejects.toThrow('0-180');
+    expect(await d.fold('AAA', 'open slow')).toMatchObject({posture: 'open', angle: 180, screen: 'open: inner screen 2007x2853'});
+    expect(lit).toBe(3);
+    expect(await d.fold('AAA', 'swap')).toMatchObject({posture: 'swap'});
+    // A swing in between leaves the lit screen to the system.
+    expect(await d.fold('AAA', '90')).toMatchObject({angle: 90});
+    expect(spawned).toEqual([['hinge', '180', '0', '3'], ['swap', '0.5'], ['hinge', '90', '0', '0.8']]);
+    lit = 1;
+    await expect(make(false).fold('AAA', 'open')).rejects.toThrow('stayed folded');
+  }, 15_000);
 
   it('builds a snapshot from a window without a package', () => {
     const snap = buildSnapshot([{type: 'ime', title: 'keyboard'} as never], [{p: -1, w: 0, c: 'Keyboard', b: [0, 500, 400, 800]}]);

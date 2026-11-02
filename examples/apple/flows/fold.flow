@@ -1,0 +1,27 @@
+# A foldable iPhone, posed the way Xcode's device window poses it: the hinge swings and the app moves to the wide
+# inner screen when it opens and back to the cover when it closes; the phone turns as a whole, flipped included;
+# `posture swap` changes the lit screen at once without moving the hinge.
+open!
+wait id=title 60
+rotate 0
+posture closed
+expect text="portrait"
+rotate 90
+expect text="landscape"
+rotate 180
+rotate 0
+expect text="portrait"
+posture half
+expect text="landscape"
+expect id=title
+posture open
+expect text="landscape"
+rotate 90
+expect text="portrait"
+rotate 0
+posture closed slow
+expect text="portrait"
+posture swap
+expect text="landscape"
+posture swap
+expect text="portrait"
