@@ -186,7 +186,7 @@ final class Commands {
     return (value, signature)
   }
 
-  private func walk(_ n: XCUIElementSnapshot, parent: Int, window: Int, screen: CGRect, all: Bool, out: inout [[String: Any]], hasher: inout Hasher, depth: Int, focused: Bool = false) {
+  private func walk(_ n: XCUIElementSnapshot, parent: Int, window: Int, screen: CGRect, all: Bool, out: inout [[String: Any]], hasher: inout Hasher, depth: Int, focused: Bool = false, echo: (String, CGRect)? = nil) {
     if depth > 80 { return }
     var index = parent
     let f = n.frame
@@ -208,7 +208,9 @@ final class Commands {
       // line that says nothing; the control stands for both.
       let wrapper = label.isEmpty && value.isEmpty && ident.isEmpty && Self.wraps(n, frame: f, depth: 6)
       if wrapper && (n.hasFocus || focused) { passFocus = true }
-      if !wrapper && (all || interactive || !label.isEmpty || !value.isEmpty || !ident.isEmpty) {
+      // React Native's Text is a view carrying the text with the static text inside it: one line, not two.
+      let repeats = ident.isEmpty && !interactive && echo.map { $0.0 == label && Self.same($0.1, f) } == true
+      if !wrapper && !repeats && (all || interactive || !label.isEmpty || !value.isEmpty || !ident.isEmpty) {
         let b = [Int(f.minX.rounded()), Int(f.minY.rounded()), Int(f.maxX.rounded()), Int(f.maxY.rounded())]
         var o: [String: Any] = ["p": parent, "w": window, "c": Self.typeNames[type] ?? "Other", "b": b]
         if !ident.isEmpty { o["id"] = ident }
@@ -249,8 +251,12 @@ final class Commands {
       }
     }
     for child in n.children {
-      walk(child, parent: index, window: window, screen: screen, all: all, out: &out, hasher: &hasher, depth: depth + 1, focused: passFocus || (focused && index == parent))
+      walk(child, parent: index, window: window, screen: screen, all: all, out: &out, hasher: &hasher, depth: depth + 1, focused: passFocus || (focused && index == parent), echo: n.label.isEmpty ? nil : (n.label, f))
     }
+  }
+
+  private static func same(_ g: CGRect, _ f: CGRect) -> Bool {
+    abs(g.minX - f.minX) < 2 && abs(g.minY - f.minY) < 2 && abs(g.maxX - f.maxX) < 2 && abs(g.maxY - f.maxY) < 2
   }
 
   /// Whether a control with (nearly) the same frame sits within `depth` levels below (UIKit nests a cell's
@@ -259,7 +265,7 @@ final class Commands {
     if depth == 0 { return false }
     for c in n.children {
       let g = c.frame
-      let same = abs(g.minX - f.minX) < 2 && abs(g.minY - f.minY) < 2 && abs(g.maxX - f.maxX) < 2 && abs(g.maxY - f.maxY) < 2
+      let same = Self.same(g, f)
       if same && (tappable.contains(c.elementType) || editable.contains(c.elementType)) { return true }
       if wraps(c, frame: f, depth: depth - 1) { return true }
     }
