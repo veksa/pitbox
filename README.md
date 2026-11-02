@@ -12,9 +12,10 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   answering its probe is adopted instead of started twice; logs go to files; services outlive agent sessions
   and daemon restarts, and only `down` stops them. Actors (extra users of the app), project tools (a protocol
   call, an SQL query) and an OpenAI-compatible LLM mock.
-- **Android** — phones, foldables, tablets, TV and XR, emulators and hardware: boot, install, open apps and
-  deep links, logs, settings, network conditions, screenshots, keys. Stand ports are forwarded to every device
-  and re-forwarded when a device reconnects.
+- **Android** — phones, foldables, tablets, TV, XR headsets and watches, emulators and hardware (desktop,
+  glasses and car AVDs are recognised, not yet run end to end): boot, install, open apps and deep links, logs,
+  settings, network conditions, screenshots, keys. Stand ports are forwarded to every device and re-forwarded
+  when a device reconnects.
 - **Dev server** — your bundler (`yarn start`) behind pitbox's proxy: a native file watcher on every platform
   (Metro crawls every directory on Windows otherwise), the main bundle built before the device asks, and, with
   `bytecode: true`, Hermes bytecode compiled on the host so the app skips parsing megabytes of source.
@@ -94,6 +95,12 @@ As an MCP server (`.mcp.json`):
 
 Probes: `http(s)://…` (any answer below 500), `tcp:<port>`, `docker:<container>`, `cmd:<command>`. Project
 commands run in bash (Git Bash on Windows) unless `shell` says otherwise. Every field: [docs/config.md](docs/config.md).
+
+## Testing pitbox itself
+
+`yarn check-all` runs the unit tests. `yarn e2e` drives [examples/android](examples/android) on one emulator of
+every kind found on the machine (phone, foldable, tablet, desktop, TV, XR, glasses, watch, car) and prints a
+verdict per kind.
 
 ## License
 

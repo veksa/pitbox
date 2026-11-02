@@ -1,5 +1,5 @@
 // pitbox against a real app on real emulators: builds examples/android, then for every kind of device that has an
-// AVD on this machine (phone, foldable, tablet, tv, xr, wear, automotive) boots one, installs the app and runs the
+// AVD on this machine (phone, foldable, tablet, desktop, tv, xr, glasses, wear, automotive) boots one, installs the app and runs the
 // kind's flows through the CLI. A device that was already running is left running.
 //
 //   yarn e2e                         every kind with an AVD
@@ -22,6 +22,10 @@ const PLAN = {
   tablet: {flows: ['smoke'], fails: []},
   xr: {flows: ['smoke'], fails: []},
   tv: {flows: ['tv'], fails: [], focusMap: true},
+  wear: {flows: ['wear'], fails: []},
+  desktop: {flows: ['smoke'], fails: []},
+  glasses: {flows: ['smoke'], fails: []},
+  automotive: {flows: ['smoke'], fails: []},
 };
 
 const pitbox = (args, opts = {}) => {
@@ -43,6 +47,8 @@ if (process.platform === 'win32') execFileSync('cmd.exe', ['/d', '/c', gradlew, 
 else execFileSync(gradlew, ['assembleDebug', '-q'], {cwd: example, stdio: 'inherit'});
 
 step('stand');
+// A daemon left from an older build would answer with the older code.
+must(['daemon', 'restart']);
 console.log(must(['up']));
 
 const {devices, avds} = JSON.parse(must(['devices', '--json']));
@@ -57,15 +63,41 @@ for (const kind of wanted) {
   }
   const named = process.env[`PITBOX_E2E_AVD_${kind.toUpperCase()}`];
   const running = devices.find(d => d.state === 'device' && (named ? d.avd === named : d.kind === kind));
-  const avd = running?.avd ?? named ?? avds.find(a => a.kind === kind)?.name;
-  if (!avd) {
+  // Candidates in order: a running one, the named one, then every AVD of the kind — one with a screen lock
+  // cannot start apps after a boot, so the next one is tried.
+  const candidates = running ? [running.avd] : named ? [named] : avds.filter(a => a.kind === kind).map(a => a.name);
+  if (!candidates.length) {
     results.push({kind, status: 'skip', note: 'no AVD of this kind'});
     continue;
   }
-  step(`${kind}: ${avd}`);
+  let avd;
+  let booted = false;
   const checks = [];
+  for (const name of candidates) {
+    step(`${kind}: ${name}`);
+    try {
+      if (!running) {
+        console.log(must(['boot', name], {timeout: 900_000}));
+        booted = true;
+      }
+      if (pitbox(["doctor"]).out.includes(`${name}: locked after boot`)) {
+        console.log(`${name} has a screen lock: apps cannot start after a boot — next`);
+        if (booted) pitbox(['shutdown', '--device', name], {timeout: 120_000});
+        booted = false;
+        continue;
+      }
+      avd = name;
+      break;
+    } catch (e) {
+      checks.push({name: `boot ${name}`, ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
+      break;
+    }
+  }
+  if (!avd) {
+    results.push({kind, status: checks.length ? 'fail' : 'skip', checks: checks.length ? checks : undefined, note: 'every AVD of this kind has a screen lock'});
+    continue;
+  }
   try {
-    if (!running) console.log(must(['boot', avd], {timeout: 900_000}));
     console.log(must(['install', apk, '--device', avd, '--replace']));
     for (const flow of plan.flows) {
       const r = pitbox(['run', flow, '--device', avd]);
@@ -85,7 +117,7 @@ for (const kind of wanted) {
   } catch (e) {
     checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
   } finally {
-    if (!running) pitbox(['shutdown', '--device', avd], {timeout: 120_000});
+    if (booted) pitbox(['shutdown', '--device', avd], {timeout: 120_000});
   }
   results.push({kind, avd, status: checks.every(c => c.ok) ? 'pass' : 'fail', checks});
 }

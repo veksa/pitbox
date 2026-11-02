@@ -1,0 +1,8 @@
+# A watch: a round screen a few rows tall, so the flow scrolls to what it needs.
+open!
+wait id=title 30
+press id=greet
+expect text="Hello, stranger"
+scroll down until id=fetch
+press id=fetch
+wait text~="hello from the stand" 10
