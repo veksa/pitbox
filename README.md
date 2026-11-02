@@ -39,7 +39,7 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   a relay inside the runner through the emulator's host alias.
 - **Flows** — a line-per-step script the daemon runs on its own (`open`, `goto <route>`, `as <user>`, `press`,
   `fill`, `scroll … until`, `wait`, `expect`, `tool … contains`, …): one call, one verdict, and on failure the
-  line, the error and the screen. Sessions can be recorded into flows.
+  line, the error and the screen. Sessions can be recorded into flows. Reference: [docs/flows.md](docs/flows.md).
 - **Doctor** — known failures with remedies (`doctor --fix`), plus your own rules.
 - **Docs** — the lines of a long checklist or knowledge base that a step needs, not the whole file.
 - **MCP server** over stdio; the CLI prints the same compact text. How an agent should use it:
@@ -81,7 +81,7 @@ As an MCP server (`.mcp.json`):
 ```
 
 Probes: `http(s)://…` (any answer below 500), `tcp:<port>`, `docker:<container>`, `cmd:<command>`. Project
-commands run in bash (Git Bash on Windows) unless `shell` says otherwise.
+commands run in bash (Git Bash on Windows) unless `shell` says otherwise. Every field: [docs/config.md](docs/config.md).
 
 ## License
 
