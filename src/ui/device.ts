@@ -252,7 +252,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   }
 
   /** Swipes in `direction` until `selector` is on screen or the content stops moving. */
-  async scrollUntil(direction: string, selector: string, max = 8): Promise<ActResult> {
+  async scrollUntil(direction: string, selector: string, max = 25): Promise<ActResult> {
     const t0 = Date.now();
     const start = this.last;
     let snap = await this.snapshot();

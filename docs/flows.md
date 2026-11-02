@@ -85,7 +85,7 @@ Every action waits for the UI to settle before the next step.
 | `key <key>…` | presses keys in order: `back home up down left right center enter del menu search playpause appswitch wakeup`, or a keycode number (TV remotes included) |
 | `swipe up\|down\|left\|right [ms]` | swipes across the screen; the duration (default 300 ms) sets the velocity |
 | `swipe x1,y1,x2,y2 [ms]` | swipes between two points |
-| `scroll <direction> until <selector>` | swipes until the target is on screen (up to 8 swipes, stops when the content stops moving) |
+| `scroll <direction> until <selector>` | swipes until the target is on screen (stops when the content stops moving, at most 25 swipes) |
 | `touch down <selector>` · `touch move <selector>` · `touch up` | a finger held across steps — check what exists only while touching |
 | `sleep <ms>` | waits; prefer `wait` |
 

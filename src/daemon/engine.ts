@@ -4,6 +4,7 @@
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
@@ -43,6 +44,9 @@ const list = (p: Params, k: string): string[] => {
   if (v === undefined) return [];
   return Array.isArray(v) ? v.map(String) : String(v).split(/[\s,]+/).filter(Boolean);
 };
+
+/** Machine-wide pitbox state, shared by every project. */
+const machineRelayFile = () => path.join(os.homedir(), '.pitbox', 'relay-avds.json');
 
 export class Engine {
   #loaded: LoadedConfig;
@@ -368,6 +372,8 @@ export class Engine {
     const mode = this.config.android?.forward ?? 'auto';
     for (const d of online) {
       if (this.#forwarded.has(d.serial) && !verify) continue;
+      // A device seen for the first time is checked at once: a flow may need the stand seconds after a boot.
+      const fresh = !this.#forwarded.has(d.serial);
       if (d.avd && this.#relayAvds().has(d.avd)) this.#relayed.add(d.serial);
       if (this.#relayed.has(d.serial) || (mode === 'relay' && d.emulator)) {
         // The relay lives in the runner; a restarted runner has none, so re-apply when they are gone.
@@ -391,7 +397,7 @@ export class Engine {
       }
       this.#forwarded.add(d.serial);
       // `adb reverse` can list its forwards and carry nothing; on an emulator, switch to the relay then.
-      if (mode === 'auto' && d.emulator && verify && !(await this.#forwardCarries(d.serial, ports))) {
+      if (mode === 'auto' && d.emulator && (verify || fresh) && !(await this.#forwardCarries(d.serial, ports))) {
         this.#relayed.add(d.serial);
         if (d.avd) this.#rememberRelay(d.avd);
         this.#forwarded.delete(d.serial);
@@ -404,20 +410,26 @@ export class Engine {
   /** Serials whose forwards go through the runner's relay instead of `adb reverse`. */
   readonly #relayed = new Set<string>();
 
-  /** AVDs whose adb reverse was found broken — remembered so the next daemon relays them from the start. */
+  /**
+   * AVDs whose adb reverse was found broken — remembered so the next daemon relays them from the start. A fact
+   * about the emulator on this machine, not about a project, so every project shares it.
+   */
   #relayAvds(): Set<string> {
-    try {
-      return new Set(JSON.parse(fs.readFileSync(path.join(this.#loaded.stateDir, 'relay-avds.json'), 'utf8')) as string[]);
-    } catch {
-      return new Set();
-    }
+    const read = (file: string) => {
+      try {
+        return JSON.parse(fs.readFileSync(file, 'utf8')) as string[];
+      } catch {
+        return [];
+      }
+    };
+    return new Set([...read(machineRelayFile()), ...read(path.join(this.#loaded.stateDir, 'relay-avds.json'))]);
   }
 
   #rememberRelay(avd: string) {
     const set = this.#relayAvds();
     set.add(avd);
-    fs.mkdirSync(this.#loaded.stateDir, {recursive: true});
-    fs.writeFileSync(path.join(this.#loaded.stateDir, 'relay-avds.json'), JSON.stringify([...set]));
+    fs.mkdirSync(path.dirname(machineRelayFile()), {recursive: true});
+    fs.writeFileSync(machineRelayFile(), JSON.stringify([...set]));
   }
 
   /**
@@ -886,7 +898,7 @@ export class Engine {
     uiKey: async (p: Params) => (await this.ui(str(p, 'device'))).key(list(p, 'keys')),
     touch: async (p: Params) => (await this.ui(str(p, 'device'))).touch(req(p, 'phase') as 'down' | 'move' | 'up', str(p, 'target')),
     swipe: async (p: Params) => (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300),
-    scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 8),
+    scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 25),
 
     wait: async (p: Params) => {
       const r = await (await this.ui(str(p, 'device'))).wait(req(p, 'target'), {gone: bool(p, 'gone'), timeoutMs: (num(p, 'timeout') ?? 10) * 1000});
