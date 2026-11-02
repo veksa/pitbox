@@ -320,9 +320,12 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
    */
   async focusMap(maxPresses = 150): Promise<FocusMap> {
     const t0 = Date.now();
-    const label = (n?: UiNode) => (n ? (n.id ? `#${n.id}` : n.t ? JSON.stringify(n.t) : n.d ? `(${n.d})` : `@[${n.b.join(',')}]`) : 'nothing');
+    const text = (n: UiNode) => n.t ?? n.d;
+    const label = (n?: UiNode) => (n ? (n.id ? `#${n.id}${text(n) ? ` ${JSON.stringify(text(n))}` : ''}` : n.t ? JSON.stringify(n.t) : n.d ? `(${n.d})` : `@[${n.b.join(',')}]`) : 'nothing');
     // Ids are stable while a rail scrolls; bounds are not.
-    const keyOf = (n?: UiNode) => (n ? (n.id ? `#${n.id}` : `@${n.b.join(',')}|${n.t ?? n.d ?? ''}`) : 'none');
+    // Ids and texts are stable while a list or rail scrolls under the focus; bounds are not. The text also tells
+    // apart cells that share one id (a grid of `AppCell`s). Bounds only for a node with neither.
+    const keyOf = (n?: UiNode) => (n ? (n.id ? `#${n.id}|${text(n) ?? ''}` : text(n) ? `"${text(n)}"` : `@${n.b.join(',')}`) : 'none');
     const opposite: Record<string, string> = {up: 'down', down: 'up', left: 'right', right: 'left'};
     const codes: Record<string, number> = {up: 19, down: 20, left: 21, right: 22};
     let presses = 0;

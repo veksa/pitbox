@@ -163,3 +163,48 @@ describe('visual diff', () => {
     expect(d.regions).toEqual([[300, 300, 500, 500]]);
   });
 });
+
+describe('focus map', () => {
+  it('tells apart cells that share one id', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const cells: UiNode[] = ['A', 'B', 'C'].map((t, i) => ({p: -1, w: 0, c: 'Cell', b: [i * 100, 0, i * 100 + 90, 90], id: 'AppCell', t, f: 'cf'}));
+    let at = 0;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'focus') return {input: cells[at]};
+        if (cmd === 'key') at = args.code === 22 ? Math.min(2, at + 1) : args.code === 21 ? Math.max(0, at - 1) : at;
+        if (cmd === 'tree') return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}], nodes: cells.map((c, i) => ({...c, f: i === at ? 'cfF' : 'cf'}))};
+        if (cmd === 'info') return {width: 300, height: 100};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    const map = await ui.focusMap(60);
+    expect(map.reached).toBe(3);
+    expect(map.unreached).toEqual([]);
+    expect(map.traps).toEqual([]);
+  });
+});
+
+describe('focus map on a list that scrolls under the focus', () => {
+  it('keeps nodes without ids apart by text, not by bounds that move', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const rows = ['One', 'Two', 'Three'];
+    let at = 0;
+    // The focused row is always drawn at the top: the list scrolls with the focus.
+    const node = (i: number): UiNode => ({p: -1, w: 0, c: 'Cell', b: [0, (i - at) * 60 + 100, 800, (i - at) * 60 + 150], t: rows[i], f: i === at ? 'cfF' : 'cf'});
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'focus') return {input: node(at)};
+        if (cmd === 'key') at = args.code === 20 ? Math.min(2, at + 1) : args.code === 19 ? Math.max(0, at - 1) : at;
+        if (cmd === 'tree') return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}], nodes: rows.map((_, i) => node(i))};
+        if (cmd === 'info') return {width: 800, height: 600};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const map = await new DeviceUi('dev', runner as never).focusMap(60);
+    expect(map).toMatchObject({reached: 3, focusable: 3, unreached: [], traps: []});
+  });
+});
