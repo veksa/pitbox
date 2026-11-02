@@ -24,6 +24,10 @@ export type DoctorContext = {
   /** Undefined when adb is not installed. */
   android?: AndroidDriver;
   exposedPorts: number[];
+  /** Whether each device's forwards really carry data, and through what. */
+  forwardHealth?: () => Promise<{serial: string; via: 'reverse' | 'relay'; carries: boolean}[]>;
+  /** Moves an emulator's forwards onto the runner relay. */
+  useRelay?: (serial: string) => Promise<string>;
 };
 
 export type Rule = {

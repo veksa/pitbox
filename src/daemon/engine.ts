@@ -19,6 +19,7 @@ import {runFlow, type FlowHost} from '../flows/run.ts';
 import {fillRoute} from '../flows/flow.ts';
 import {AndroidUi} from '../ui/android.ts';
 import {lanAddress} from '../util/lan.ts';
+import {httpAlive} from '../util/net.ts';
 
 type Params = Record<string, unknown>;
 
@@ -234,9 +235,24 @@ export class Engine {
     for (const s of [...this.#forwarded]) if (!online.some(d => d.serial === s)) this.#forwarded.delete(s);
     const verify = force || Date.now() - this.#lastForwardCheck > 30_000;
     if (verify) this.#lastForwardCheck = Date.now();
-    const applied: {serial: string; ports: number[]}[] = [];
+    const applied: {serial: string; ports: number[]; via?: string}[] = [];
+    const mode = this.config.android?.forward ?? 'auto';
     for (const d of online) {
       if (this.#forwarded.has(d.serial) && !verify) continue;
+      if (this.#relayed.has(d.serial) || (mode === 'relay' && d.emulator)) {
+        // The relay lives in the runner; a restarted runner has none, so re-apply when they are gone.
+        const ui = await this.ui(d.serial);
+        const r = await ui.runner.call<{relayed: number[]}>('relays');
+        const missing = ports.filter(p => !r.relayed.includes(p));
+        if (missing.length) {
+          await android.adb(['reverse', '--remove-all'], d.serial);
+          await ui.runner.call('relay', {ports: missing, target: '10.0.2.2'});
+          applied.push({serial: d.serial, ports: missing, via: 'relay'});
+        }
+        this.#relayed.add(d.serial);
+        this.#forwarded.add(d.serial);
+        continue;
+      }
       const have = await android.reverseList(d.serial);
       const missing = ports.filter(p => !have.includes(p));
       if (missing.length) {
@@ -244,8 +260,55 @@ export class Engine {
         applied.push({serial: d.serial, ports: missing});
       }
       this.#forwarded.add(d.serial);
+      // `adb reverse` can list its forwards and carry nothing; on an emulator, switch to the relay then.
+      if (mode === 'auto' && d.emulator && verify && !(await this.#forwardCarries(d.serial, ports))) {
+        this.#relayed.add(d.serial);
+        this.#forwarded.delete(d.serial);
+        applied.push(...(await this.ensureForwards(true)).filter(a => a.serial === d.serial));
+      }
     }
     return applied;
+  }
+
+  /** Serials whose forwards go through the runner's relay instead of `adb reverse`. */
+  readonly #relayed = new Set<string>();
+
+  /**
+   * Whether data really flows from the device to the host on a forwarded port: an HTTP request sent from the
+   * device to a port where the host answers HTTP must get bytes back. True when no port can be checked.
+   */
+  async #forwardCarries(serial: string, ports: number[]): Promise<boolean> {
+    const android = this.android;
+    if (!android) return true;
+    for (const port of ports) {
+      const host = await httpAlive(`http://127.0.0.1:${port}/`, 1500);
+      if (host.status === undefined) continue;
+      const out = await android
+        .shell(serial, `printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | toybox nc -w 4 127.0.0.1 ${port} | head -c 12`, 15_000)
+        .catch(() => '');
+      return out.trim().length > 0;
+    }
+    return true;
+  }
+
+  /** Forwarding state per device, for doctor and status. */
+  async forwardHealth(): Promise<{serial: string; via: 'reverse' | 'relay'; carries: boolean}[]> {
+    const android = this.android;
+    if (!android) return [];
+    const ports = exposedPorts(this.config);
+    const out: {serial: string; via: 'reverse' | 'relay'; carries: boolean}[] = [];
+    for (const d of (await android.devices()).filter(x => x.state === 'device')) {
+      out.push({serial: d.serial, via: this.#relayed.has(d.serial) ? 'relay' : 'reverse', carries: await this.#forwardCarries(d.serial, ports)});
+    }
+    return out;
+  }
+
+  /** Moves a device's forwards onto the runner's relay (emulators only). */
+  async useRelay(serial: string): Promise<string> {
+    this.#relayed.add(serial);
+    this.#forwarded.delete(serial);
+    const r = await this.ensureForwards(true);
+    return `forwards for ${serial} now go through the runner relay (${r.flatMap(a => a.ports).join(', ') || 'already in place'})`;
   }
 
   startWatching() {
@@ -612,7 +675,10 @@ export class Engine {
 
     doctor: async (p: Params) => {
       const extra = await loadProjectRules(this.#loaded.root, this.config.doctor);
-      return runDoctor({root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config)}, {fix: bool(p, 'fix'), only: list(p, 'only'), extra});
+      return runDoctor(
+        {root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config), forwardHealth: () => this.forwardHealth(), useRelay: serial => this.useRelay(serial)},
+        {fix: bool(p, 'fix'), only: list(p, 'only'), extra},
+      );
     },
 
     docs: async (p: Params) => {

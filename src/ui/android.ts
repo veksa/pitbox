@@ -60,17 +60,25 @@ export class AndroidUi {
    * that animates on the next frame, a navigation that waits for a promise), so an unchanged screen is checked
    * again for a little while before it is reported as unchanged.
    */
-  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 2500, graceMs = 1200): Promise<{diff: SnapshotDiff; idle: boolean}> {
+  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 1200, graceMs = 1200): Promise<{diff: SnapshotDiff; idle: boolean}> {
     const t0 = Date.now();
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
-    if (this.#hooks.networkIdle) {
-      await this.#hooks.networkIdle(timeoutMs);
-      await this.runner.call('idle', {quiet: 150, timeout: 1500}, 6000);
+    if (this.#hooks.networkIdle) await this.#hooks.networkIdle(1500);
+    let snap = await this.snapshot();
+    if (!r.idle) {
+      // A UI that never goes quiet (a playing video, a looping animation): settled once the snapshot stops
+      // changing, instead of waiting for silence that never comes.
+      for (let i = 0; i < 4; i++) {
+        await new Promise(res => setTimeout(res, 250));
+        const next = await this.snapshot();
+        const same = next.lines.join('\n') === snap.lines.join('\n');
+        snap = next;
+        if (same) break;
+      }
     }
-    let diff = diffSnapshots(before, await this.snapshot());
+    let diff = diffSnapshots(before, snap);
     while (!diff.changed && Date.now() - t0 < graceMs) {
-      await new Promise(res => setTimeout(res, 200));
-      await this.runner.call('idle', {quiet: 150, timeout: 1500}, 6000);
+      await new Promise(res => setTimeout(res, 250));
       diff = diffSnapshots(before, await this.snapshot());
     }
     return {diff, idle: r.idle};

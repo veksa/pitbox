@@ -111,7 +111,10 @@ const reversePorts: Rule = {
   check: async ctx => {
     if (!ctx.android || !ctx.exposedPorts.length) return [];
     const findings: Finding[] = [];
+    const relayed = new Set((await ctx.forwardHealth?.())?.filter(h => h.via === 'relay').map(h => h.serial));
     for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+      // Devices on the runner relay have no adb forwards on purpose.
+      if (relayed.has(d.serial)) continue;
       const have = await ctx.android.reverseList(d.serial);
       const missing = ctx.exposedPorts.filter(p => !have.includes(p));
       if (missing.length) {
@@ -126,6 +129,27 @@ const reversePorts: Rule = {
           },
         });
       }
+    }
+    return findings;
+  },
+};
+
+const forwardData: Rule = {
+  id: 'forward-data',
+  title: 'forwarded ports really carry data',
+  check: async ctx => {
+    if (!ctx.forwardHealth || !ctx.exposedPorts.length) return [];
+    const findings: Finding[] = [];
+    for (const h of await ctx.forwardHealth()) {
+      if (h.carries) continue;
+      const emulator = h.serial.startsWith('emulator-');
+      findings.push({
+        rule: 'forward-data',
+        severity: 'error',
+        message: `${h.serial}: forwards (${h.via}) are in place but carry no data — the app sees every stand service as down`,
+        hint: emulator ? 'adb reverse sometimes stops passing data while still listing its forwards; the runner relay goes through the emulator host alias instead' : 'reconnect the device or restart adb (doctor fix=true with the adb-server rule)',
+        fix: emulator && ctx.useRelay ? () => ctx.useRelay!(h.serial) : undefined,
+      });
     }
     return findings;
   },
@@ -207,4 +231,4 @@ export const metroWindowsWatcher: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, servicesHealthy, dataPartition, metroWindowsWatcher];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, servicesHealthy, dataPartition, metroWindowsWatcher];

@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
 import {isAlive} from '../util/proc.ts';
-import {daemonFile, type DaemonInfo} from './server.ts';
+import {daemonFile, type DaemonInfo} from './info.ts';
 
 export class DaemonClient {
   readonly info: DaemonInfo;

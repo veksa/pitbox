@@ -49,6 +49,9 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     "text" -> JSONObject().put("set", setText(req.getString("text"), req.optBoolean("append", false), req.optJSONArray("bounds")))
     "action" -> JSONObject().put("done", action(req.getJSONArray("bounds"), req.getString("action")))
     "screenshot" -> screenshot(req.optDouble("scale", 0.5), req.optInt("quality", 70))
+    "relay" -> Relay.start(req.getJSONArray("ports"), req.optString("target", "10.0.2.2"))
+    "relays" -> Relay.list()
+    "unrelay" -> Relay.stopAll()
     "frames" -> frames(req.optJSONArray("bounds"), req.optInt("count", 4), req.optLong("interval", 400), req.optInt("size", 32))
     else -> throw IllegalArgumentException("unknown command: $cmd")
   }
@@ -61,9 +64,20 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
   /** Roots of every window, top layer first; the active window alone where windows are unavailable. */
   private fun roots(): List<Pair<AccessibilityNodeInfo, AccessibilityWindowInfo?>> {
     val windows = try { ui.windows } catch (e: Exception) { emptyList<AccessibilityWindowInfo>() }
-    val out = windows.sortedByDescending { it.layer }.mapNotNull { w -> w.root?.let { it to w } }
+    val out = windows.sortedByDescending { it.layer }.mapNotNull { w -> rootOf(w)?.let { it to w } }
     if (out.isNotEmpty()) return out
     return listOfNotNull(ui.rootInActiveWindow?.let { it to null })
+  }
+
+  /**
+   * Every node is a call into the app's UI thread; when that thread is busy (video, animations) a node-by-node
+   * walk takes seconds. From Android 13 the whole subtree is prefetched in batches instead.
+   */
+  private fun rootOf(w: AccessibilityWindowInfo): AccessibilityNodeInfo? =
+    if (Build.VERSION.SDK_INT >= 33) w.getRoot(PREFETCH) else w.root
+
+  private companion object {
+    val PREFETCH = AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS or AccessibilityNodeInfo.FLAG_PREFETCH_ANCESTORS
   }
 
   private fun windowType(w: AccessibilityWindowInfo?): String = when (w?.type) {
@@ -293,5 +307,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 2
+  const val VERSION = 4
 }

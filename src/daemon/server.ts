@@ -6,15 +6,13 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {Engine} from './engine.ts';
+import {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo} from './info.ts';
 
-export type DaemonInfo = {pid: number; port: number; token: string; config: string; root: string; startedAt: number; version: string};
+export {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo};
 
-export const daemonFile = (stateDir: string) => path.join(stateDir, 'daemon.json');
 
-export const VERSION = '0.0.0';
 
-/** RPC that stops the daemon itself — named so it cannot collide with an engine method such as `shutdown`. */
-export const DAEMON_STOP = '__stopDaemon';
+
 
 export const serve = async (configFile?: string) => {
   const engine = await Engine.create(configFile);

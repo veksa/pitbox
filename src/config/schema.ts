@@ -121,6 +121,12 @@ export const configSchema = z.object({
       avd: z.string().optional(),
       /** Extra host ports to forward besides the services' `expose`. */
       reverse: z.array(z.number().int().positive()).optional(),
+      /**
+       * How exposed ports reach devices: `reverse` (adb reverse), `relay` (pitbox runner on the emulator pipes to
+       * the host alias 10.0.2.2), `auto` (default: adb reverse, switching an emulator to the relay when its forwards
+       * stop carrying data).
+       */
+      forward: z.enum(['auto', 'reverse', 'relay']).optional(),
     })
     .optional(),
   /** Directory of `.flow` files. Default `flows`. */

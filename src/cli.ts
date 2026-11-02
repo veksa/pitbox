@@ -3,7 +3,7 @@
 
 import {connect, resolveProject, runningDaemon} from './daemon/client.ts';
 import {formatResult} from './format.ts';
-import {DAEMON_STOP} from './daemon/server.ts';
+import {DAEMON_STOP} from './daemon/info.ts';
 
 const HELP = `pitbox — run, drive and debug apps from one tool
 

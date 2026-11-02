@@ -12,7 +12,7 @@ import {AndroidError} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
-export const RUNNER_VERSION = 2;
+export const RUNNER_VERSION = 4;
 const DEVICE_PORT = 7912;
 
 export const runnerApk = (): string => {
@@ -70,7 +70,7 @@ export class AndroidRunner {
     this.#child = child;
     let output = '';
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new AndroidError('runner did not start in 20s', output.trim().split('\n').slice(-3).join(' ') || 'check `app-logs --all --grep pitbox`')), 20_000);
+      const timer = setTimeout(() => reject(new AndroidError('runner did not start in 60s', output.trim().split('\n').slice(-3).join(' ') || 'check `app-logs --all --grep pitbox`')), 60_000);
       const onData = (d: Buffer) => {
         output += d.toString();
         if (output.includes('pitbox=ready')) {

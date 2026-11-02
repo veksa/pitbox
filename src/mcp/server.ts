@@ -6,7 +6,7 @@ import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {z} from 'zod';
 import {loadConfig} from '../config/load.ts';
 import {connect, resolveProject, type DaemonClient} from '../daemon/client.ts';
-import {VERSION} from '../daemon/server.ts';
+import {VERSION} from '../daemon/info.ts';
 import {formatResult} from '../format.ts';
 
 type Shape = Record<string, z.ZodType>;
