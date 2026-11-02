@@ -1,0 +1,82 @@
+// Screen images reduced on the device: a downscaled JPEG, a brightness grid for visual comparison, and
+// per-frame brightness and motion for media checks. Rectangles come in screen points.
+
+import UIKit
+import XCTest
+
+enum Images {
+  private static func screen() -> (cg: CGImage, points: CGSize) {
+    let image = XCUIScreen.main.screenshot().image
+    guard let cg = image.cgImage else { fatalError("screenshot has no bitmap") }
+    return (cg, image.size)
+  }
+
+  /// Greyscale bitmap of `rect` (pixels of `cg`) drawn into `cols`×`rows`, masks (pixels) blacked out first.
+  private static func grey(_ cg: CGImage, crop: CGRect? = nil, cols: Int, rows: Int, masks: [CGRect] = []) throws -> [UInt8] {
+    var source = cg
+    if let crop {
+      guard let c = cg.cropping(to: crop.intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))) else { throw RunnerError("bounds outside the screen") }
+      source = c
+    }
+    if !masks.isEmpty {
+      guard let ctx = CGContext(data: nil, width: source.width, height: source.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw RunnerError("no bitmap context") }
+      ctx.draw(source, in: CGRect(x: 0, y: 0, width: source.width, height: source.height))
+      ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+      // CoreGraphics counts y from the bottom.
+      for m in masks { ctx.fill(CGRect(x: m.minX, y: CGFloat(source.height) - m.maxY, width: m.width, height: m.height)) }
+      guard let masked = ctx.makeImage() else { throw RunnerError("mask failed") }
+      source = masked
+    }
+    var px = [UInt8](repeating: 0, count: cols * rows)
+    let ok = px.withUnsafeMutableBytes { raw -> Bool in
+      guard let ctx = CGContext(data: raw.baseAddress, width: cols, height: rows, bitsPerComponent: 8, bytesPerRow: cols, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+      ctx.interpolationQuality = .medium
+      ctx.draw(source, in: CGRect(x: 0, y: 0, width: cols, height: rows))
+      return true
+    }
+    if !ok { throw RunnerError("no grey context") }
+    return px
+  }
+
+  private static func toPixels(_ r: CGRect, _ scale: CGFloat) -> CGRect {
+    CGRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
+  }
+
+  static func jpeg(scale: Double, quality: Double) throws -> [String: Any] {
+    let (cg, _) = screen()
+    let w = max(1, Int(Double(cg.width) * scale))
+    let h = max(1, Int(Double(cg.height) * scale))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let out = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).jpegData(withCompressionQuality: CGFloat(quality)) { ctx in
+      // UIKit's y axis points down; draw through UIImage to keep the picture upright.
+      UIImage(cgImage: cg).draw(in: CGRect(x: 0, y: 0, width: w, height: h))
+      _ = ctx
+    }
+    return ["width": w, "height": h, "jpeg": out.base64EncodedString()]
+  }
+
+  static func fingerprint(cols: Int, masks: [CGRect]) throws -> [String: Any] {
+    let (cg, points) = screen()
+    let scale = CGFloat(cg.width) / max(1, points.width)
+    let rows = max(1, Int(Double(cols) * Double(points.height) / Double(points.width)))
+    let grid = try grey(cg, cols: cols, rows: rows, masks: masks.map { toPixels($0, scale) })
+    return ["cols": cols, "rows": rows, "width": Int(points.width), "height": Int(points.height), "grid": grid.map { Int($0) }]
+  }
+
+  static func frames(bounds: CGRect?, count: Int, interval: TimeInterval, size: Int) throws -> [String: Any] {
+    var luma: [Double] = []
+    var diff: [Double] = []
+    var prev: [UInt8]?
+    for i in 0..<max(1, count) {
+      if i > 0 { Thread.sleep(forTimeInterval: interval) }
+      let (cg, points) = screen()
+      let scale = CGFloat(cg.width) / max(1, points.width)
+      let px = try grey(cg, crop: bounds.map { toPixels($0, scale) }, cols: size, rows: size)
+      luma.append(Double(px.reduce(0) { $0 + Int($1) }) / Double(px.count))
+      if let p = prev { diff.append(Double(zip(px, p).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }) / Double(px.count)) }
+      prev = px
+    }
+    return ["luma": luma, "diff": diff]
+  }
+}

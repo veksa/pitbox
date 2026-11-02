@@ -15,6 +15,10 @@
   "files": [
     "dist",
     "runners/android/pitbox-runner.apk",
+    "runners/apple/Host",
+    "runners/apple/Runner",
+    "runners/apple/PitboxRunner.xcodeproj/project.pbxproj",
+    "runners/apple/PitboxRunner.xcodeproj/xcshareddata",
     "android/build.gradle",
     "android/src",
     "react-native.config.js"

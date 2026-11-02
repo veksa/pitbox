@@ -1,4 +1,8 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {describe, expect, it} from 'vitest';
+import {sourceHash} from './drivers/apple/runner.ts';
 import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
@@ -48,5 +52,17 @@ describe('apple driver', () => {
     expect(isAppleBundle('build/MyApp.app/')).toBe(true);
     expect(isAppleBundle('MyApp.ipa')).toBe(true);
     expect(isAppleBundle('app-debug.apk')).toBe(false);
+  });
+
+  it('rebuilds the runner when a source changes, not when xcuserdata does', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-runner-'));
+    fs.mkdirSync(path.join(dir, 'Runner'));
+    fs.writeFileSync(path.join(dir, 'Runner', 'A.swift'), 'let a = 1');
+    const first = sourceHash(dir);
+    fs.mkdirSync(path.join(dir, 'xcuserdata'));
+    fs.writeFileSync(path.join(dir, 'xcuserdata', 'state'), 'x');
+    expect(sourceHash(dir)).toBe(first);
+    fs.writeFileSync(path.join(dir, 'Runner', 'A.swift'), 'let a = 2');
+    expect(sourceHash(dir)).not.toBe(first);
   });
 });

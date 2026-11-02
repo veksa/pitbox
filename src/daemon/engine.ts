@@ -10,6 +10,7 @@ import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
 import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
+import {AppleRunner} from '../drivers/apple/runner.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
@@ -19,7 +20,7 @@ import {describeTool, runTool} from '../stand/tools.ts';
 import {StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import {fillRoute} from '../flows/flow.ts';
-import {DeviceUi} from '../ui/device.ts';
+import {DeviceUi, type UiHooks} from '../ui/device.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
@@ -147,32 +148,33 @@ export class Engine {
   /** The UI session of a device (one runner per device, kept between calls). */
   async ui(device?: string): Promise<DeviceUi> {
     const t = await this.#target(device);
-    if (t.platform === 'apple') throw new Error('UI automation on a simulator needs the Apple runner (not there yet)\nhint: open, install, logs, settings and screenshot work already');
-    const {a, id: serial} = t;
-    let ui = this.#uis.get(serial);
-    if (!ui) {
-      ui = new DeviceUi(serial, new AndroidRunner(a, serial), {
-        beforeAction: () => {
-          const proxy = this.#dev?.proxy;
-          if (!proxy || !proxy.apps().length) return undefined;
-          const id = crypto.randomBytes(16).toString('hex');
-          proxy.setTrace(id);
-          return id;
-        },
-        jsErrors: since => this.#jsErrors(since),
-        networkIdle: async timeoutMs => {
-          const proxy = this.#dev?.proxy;
-          if (!proxy || !proxy.apps().length) return;
-          const deadline = Date.now() + timeoutMs;
-          while (Date.now() < deadline) {
-            const answers = await proxy.query<{inflight: number}>('idle', {}, 800);
-            if (answers.every(a => a.data.inflight <= 0)) return;
-            await new Promise(r => setTimeout(r, 150));
-          }
-        },
-      }, new CrashWatcher(a.adbPath, serial, this.config.app?.android));
-      this.#uis.set(serial, ui);
-    }
+    let ui = this.#uis.get(t.id);
+    if (ui) return ui;
+    const hooks: UiHooks = {
+      beforeAction: () => {
+        const proxy = this.#dev?.proxy;
+        if (!proxy || !proxy.apps().length) return undefined;
+        const id = crypto.randomBytes(16).toString('hex');
+        proxy.setTrace(id);
+        return id;
+      },
+      jsErrors: since => this.#jsErrors(since),
+      networkIdle: async timeoutMs => {
+        const proxy = this.#dev?.proxy;
+        if (!proxy || !proxy.apps().length) return;
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const answers = await proxy.query<{inflight: number}>('idle', {}, 800);
+          if (answers.every(a => a.data.inflight <= 0)) return;
+          await new Promise(r => setTimeout(r, 150));
+        }
+      },
+    };
+    ui =
+      t.platform === 'apple'
+        ? new DeviceUi(t.id, new AppleRunner(t.s, t.id, this.config.app?.apple), hooks)
+        : new DeviceUi(t.id, new AndroidRunner(t.a, t.id), hooks, new CrashWatcher(t.a.adbPath, t.id, this.config.app?.android));
+    this.#uis.set(t.id, ui);
     return ui;
   }
 
@@ -208,7 +210,7 @@ export class Engine {
       jsErrors: since => this.#jsErrors(since),
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
-        await this.#needAndroid().resolve(name);
+        await this.#target(name);
         device = name;
       },
       ui: () => this.ui(device),
@@ -230,9 +232,8 @@ export class Engine {
       screenshot: async (name, full) => {
         const base = variant ? path.join(variant, name ?? new Date().toISOString().replace(/[:.]/g, '-')) : name;
         if (full) {
-          const a = this.#needAndroid();
           const file = path.join(this.#loaded.stateDir, 'shots', `${base ?? 'screen'}.png`);
-          return (await a.screenshot(await a.resolve(device), file)).file;
+          return ((await this.methods.screenshot({device, file})) as {file: string}).file;
         }
         return (await (await this.ui(device)).screenshot(this.#shotFile(base))).file;
       },
@@ -678,6 +679,7 @@ export class Engine {
     shutdown: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
+        await this.#uis.get(t.id)?.stop().catch(() => undefined);
         this.#uis.delete(t.id);
         return {udid: t.id, ...(await t.s.shutdown(t.id))};
       }
@@ -817,8 +819,9 @@ export class Engine {
     },
 
     key: async (p: Params) => {
-      const t = await this.#target(str(p, 'device'));
-      if (t.platform === 'apple') throw new Error('keys on a simulator need the Apple runner (not there yet)');
+      const device = str(p, 'device');
+      const t = await this.#target(device);
+      if (t.platform === 'apple') return {udid: t.id, ...(await (await this.ui(device)).key(list(p, 'keys')))};
       const keys = list(p, 'keys');
       await t.a.key(t.id, keys);
       return {serial: t.id, keys};
