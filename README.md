@@ -12,8 +12,8 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   answering its probe is adopted instead of started twice; logs go to files; services outlive agent sessions
   and daemon restarts, and only `down` stops them. Actors (extra users of the app), project tools (a protocol
   call, an SQL query) and an OpenAI-compatible LLM mock.
-- **Android** — phones, foldables, tablets, TV, XR headsets and watches, emulators and hardware (desktop,
-  glasses and car AVDs are recognised, not yet run end to end): boot, install, open apps and deep links, logs,
+- **Android** — phones, foldables, tablets, desktops, TV, XR headsets, AI glasses, watches and cars, emulators
+  and hardware: boot, install, open apps and deep links, logs,
   settings, network conditions, screenshots, keys. Stand ports are forwarded to every device and re-forwarded
   when a device reconnects.
 - **Dev server** — your bundler (`yarn start`) behind pitbox's proxy: a native file watcher on every platform
@@ -42,8 +42,10 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **Cold start, measured** — `open!` reports the activity, when the JS bundle started running and what it
   was served (bytecode or source, cached or not); a flow adds the time to its first check.
 - **What only some devices have** — fold and unfold a foldable (`posture`), rotate, run the app in a freeform
-  window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets, desktops and
-  headsets, a watch's crown (`rotary`) and buttons, TV remote and media keys.
+  window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets and desktops; a
+  watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and
+  panel controls; the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
+  controller; TV remote and media keys.
 - **Named states** — an emulator snapshot plus the project's backend dump, restored in seconds.
 - **Several devices and variants** — a flow can switch devices (`device <avd>`); `matrix` runs a flow over
   devices × font scales × themes × locales, with full-size screenshots per variant (store screenshots).

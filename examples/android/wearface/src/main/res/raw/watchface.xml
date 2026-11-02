@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WatchFace width="450" height="450">
+    <Metadata key="CLOCK_TYPE" value="DIGITAL" />
+    <Metadata key="PREVIEW_TIME" value="10:08:32" />
+    <Scene backgroundColor="#ff000000">
+        <DigitalClock x="0" y="140" width="450" height="90">
+            <TimeText format="hh:mm" align="CENTER" x="0" y="0" width="450" height="90">
+                <Font family="SYNC_TO_DEVICE" size="72" color="#ffffffff" />
+            </TimeText>
+        </DigitalClock>
+        <ComplicationSlot slotId="0" x="125" y="260" width="200" height="100" supportedTypes="SHORT_TEXT" isCustomizable="TRUE">
+            <DefaultProviderPolicy
+                defaultSystemProvider="EMPTY"
+                primaryProvider="dev.pitbox.example.wear/dev.pitbox.example.wear.PitboxComplicationService"
+                primaryProviderType="SHORT_TEXT" />
+            <BoundingBox x="0" y="0" width="200" height="100" />
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="200" height="100">
+                    <Text align="CENTER">
+                        <Font family="SYNC_TO_DEVICE" size="48" color="#ff8bc34a">
+                            <Template>%s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+                <!-- What screen readers (and pitbox's snapshot) see of the slot. -->
+                <ScreenReader>
+                    <Template>complication %s<Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                </ScreenReader>
+            </Complication>
+        </ComplicationSlot>
+    </Scene>
+</WatchFace>

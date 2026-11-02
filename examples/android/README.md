@@ -1,8 +1,10 @@
 # Android example
 
 A small native app (no framework, no AndroidX) that pitbox's own end-to-end run drives on every kind of Android
-device: one APK for phones, foldables, tablets, TVs (it has a TV launcher entry and needs no touchscreen), XR
-headsets and watches, all run end to end; desktop, glasses and car AVDs get the smoke flow too, once there is one.
+device — phones, foldables, tablets, desktops, TVs (it has a TV launcher entry and needs no touchscreen), XR
+headsets, AI glasses, watches and cars — plus two watch-only pieces: `wear/` (a tile, a complication data source,
+an ambient-aware screen; AndroidX) and `wearface/` (a Watch Face Format face, resources only, whose complication
+slot defaults to the example's data source).
 
 What it has: a text field and a button that greets, a button that asks the stand (`../stand/server.mjs` on port
 4100, forwarded to the device), a button that crashes, forty rows below the fold, and a second screen behind the
@@ -13,6 +15,10 @@ deep link `pitboxexample://detail/<id>`.
 | `smoke` | phone, foldable, tablet, desktop, XR, glasses, car | input, the stand over forwarded ports, a project tool, scrolling to a target, a deep link, back |
 | `tv` | TV | D-pad focus and center presses, the focus walk |
 | `wear` | watch | the same on a round screen a few rows tall, then the crown |
+| `watch` | watch | a tile shown and removed, the pitbox face set and its complication served, ambient on and off |
+| `xr` | XR | the view turned and recentered, the panel's menu, tidy up, minimise and back |
+| `glasses` | glasses | the temple touchpad moves the focus and presses |
+| `car` | car | night and day, driving blocks the app, parking brings it back |
 | `rotate` | phone, tablet | the layout follows a turn, the sensor takes over again |
 | `fold` | foldable | the app follows the hinge from the outer screen to the inner one |
 | `mouse` | foldable, tablet, desktop, XR | hover, a context menu on a right click, the wheel |

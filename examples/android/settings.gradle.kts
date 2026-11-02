@@ -15,3 +15,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "pitbox-example"
 include(":app")
+include(":wear")
+include(":wearface")

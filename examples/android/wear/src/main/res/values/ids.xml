@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="ambient_state" type="id" />
+    <item name="wear_title" type="id" />
+    <item name="complication_state" type="id" />
+</resources>

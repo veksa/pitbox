@@ -1,6 +1,6 @@
 // pitbox against real apps on real emulators, through its CLI.
 //
-// examples/android, a native app: for every kind of device that has an AVD on this machine (phone, foldable,
+// examples/android, a native app (plus a watch app and a watch face for watches): for every kind of device that has an AVD on this machine (phone, foldable,
 // tablet, desktop, tv, xr, glasses, wear, automotive) one AVD is booted, the app installed and the kind's flows run.
 // examples/react-native: on a phone, through pitbox's dev server — the connect link, bytecode, the in-app channel
 // (freshness, the network log) and a JS error mapped back to its source line.
@@ -29,11 +29,11 @@ const PLAN = {
   foldable: {flows: ['smoke', 'fold', 'mouse', 'window'], fails: []},
   tablet: {flows: ['smoke', 'rotate', 'mouse', 'window'], fails: []},
   desktop: {flows: ['smoke', 'mouse', 'window'], fails: []},
-  xr: {flows: ['smoke', 'mouse'], fails: []},
+  xr: {flows: ['smoke', 'mouse', 'xr'], fails: []},
   tv: {flows: ['tv'], fails: [], focusMap: true},
-  wear: {flows: ['wear'], fails: []},
-  glasses: {flows: ['smoke'], fails: []},
-  automotive: {flows: ['smoke'], fails: []},
+  wear: {flows: ['wear', 'watch'], fails: [], apks: ['wear', 'wearface']},
+  glasses: {flows: ['smoke', 'glasses'], fails: []},
+  automotive: {flows: ['smoke', 'car'], fails: []},
 };
 
 const pitboxIn = cwd => (args, opts = {}) => {
@@ -117,6 +117,8 @@ if (examples.includes('android')) {
     }
     runKind(kind, kind, pitbox, must, (avd, checks) => {
       console.log(must(['install', nativeApk, '--device', avd, '--replace']));
+      // Watches also get the watch app (tile, complication, ambient) and the watch face that shows it.
+      for (const m of plan.apks ?? []) console.log(must(['install', path.join(nativeDir, m, 'build', 'outputs', 'apk', 'debug', `${m}-debug.apk`), '--device', avd, '--replace']));
       for (const flow of plan.flows) {
         const r = pitbox(['run', flow, '--device', avd]);
         head(r.out);

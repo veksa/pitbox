@@ -1,0 +1,15 @@
+# What only a watch has: a tile in the carousel, a complication on a watch face, the ambient state.
+# Needs the wear app (../wear) and the face (../wearface) installed.
+wear tile show dev.pitbox.example.wear/dev.pitbox.example.wear.PitboxTileService
+wait text="pitbox tile" 10
+wear tile remove dev.pitbox.example.wear/dev.pitbox.example.wear.PitboxTileService
+wear face dev.pitbox.example.wearface
+sleep 3000
+open! dev.pitbox.example.wear
+wait id=wear_title 20
+expect text="complication served"
+wear ambient on
+expect text="ambient"
+wear ambient off
+expect text="interactive"
+wear home

@@ -1,0 +1,14 @@
+# An XR headset: the view turns and comes back, the panel's own controls minimise the app and its menu answers.
+open!
+wait id=title 30
+xr look 30
+xr look -30,10
+xr recenter
+xr panel menu
+wait id=tidy_up_button 5
+xr panel tidy
+expect id=title
+xr panel minimize
+wait gone id=title 10
+open
+wait id=title 20

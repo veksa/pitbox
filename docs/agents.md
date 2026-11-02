@@ -41,7 +41,13 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   value=90|auto`, `device action=window value="freeform 0,0,900,1300"`; a mouse through `press kind=right|hover`
   and `swipe via=wheel`; shortcuts as `key keys=["ctrl+c"]`.
 - **Watches:** `swipe via=rotary direction=down steps=5` turns the crown; `swipe direction=right` is the
-  system back gesture.
+  system back gesture; `device action=wear value="tile show <component>"`, `value="face <package>"`,
+  `value="ambient on"`, `value=home`.
+- **XR headsets:** `device action=xr value="look 30"` turns the view (emulator), `value=recenter` brings it back,
+  `value="panel minimize"` (or close, menu, tidy, info, spatial-audio, close-app) uses the panel's own controls.
+- **Glasses:** `touchpad gesture=down|up|forward|back|tap` — the temple touchpad moves focus and presses.
+- **Cars:** `device action=car value=night`, `value="drive 20"` (apps not made for driving get blocked),
+  `value=park`, `value="rotary cw"`.
 
 ## Checking instead of looking
 

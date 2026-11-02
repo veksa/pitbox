@@ -72,6 +72,10 @@ locales.
 | `run <flow> key=value…` | runs another flow file with parameters (nesting up to 5 deep) |
 | `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge |
 | `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor. On iPhone and iPad simulators it turns the device, and fails when the app stays as it was (a folded phone's cover screen, a portrait-only app) |
+| `wear tile show|add|remove <component>` · `wear face <package|component>` · `wear ambient on|off` · `wear home` | a watch: a tile in the carousel (shown, added, removed), the current watch face (a Watch Face Format package; faces with code no longer run on current Wear OS), the ambient state (always-on display enabled), the watch face itself (the home key toggles face and app list) |
+| `xr look yaw[,pitch[,roll]]` · `xr move dx,dy,dz` · `xr recenter` | an XR emulator's view: turns the head by degrees (turns add up), moves it by metres, recenters — through the emulator's control channel |
+| `xr panel minimize|close|menu|info|spatial-audio|tidy|close-app` | an XR headset: the controls of the app's panel — its caption and the caption's menu |
+| `car day|night|auto` · `car drive [m/s]` · `car park` · `car rotary cw|ccw [n]` | a car: the cabin's day-night mode, driving (the system blocks apps not made for it, as in a moving car), parking, the rotary controller |
 | `window freeform [x,y,w,h]` · `window resize x,y,w,h` · `window fullscreen` | the app as a desktop-style window, resized, or fullscreen again (switching mode relaunches the app; freeform windows stay enabled in the device's settings) |
 
 ### Acting
@@ -92,6 +96,7 @@ Every action waits for the UI to settle before the next step.
 | `touch down <selector>` · `touch move <selector>` · `touch up` | a finger held across steps — check what exists only while touching |
 | `mouse right <selector>` · `mouse hover <selector>` | a mouse: right click (context menus), pointer over the target (hover states) — tablets, desktops, headsets |
 | `mouse wheel up|down [steps] [selector]` | turns the wheel `steps` notches (default 3) over the target or the app's scroller |
+| `touchpad forward|back|up|down|tap` | the temple touchpad of AI glasses: swipes move the focus as D-pad keys would, a tap presses the focused control |
 | `rotary up|down [steps]` | a watch crown or bezel; the events go to the focused view, so a scroller that never takes focus does not move (the answer says so) |
 | `sleep <ms>` | waits; prefer `wait` |
 

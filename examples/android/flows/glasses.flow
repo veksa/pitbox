@@ -1,0 +1,10 @@
+# AI glasses: no touchscreen, a touchpad on the temple. Swipes move the focus as a D-pad would, a tap presses.
+open!
+wait id=title 20
+# Nothing has focus until the first swipe: it lands on the first control.
+touchpad down
+expect focus id=name
+touchpad down
+expect focus id=greet
+touchpad tap
+expect text="Hello, stranger"

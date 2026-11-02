@@ -1,0 +1,12 @@
+# A car: the cabin's day-night mode, and driving — the system blocks an app not made for it until the car parks.
+open!
+wait id=title 20
+car night
+expect text~="night"
+car day
+expect text~="day"
+car drive 20
+wait gone id=title 10
+car park
+wait id=title 15
+car auto

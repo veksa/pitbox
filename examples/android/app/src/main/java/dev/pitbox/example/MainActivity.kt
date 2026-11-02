@@ -31,7 +31,8 @@ class MainActivity : Activity() {
       val h = v.height / d
       // The display's rotation from its natural orientation, which is landscape on many tablets.
       @Suppress("DEPRECATION") val turn = windowManager.defaultDisplay.rotation * 90
-      val text = "${if (w >= 600) "wide" else "narrow"} ${if (w > h) "landscape" else "portrait"} r$turn"
+      val night = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+      val text = "${if (w >= 600) "wide" else "narrow"} ${if (w > h) "landscape" else "portrait"} r$turn ${if (night) "night" else "day"}"
       if (shape.text != text) shape.post { shape.text = text }
     }
 
