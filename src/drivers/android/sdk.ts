@@ -42,18 +42,28 @@ export const listAvds = (): string[] => {
   }
 };
 
-/** Device kind from an AVD's config: phone, tv, xr, wear, automotive. */
+/** Device kind from an AVD's config: phone, foldable, tablet, desktop, tv, xr, glasses, wear, automotive. */
 export const avdKind = (name: string): string => {
   try {
-    const ini = fs.readFileSync(path.join(avdHome(), `${name}.avd`, 'config.ini'), 'utf8');
-    const tag = /tag\.ids?\s*=\s*(.+)/.exec(ini)?.[1] ?? '';
-    if (/android-tv|google-tv/.test(tag)) return 'tv';
-    if (/xr/.test(tag)) return 'xr';
-    if (/wear/.test(tag)) return 'wear';
-    if (/automotive/.test(tag)) return 'automotive';
-    if (/hw\.sensor\.hinge\s*=\s*yes/.test(ini)) return 'foldable';
-    return 'phone';
+    return kindOfAvdConfig(fs.readFileSync(path.join(avdHome(), `${name}.avd`, 'config.ini'), 'utf8'));
   } catch {
     return 'unknown';
   }
+};
+
+export const kindOfAvdConfig = (ini: string): string => {
+  const tag = /tag\.ids?\s*=\s*(.+)/.exec(ini)?.[1] ?? '';
+  if (/android-tv|google-tv/.test(tag)) return 'tv';
+  if (/ai-glasses/.test(tag)) return 'glasses';
+  if (/xr/.test(tag)) return 'xr';
+  if (/wear/.test(tag)) return 'wear';
+  if (/automotive/.test(tag)) return 'automotive';
+  if (/hw\.sensor\.hinge\s*=\s*yes/.test(ini)) return 'foldable';
+  const device = /hw\.device\.name\s*=\s*(.+)/.exec(ini)?.[1]?.trim() ?? '';
+  if (/^desktop/.test(device)) return 'desktop';
+  // A tablet by size: the short side is at least 600 dp, the usual line between phone and tablet layouts.
+  const px = (k: string) => Number(new RegExp(`hw\\.lcd\\.${k}\\s*=\\s*(\\d+)`).exec(ini)?.[1]);
+  const shortDp = (Math.min(px('width'), px('height')) * 160) / (px('density') || 160);
+  if (shortDp >= 600) return 'tablet';
+  return 'phone';
 };

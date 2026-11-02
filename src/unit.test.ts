@@ -221,3 +221,20 @@ describe('swipe area', () => {
     expect(swipeArea(undefined, 1080, 2400)).toEqual([0, 0, 1080, 2400]);
   });
 });
+
+describe('avd kinds', () => {
+  it('tells device kinds apart from an AVD config', async () => {
+    const {kindOfAvdConfig} = await import('./drivers/android/sdk.ts');
+    const ini = (o: Record<string, string>) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join('\n');
+    const screen = (w: number, h: number, d: number) => ({'hw.lcd.width': String(w), 'hw.lcd.height': String(h), 'hw.lcd.density': String(d)});
+    expect(kindOfAvdConfig(ini({'tag.id': 'google_apis_playstore', ...screen(1080, 2400, 420)}))).toBe('phone');
+    expect(kindOfAvdConfig(ini({'tag.id': 'google_apis_playstore', 'hw.device.name': 'pixel_tablet', ...screen(2560, 1600, 320)}))).toBe('tablet');
+    expect(kindOfAvdConfig(ini({'tag.id': 'google_apis_playstore', 'hw.sensor.hinge': 'yes', ...screen(2076, 2152, 390)}))).toBe('foldable');
+    expect(kindOfAvdConfig(ini({'tag.id': 'google_apis_playstore', 'hw.device.name': 'desktop_medium', ...screen(1920, 1080, 160)}))).toBe('desktop');
+    expect(kindOfAvdConfig(ini({'tag.id': 'android-wear', ...screen(454, 454, 320)}))).toBe('wear');
+    expect(kindOfAvdConfig(ini({'tag.id': 'google-tv'}))).toBe('tv');
+    expect(kindOfAvdConfig(ini({'tag.id': 'google-xr'}))).toBe('xr');
+    expect(kindOfAvdConfig(ini({'tag.id': 'ai-glasses'}))).toBe('glasses');
+    expect(kindOfAvdConfig(ini({'tag.id': 'android-automotive'}))).toBe('automotive');
+  });
+});
