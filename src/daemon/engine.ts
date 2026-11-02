@@ -10,6 +10,7 @@ import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
+import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
 import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
@@ -384,7 +385,7 @@ export class Engine {
       if (this.#forwarded.has(d.serial) && !verify) continue;
       // A device seen for the first time is checked at once: a flow may need the stand seconds after a boot.
       const fresh = !this.#forwarded.has(d.serial);
-      if (d.avd && this.#relayAvds().has(d.avd)) this.#relayed.add(d.serial);
+      if (d.avd && this.#relayAvds().has(d.avd) && !this.#noRelay.has(d.serial)) this.#relayed.add(d.serial);
       if (this.#relayed.has(d.serial) || (mode === 'relay' && d.emulator)) {
         // The relay lives in the runner; a restarted runner has none, so re-apply when they are gone.
         const ui = await this.ui(d.serial);
@@ -397,6 +398,16 @@ export class Engine {
         }
         this.#relayed.add(d.serial);
         this.#forwarded.add(d.serial);
+        // The relay needs the emulator's network (the host alias); an image without one (some glasses) has only
+        // loopback. Then adb reverse is the only way, and the device goes back to it for good.
+        if (mode === 'auto' && (verify || fresh) && !(await this.#carriesSettled(d.serial, ports))) {
+          await ui.runner.call('unrelay');
+          this.#relayed.delete(d.serial);
+          this.#noRelay.add(d.serial);
+          if (d.avd) this.#forgetRelay(d.avd);
+          this.#forwarded.delete(d.serial);
+          applied.push(...(await this.ensureForwards(true)).filter(a => a.serial === d.serial));
+        }
         continue;
       }
       const have = await android.reverseList(d.serial);
@@ -406,12 +417,13 @@ export class Engine {
         applied.push({serial: d.serial, ports: missing});
       }
       this.#forwarded.add(d.serial);
-      // `adb reverse` can list its forwards and carry nothing; on an emulator, switch to the relay then.
-      if (mode === 'auto' && d.emulator && (verify || fresh) && !(await this.#forwardCarries(d.serial, ports))) {
+      // `adb reverse` can list its forwards and carry nothing; on an emulator, try the relay then. It is
+      // remembered for the AVD only once the relay is seen carrying data.
+      if (mode === 'auto' && d.emulator && !this.#noRelay.has(d.serial) && (verify || fresh) && !(await this.#carriesSettled(d.serial, ports))) {
         this.#relayed.add(d.serial);
-        if (d.avd) this.#rememberRelay(d.avd);
         this.#forwarded.delete(d.serial);
         applied.push(...(await this.ensureForwards(true)).filter(a => a.serial === d.serial));
+        if (this.#relayed.has(d.serial) && d.avd) this.#rememberRelay(d.avd);
       }
     }
     return applied;
@@ -419,6 +431,15 @@ export class Engine {
 
   /** Serials whose forwards go through the runner's relay instead of `adb reverse`. */
   readonly #relayed = new Set<string>();
+  /** Serials where the relay carried nothing either (no emulator network): adb reverse only. */
+  readonly #noRelay = new Set<string>();
+
+  /** Whether forwards carry data, asked twice a moment apart: right after a boot or a new forward the first answer can be a false no. */
+  async #carriesSettled(serial: string, ports: number[]): Promise<boolean> {
+    if (await this.#forwardCarries(serial, ports)) return true;
+    await new Promise(r => setTimeout(r, 1500));
+    return this.#forwardCarries(serial, ports);
+  }
 
   /**
    * AVDs whose adb reverse was found broken — remembered so the next daemon relays them from the start. A fact
@@ -433,6 +454,21 @@ export class Engine {
       }
     };
     return new Set([...read(machineRelayFile()), ...read(path.join(this.#loaded.stateDir, 'relay-avds.json'))]);
+  }
+
+  #forgetRelay(avd: string) {
+    const set = this.#relayAvds();
+    if (!set.delete(avd)) return;
+    fs.mkdirSync(path.dirname(machineRelayFile()), {recursive: true});
+    fs.writeFileSync(machineRelayFile(), JSON.stringify([...set]));
+    // The project's own older list would bring it back.
+    const local = path.join(this.#loaded.stateDir, 'relay-avds.json');
+    try {
+      const list = (JSON.parse(fs.readFileSync(local, 'utf8')) as string[]).filter(x => x !== avd);
+      fs.writeFileSync(local, JSON.stringify(list));
+    } catch {
+      // no project list
+    }
   }
 
   #rememberRelay(avd: string) {
@@ -908,6 +944,7 @@ export class Engine {
     uiKey: async (p: Params) => (await this.ui(str(p, 'device'))).key(list(p, 'keys')),
     mouse: async (p: Params) =>
       (await this.ui(str(p, 'device'))).mouse(req(p, 'action') as 'right' | 'hover' | 'wheel', str(p, 'target'), {direction: str(p, 'direction') as 'up' | 'down' | undefined, steps: num(p, 'steps')}),
+    touchpad: async (p: Params) => (await this.ui(str(p, 'device'))).touchpad(req(p, 'gesture') as 'forward' | 'back' | 'up' | 'down' | 'tap'),
     rotary: async (p: Params) => (await this.ui(str(p, 'device'))).rotary((str(p, 'direction') as 'up' | 'down' | undefined) ?? 'down', num(p, 'steps') ?? 3),
     posture: async (p: Params) => this.#reshape(str(p, 'device'), (a, serial) => a.posture(serial, req(p, 'value'))),
     rotate: async (p: Params) => {
@@ -920,6 +957,31 @@ export class Engine {
         return {udid: t.id, rotation: r.rotation};
       }
       return this.#reshape(str(p, 'device'), (a, serial) => a.rotate(serial, req(p, 'value')));
+    },
+    xr: async (p: Params) => {
+      const [op, ...rest] = req(p, 'value').split(/\s+/);
+      if (op === 'panel') {
+        const what = rest[0] ?? '';
+        const control = XR_PANEL[what];
+        if (!control) throw new Error(`xr panel ${Object.keys(XR_PANEL).join('|')}`);
+        const ui = await this.ui(str(p, 'device'));
+        const noCaption = 'no app panel caption on screen\nhint: xr panel works on an XR headset with an app open';
+        if (control.menu && !(await ui.clickSystem(control.id))) {
+          // A menu item: open the caption's menu first.
+          if (!(await ui.clickSystem(XR_PANEL.menu!.id))) throw new Error(noCaption);
+          if (!(await ui.clickSystem(control.id))) throw new Error(`the panel menu has no ${what} item`);
+        } else if (!control.menu && !(await ui.clickSystem(control.id))) throw new Error(noCaption);
+        return {serial: ui.serial, op: `panel ${what}`};
+      }
+      return this.#reshape(str(p, 'device'), async (_a, serial) => xrView(serial, op!, rest.join(',')));
+    },
+    car: async (p: Params) => {
+      const [op, ...args] = req(p, 'value').split(' ').filter(Boolean);
+      return this.#reshape(str(p, 'device'), (a, serial) => a.car(serial, op!, args));
+    },
+    wear: async (p: Params) => {
+      const [op, ...args] = req(p, 'value').split(/\s+/);
+      return this.#reshape(str(p, 'device'), (a, serial) => a.wear(serial, op!, args));
     },
     window: async (p: Params) => {
       const [mode, ...rest] = req(p, 'value').split(/\s+/);

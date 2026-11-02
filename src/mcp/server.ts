@@ -81,9 +81,9 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Devices and the app
   tool(
     'device',
-    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now); posture value=closed|half|open|rear|reset (foldables), rotate value=0|90|180|270|auto, window value="freeform [x,y,w,h]"|fullscreen|"resize x,y,w,h" (relaunches the app).',
-    {action: z.enum(['list', 'boot', 'shutdown', 'info', 'reverse', 'posture', 'rotate', 'window']), avd: opt.str(), wipe: opt.bool(), value: opt.str(), device},
-    a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', info: 'info', reverse: 'reverse', posture: 'posture', rotate: 'rotate', window: 'window'})[a.action as string]!,
+    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now); posture value=closed|half|open|rear|reset (foldables), rotate value=0|90|180|270|auto, window value="freeform [x,y,w,h]"|fullscreen|"resize x,y,w,h" (relaunches the app), wear value="tile add|show|remove <component>"|"face <package>"|"ambient on|off"|home, xr value="look yaw,pitch"|"move dx,dy,dz"|recenter|"panel minimize|close|menu|info|spatial-audio|tidy|close-app", car value=day|night|auto|"drive [m/s]"|park|"rotary cw|ccw [n]".',
+    {action: z.enum(['list', 'boot', 'shutdown', 'info', 'reverse', 'posture', 'rotate', 'window', 'wear', 'xr', 'car']), avd: opt.str(), wipe: opt.bool(), value: opt.str(), device},
+    a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', info: 'info', reverse: 'reverse', posture: 'posture', rotate: 'rotate', window: 'window', wear: 'wear', xr: 'xr', car: 'car'})[a.action as string]!,
   );
   tool(
     'app',
@@ -107,6 +107,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   );
   tool('fill', 'Replace a field\'s text.', {target, text: z.string(), device}, 'fill');
   tool('type', 'Append text to the focused field.', {text: z.string(), device}, 'type');
+  tool('touchpad', 'The temple touchpad of AI glasses: forward/back/up/down swipes move focus, tap presses.', {gesture: z.enum(['forward', 'back', 'up', 'down', 'tap']), device}, 'touchpad');
   tool('key', 'Keys: back home up down left right center enter menu, media/TV (play next channel_up guide …), watch (stem_1), combos (ctrl+c), or keycodes.', {keys: z.array(z.string()), device}, 'uiKey');
   tool(
     'swipe',

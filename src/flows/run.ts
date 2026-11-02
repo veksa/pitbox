@@ -20,7 +20,7 @@ export type FlowHost = {
   visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
   screenshot: (name?: string, full?: boolean) => Promise<string>;
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
-  reshape: (op: 'posture' | 'rotate' | 'window', value: string) => Promise<unknown>;
+  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car', value: string) => Promise<unknown>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
   jsErrors?: (since: number) => Promise<{summary: string; lines: string[]}[]>;
 };
@@ -67,7 +67,13 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'posture':
     case 'rotate':
     case 'window':
-      await host.reshape(s.cmd, a.join(' '));
+    case 'wear':
+    case 'xr':
+    case 'car':
+      await host.reshape(s.cmd, a.map(unquote).join(' '));
+      return;
+    case 'touchpad':
+      await (await host.ui()).touchpad(a[0] as 'forward' | 'back' | 'up' | 'down' | 'tap');
       return;
     case 'rotary':
       await (await host.ui()).rotary(a[0] === 'up' ? 'up' : 'down', a[1] ? Number(a[1]) : 3);

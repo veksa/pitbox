@@ -261,3 +261,27 @@ describe('form factors', () => {
     expect(taskIdOf(dump, 'com.example')).toBeUndefined();
   });
 });
+
+describe('watch and window helpers', () => {
+  it('reads Wear OS debug broadcast results', async () => {
+    const {parseBroadcast} = await import('./drivers/android/formfactor.ts');
+    expect(parseBroadcast('Broadcast completed: result=1, data="Index=[0]"')).toEqual({ok: true, data: 'Index=[0]', code: 1});
+    expect(parseBroadcast('Broadcast completed: result=2, data="set-watchface failed."')).toMatchObject({ok: false, code: 2});
+    expect(parseBroadcast('Broadcast completed: result=0')).toMatchObject({ok: false, code: 0});
+  });
+
+  it('swipes in the topmost app window, not a larger scroller behind it', async () => {
+    const {buildSnapshot, swipeArea} = await import('./ui/snapshot.ts');
+    const windows = [
+      {type: 'app', title: 'small app window', pkg: 'com.example.app'},
+      {type: 'app', title: 'launcher', pkg: 'com.example.launcher'},
+    ];
+    const snap = buildSnapshot(windows, [
+      {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 600, 900]},
+      {p: 0, w: 0, c: 'ScrollView', b: [0, 200, 600, 900], f: 's'},
+      {p: -1, w: 1, c: 'FrameLayout', b: [0, 0, 3840, 2160]},
+      {p: 2, w: 1, c: 'RecyclerView', b: [0, 0, 3840, 2100], f: 's'},
+    ]);
+    expect(swipeArea(snap, 3840, 2160)).toEqual([0, 200, 600, 900]);
+  });
+});

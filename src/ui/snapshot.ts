@@ -251,6 +251,15 @@ export const selectorFor = (snap: Snapshot, index: number): string => {
 };
 
 /**
+ * The top edge of the on-screen keyboard, or undefined when none is shown. The keyboard's own views count, not
+ * its window's root, which can span the whole screen (a split keyboard).
+ */
+export const keyboardTop = (snap: Snapshot, height: number): number | undefined => {
+  const top = Math.min(...snap.nodes.filter(n => snap.windows[n.w]?.type === 'ime' && n.b[3] - n.b[1] < height * 0.6).map(n => n.b[1]));
+  return Number.isFinite(top) ? top : undefined;
+};
+
+/**
  * Where a directional swipe should run: the app's largest scrollable view, above the keyboard. A swipe across the
  * whole screen starts on whatever is there — the keyboard a large screen keeps open, a tablet's taskbar — and
  * scrolls nothing.
@@ -259,11 +268,15 @@ export const swipeArea = (snap: Snapshot | undefined, width: number, height: num
   let area: Bounds = [0, 0, width, height];
   if (!snap) return area;
   const size = (b: Bounds) => Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
+  // The topmost app window that scrolls (windows come top layer first): on a desktop the launcher behind a small
+  // app window has a larger scroller, and a swipe there moves nothing the app shows.
   const scrollables = snap.nodes.filter(n => (n.f ?? '').includes('s') && snap.windows[n.w]?.type === 'app' && size(n.b) > 0);
-  const largest = scrollables.sort((a, b) => size(b.b) - size(a.b))[0];
-  if (largest && size(largest.b) >= width * height * 0.1) area = [...largest.b];
-  // The keyboard's own views, not its window's root, which can span the whole screen (a split keyboard).
-  const imeTop = Math.min(...snap.nodes.filter(n => snap.windows[n.w]?.type === 'ime' && n.b[3] - n.b[1] < height * 0.6).map(n => n.b[1]));
+  const top = Math.min(...scrollables.map(n => n.w));
+  const largest = scrollables.filter(n => n.w === top).sort((a, b) => size(b.b) - size(a.b))[0];
+  const root = largest ? snap.nodes.find(n => n.w === largest.w && n.p === -1) : undefined;
+  // Large within its own window: a small strip that happens to scroll (a chip row) is not the content.
+  if (largest && size(largest.b) >= (root ? size(root.b) : width * height) * 0.3) area = [...largest.b];
+  const imeTop = keyboardTop(snap, height) ?? Infinity;
   if (Number.isFinite(imeTop) && imeTop > area[1] + 100 && imeTop < area[3]) area = [area[0], area[1], area[2], imeTop];
   return area;
 };

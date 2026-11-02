@@ -153,11 +153,17 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'scroll':
     case 'mouse':
     case 'rotary':
+    case 'touchpad':
       return fmtAct(r as ActResult);
     case 'posture':
       return `${x.serial}: ${x.posture === 'reset' ? 'posture back to the hinge' : `posture ${x.posture}`} (states: ${(x.states as string[]).join(', ')})`;
     case 'rotate':
       return `${x.serial ?? x.udid}: ${x.rotation === 'auto' ? 'rotation follows the sensor' : `rotation locked at ${x.rotation}°`}`;
+    case 'xr':
+      return `${x.serial}: ${x.op}${x.value ? ` ${x.value}` : ''}`;
+    case 'car':
+    case 'wear':
+      return `${x.serial}: ${x.op}${x.detail ? ` — ${x.detail}` : ''}`;
     case 'window':
       return `${x.serial}: ${x.mode === 'fullscreen' ? 'app fullscreen' : x.mode === 'resize' ? `window resized to ${x.bounds}` : `app in a freeform window${x.bounds ? ` at ${x.bounds}` : ''}`}`;
     case 'snapshot':

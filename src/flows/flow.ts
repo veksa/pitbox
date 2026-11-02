@@ -103,7 +103,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'posture', 'rotate', 'window', 'wait', 'expect', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'wait', 'expect', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -131,9 +131,13 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'run':
       case 'tool':
       case 'rotary':
+      case 'touchpad':
       case 'posture':
       case 'rotate':
       case 'window':
+      case 'wear':
+      case 'xr':
+      case 'car':
         need(1);
         break;
       case 'mouse':

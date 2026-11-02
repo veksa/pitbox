@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, matches, onlyClosedKeyboard, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -132,8 +132,29 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   /** Resolves against the last snapshot for refs, against a fresh one for everything else. */
   async #target(selector: string) {
-    const snap = /^@e\d+$/.test(selector.trim()) && this.last ? this.last : await this.snapshot();
-    return {snap, target: resolveTarget(snap, selector)};
+    const ref = /^@e\d+$/.test(selector.trim());
+    let snap = ref && this.last ? this.last : await this.snapshot();
+    // A target under the on-screen keyboard, or pushed out of a window the keyboard shrank (a car's keyboard
+    // covers half the screen), is reached by hiding the keyboard first; tapping its coordinates would type a
+    // letter instead.
+    // Where the keyboard starts; 0 when its window is there but shows no views of its own size (a car's keyboard
+    // exposes only its root).
+    const imeShown = snap.nodes.some(n => snap.windows[n.w]?.type === 'ime');
+    const top = ref || !imeShown ? undefined : (keyboardTop(snap, (await this.size()).height) ?? 0);
+    let target: ReturnType<typeof resolveTarget> | undefined;
+    try {
+      target = resolveTarget(snap, selector);
+    } catch (e) {
+      if (top === undefined) throw e;
+    }
+    const covered = top !== undefined && (!target || (target.node && snap.windows[target.node.w]?.type !== 'ime' && target.y >= top));
+    if (covered || !target) {
+      await this.runner.call('key', {code: 4});
+      await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
+      snap = await this.snapshot();
+      target = resolveTarget(snap, selector);
+    }
+    return {snap, target};
   }
 
   /** Crashes, ANRs and JS errors of the app since `since`, for an action's result. */
@@ -261,6 +282,34 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return {action: 'rotary', target: `${direction} ${steps}`, note, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
   }
 
+  /**
+   * Clicks a node of the system UI by its id, through accessibility rather than a tap: on XR each panel and its
+   * caption have coordinates of their own, so a tap at a caption's bounds would land in the app. False when no
+   * such node is on screen.
+   */
+  async clickSystem(id: string): Promise<boolean> {
+    const tree = await this.runner.call<{windows: UiWindow[]; nodes: UiNode[]}>('tree', {all: true}, 30_000);
+    const n = tree.nodes.find(x => x.id === id && tree.windows[x.w]?.pkg !== undefined);
+    if (!n) return false;
+    const r = await this.runner.call<{done: boolean}>('node-action', {window: n.w, bounds: n.b, action: 16}, 15_000);
+    this.last = undefined;
+    await new Promise(res => setTimeout(res, 800));
+    return r.done;
+  }
+
+  /**
+   * A touchpad that navigates rather than points (the temple of AI glasses): `forward`/`back`/`up`/`down`
+   * swipes move the focus as D-pad keys would, `tap` presses the focused control.
+   */
+  async touchpad(gesture: 'forward' | 'back' | 'up' | 'down' | 'tap'): Promise<ActResult> {
+    const t0 = this.#begin();
+    const before = this.last ?? (await this.snapshot());
+    this.#front(before);
+    await this.runner.call('touchnav', {gesture});
+    this.record(`touchpad ${gesture}`);
+    return {action: 'touchpad', target: gesture, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+  }
+
   /** The screen changed shape (folded, rotated, resized): the next action measures it again. */
   screenChanged() {
     this.#size = undefined;
@@ -345,7 +394,9 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       right: [ax + w * 0.3, ay + h / 2, ax + w * 0.8, ay + h / 2],
     };
     const [x1, y1, x2, y2] = (c[dir] ?? c.up!).map(Math.round);
-    return {x1, y1, x2, y2, duration: 250};
+    // Unhurried: a short, fast drag starts no scroll on some screens (a 4K desktop display), while this one moves
+    // the content everywhere.
+    return {x1, y1, x2, y2, duration: 450};
   }
 
   /** A system dialog over everything ("System UI isn't responding", "… keeps stopping"), if there is one. */
@@ -372,7 +423,14 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const t0 = Date.now();
     const deadline = t0 + (opts.timeoutMs ?? 10_000);
     let snap = await this.snapshot();
+    let waitedOut = 0;
     while (matches(snap, selector) === !!opts.gone) {
+      // A loaded machine makes the system UI miss its deadline ("System UI isn't responding"); Wait is what a
+      // person would press, and the dialog would otherwise hide the screen until the wait times out.
+      if (waitedOut < 3 && /isn.t responding/i.test(this.systemDialog(snap) ?? '')) {
+        waitedOut++;
+        await this.dismissSystemDialog().catch(() => undefined);
+      }
       if (Date.now() > deadline) {
         const dialog = this.systemDialog(snap);
         throw new Error(`timed out after ${Math.round((opts.timeoutMs ?? 10_000) / 1000)}s waiting for ${opts.gone ? `"${selector}" to go` : `"${selector}"`}${dialog ? ` — a system dialog is on top: "${dialog}" (doctor fix=true dismisses it)` : ''}`);
