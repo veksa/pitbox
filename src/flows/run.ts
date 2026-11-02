@@ -19,7 +19,7 @@ export type FlowResult = {
   ok: boolean;
   steps: number;
   ms: number;
-  failed?: {line: number; step: string; error: string; screen?: string[]; screenshot?: string};
+  failed?: {line: number; step: string; error: string; screen?: string[]; screenshot?: string; crashes?: {kind: string; summary: string; lines: string[]}[]};
   notes: string[];
 };
 
@@ -147,6 +147,8 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
       if (depth === 0) {
         try {
           const ui = await host.ui();
+          const crashes = ui.crashesSince(t0);
+          if (crashes.length) failed.crashes = crashes;
           failed.screen = (await ui.snapshot()).lines.slice(0, 40);
           failed.screenshot = await host.screenshot(`failed-line-${s.line}`);
         } catch {

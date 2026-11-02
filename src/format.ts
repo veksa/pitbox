@@ -80,8 +80,9 @@ export const fmtAct = (r: ActResult): string => {
   // A slow action says where its time went, so the next turn knows whether the app or the tool was slow.
   const slow = r.ms > 3000 && r.phases ? ` · slow: ${Object.entries(r.phases).filter(([, v]) => v >= 100).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
   const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}${slow}`;
-  if (!r.diff.changed) return `${head}\nno change on screen`;
-  return [head, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
+  const broke = (r.crashes ?? []).flatMap(c => [`! app ${c.kind === 'anr' ? 'not responding (ANR)' : c.kind === 'native-crash' ? 'crashed (native)' : 'crashed'}: ${c.summary}`, ...c.lines.slice(0, 4).map(l => `    ${l}`)]);
+  if (!r.diff.changed) return [head, ...broke, 'no change on screen'].join('\n');
+  return [head, ...broke, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
 };
 
 export const fmtFlow = (r: FlowResult): string => {
@@ -91,6 +92,7 @@ export const fmtFlow = (r: FlowResult): string => {
     `✗ flow failed at line ${f.line}: ${f.step}`,
     `  ${f.error}`,
     `  after ${r.steps} passing steps, ${seconds(r.ms)}`,
+    ...(f.crashes ?? []).flatMap(c => [`  ! app ${c.kind === 'anr' ? 'not responding (ANR)' : 'crashed'}: ${c.summary}`, ...c.lines.slice(0, 6).map(l => `      ${l}`)]),
     ...(f.screenshot ? [`  screenshot: ${f.screenshot}`] : []),
     ...(f.screen ? ['screen:', ...f.screen] : []),
     ...r.notes,

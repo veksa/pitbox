@@ -140,7 +140,7 @@ export class Engine {
             await new Promise(r => setTimeout(r, 150));
           }
         },
-      });
+      }, this.config.app?.android);
       this.#uis.set(serial, ui);
     }
     return ui;

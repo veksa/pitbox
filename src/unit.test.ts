@@ -143,3 +143,26 @@ describe('cli and engine agree', () => {
     }
   });
 });
+
+describe('crash events', () => {
+  it('collects crashes and ANRs of the app with their stack, ignoring other apps', async () => {
+    const {CrashParser} = await import('./drivers/android/events.ts');
+    const p = new CrashParser('com.example.app');
+    const t = 1_800_000_000;
+    [
+      `${t}.100  4242  4242 E AndroidRuntime: FATAL EXCEPTION: main`,
+      `${t}.101  4242  4242 E AndroidRuntime: Process: com.example.app, PID: 4242`,
+      `${t}.102  4242  4242 E AndroidRuntime: java.lang.IllegalStateException: boom`,
+      `${t}.103  4242  4242 E AndroidRuntime: \tat com.example.app.Main.onCreate(Main.kt:12)`,
+      `${t}.200   700   720 I ActivityManager: Start proc 4300:com.other/u0a1`,
+      `${t}.300   700   720 E ActivityManager: ANR in com.example.app (com.example.app/.MainActivity)`,
+      `${t}.400   700   720 E ActivityManager: ANR in com.other.app`,
+      `${t}.500  5000  5000 E AndroidRuntime: FATAL EXCEPTION: main`,
+      `${t}.501  5000  5000 E AndroidRuntime: Process: com.other, PID: 5000`,
+    ].forEach(l => p.feed(l));
+    const events = p.since(t * 1000);
+    expect(events.map(e => e.kind)).toEqual(['crash', 'anr']);
+    expect(events[0]?.summary).toBe('java.lang.IllegalStateException: boom');
+    expect(events[0]?.lines[0]).toBe('Process: com.example.app, PID: 4242');
+  });
+});

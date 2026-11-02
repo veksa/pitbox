@@ -5,9 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {KEYS, type AndroidDriver} from '../drivers/android/driver.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
+import {CrashWatcher, type AppEvent} from '../drivers/android/events.ts';
 import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
-export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>};
+export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
 export type UiHooks = {
   /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
@@ -33,9 +34,13 @@ export class AndroidUi {
   readonly #hooks: UiHooks;
   #trace?: string;
 
-  constructor(driver: AndroidDriver, serial: string, hooks: UiHooks = {}) {
+  readonly #crashes: CrashWatcher;
+
+  constructor(driver: AndroidDriver, serial: string, hooks: UiHooks = {}, pkg?: string) {
     this.#hooks = hooks;
     this.serial = serial;
+    this.#crashes = new CrashWatcher(driver.adbPath, serial, pkg);
+    this.#crashes.start();
     this.runner = new AndroidRunner(driver, serial);
   }
 
@@ -106,6 +111,16 @@ export class AndroidUi {
     return {snap, target: resolveTarget(snap, selector)};
   }
 
+  /** Crashes and ANRs of the app since `since`, for an action's result. */
+  crashesSince(since: number): AppEvent[] {
+    return this.#crashes.since(since);
+  }
+
+  #crashed(since: number) {
+    const c = this.#crashes.since(since);
+    return c.length ? {crashes: c} : {};
+  }
+
   #begin() {
     this.phases = {};
     this.#trace = this.#hooks.beforeAction?.();
@@ -121,7 +136,7 @@ export class AndroidUi {
     if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
     else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
     const settled = await this.#settle(snap);
-    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   async fill(selector: string, text: string): Promise<ActResult> {
@@ -134,7 +149,7 @@ export class AndroidUi {
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
     const settled = await this.#settle(snap);
-    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   async type(text: string): Promise<ActResult> {
@@ -143,7 +158,7 @@ export class AndroidUi {
     const r = await this.runner.call<{set: boolean}>('text', {text, append: true});
     if (!r.set) throw new Error('no focused text field to type into');
     this.record(`type ${quote(text)}`);
-    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   async key(keys: string[]): Promise<ActResult> {
@@ -155,7 +170,7 @@ export class AndroidUi {
       await this.runner.call('key', {code});
     }
     this.record(`key ${keys.join(' ')}`);
-    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   async swipe(spec: string, durationMs = 300): Promise<ActResult> {
@@ -173,7 +188,7 @@ export class AndroidUi {
     const [x1, y1, x2, y2] = coords.map(Math.round) as [number, number, number, number];
     await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
     this.record(`swipe ${spec}${durationMs !== 300 ? ` ${durationMs}` : ''}`);
-    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   /**
@@ -196,7 +211,7 @@ export class AndroidUi {
     await this.runner.call('touch', {phase, x, y});
     this.record(`touch ${phase}${selector ? ` ${selector}` : ''}`);
     const settled = await this.#settle(before, 150, 800, 300);
-    return {action: `touch ${phase}`, target, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: `touch ${phase}`, target, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   /** Swipes in `direction` until `selector` is on screen or the content stops moving. */
@@ -214,7 +229,7 @@ export class AndroidUi {
     }
     if (!matches(snap, selector)) throw new Error(`scrolled ${direction} but "${selector}" never appeared`);
     this.record(`scroll ${direction} until ${selector}`);
-    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
+    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...this.#crashed(t0)};
   }
 
   async #dirCoords(dir: string) {
@@ -330,6 +345,7 @@ export class AndroidUi {
   }
 
   async stop() {
+    this.#crashes.stop();
     await this.runner.stop();
   }
 }
