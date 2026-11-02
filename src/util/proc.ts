@@ -100,6 +100,66 @@ export const spawnShell = (command: string, opts: SpawnOptions & {shell?: string
   return spawn(shell.file, shell.args(command), {windowsHide: true, detached: true, ...rest});
 };
 
+// CreateProcess from PowerShell: neither Node nor WMI can ask for CREATE_NO_WINDOW and a break from the job at once.
+const CREATE_PROCESS_PS = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class PitboxLaunch {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct StartupInfo { public int cb; public string reserved, desktop, title; public int x, y, xSize, ySize, xChars, yChars, fill, flags; public short show, reserved2; public IntPtr reserved3, stdIn, stdOut, stdErr; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct ProcessInfo { public IntPtr process, thread; public int pid, tid; }
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string dir, ref StartupInfo si, out ProcessInfo pi);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  public static int Start(string cmd, string dir, uint flags) {
+    var si = new StartupInfo(); si.cb = Marshal.SizeOf(si);
+    ProcessInfo pi;
+    if (!CreateProcessW(null, new StringBuilder(cmd), IntPtr.Zero, IntPtr.Zero, false, flags, IntPtr.Zero, dir, ref si, out pi)) return -Marshal.GetLastWin32Error();
+    CloseHandle(pi.thread); CloseHandle(pi.process);
+    return pi.pid;
+  }
+}
+'@
+`;
+
+/**
+ * Starts a program that must outlive the daemon, with no window anywhere in its tree. On Windows a detached
+ * child has no console at all, so a console program it starts (the emulator's qemu) opens a visible console of
+ * its own, and Windows Terminal ignores a request to hide it. Created with CREATE_NO_WINDOW instead, the program
+ * owns a windowless console its children inherit; CREATE_BREAKAWAY_FROM_JOB keeps it alive when the daemon
+ * exits. Where the job forbids breaking away, WMI starts it (a window shows, but it survives). Elsewhere it is a
+ * plain detached spawn.
+ */
+export const launchHidden = async (file: string, args: string[], cwd?: string): Promise<number | undefined> => {
+  if (process.platform !== 'win32') {
+    const child = spawn(file, args, {detached: true, stdio: 'ignore', cwd});
+    child.unref();
+    return child.pid;
+  }
+  const quoteArg = (a: string) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
+  const ps = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const commandLine = ps([file, ...args].map(quoteArg).join(' '));
+  const dir = ps(cwd ?? process.cwd());
+  const script = `${CREATE_PROCESS_PS}
+$p = [PitboxLaunch]::Start(${commandLine}, ${dir}, 0x0D000200)
+if ($p -le 0) {
+  $si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow = [uint16]0}
+  $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = ${commandLine}; CurrentDirectory = ${dir}; ProcessStartupInformation = $si}
+  if ($r.ReturnValue -ne 0) { Write-Output "error $($r.ReturnValue)"; exit }
+  $p = $r.ProcessId
+}
+Write-Output $p`;
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const r = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {timeoutMs: 60_000});
+  const out = r.stdout.trim().split(/\r?\n/).pop() ?? '';
+  const pid = Number(out);
+  if (!Number.isInteger(pid) || pid <= 0) throw new Error(`could not start ${path.basename(file)}: ${out || r.stderr.trim().split('\n')[0]}`);
+  return pid;
+};
+
 /** Kills a process and everything it started. */
 export const killTree = (child: ChildProcess | number) => {
   const pid = typeof child === 'number' ? child : child.pid;

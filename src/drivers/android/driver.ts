@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {run, type RunResult} from '../../util/proc.ts';
+import {launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
 
@@ -120,8 +120,7 @@ export class AndroidDriver {
     if (opts.coldBoot !== false) args.push('-no-snapshot-load');
     if (opts.wipe) args.push('-wipe-data');
     if (opts.headless) args.push('-no-window');
-    const child = spawn(emulator, args, {detached: true, stdio: 'ignore', windowsHide: true});
-    child.unref();
+    await launchHidden(emulator, args);
     const deadline = t0 + (opts.timeoutMs ?? 240_000);
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 2000));
