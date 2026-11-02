@@ -12,6 +12,7 @@ import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
 import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
 import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
+import {RemoteApple, RemoteAppleCrashes, RemoteAppleRunner, type AppleDevices} from '../remote/appleRemote.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
@@ -50,7 +51,8 @@ export class Engine {
   readonly actors: ActorManager;
   #mock?: LlmMock;
   #android?: AndroidDriver | null;
-  #apple?: AppleDriver | null;
+  #apple?: AppleDevices | null;
+  #appleKey = '';
   /** Serials whose port forwards were applied since they came online. */
   readonly #forwarded = new Set<string>();
   #watchTimer?: NodeJS.Timeout;
@@ -173,7 +175,9 @@ export class Engine {
     };
     ui =
       t.platform === 'apple'
-        ? new DeviceUi(t.id, new AppleRunner(t.s, t.id, this.config.app?.apple), hooks, new AppleCrashWatcher(t.s, t.id, this.config.app?.apple))
+        ? t.s instanceof RemoteApple
+          ? new DeviceUi(t.id, new RemoteAppleRunner(t.s, t.id, this.config.app?.apple), hooks, new RemoteAppleCrashes(t.s, t.id, this.config.app?.apple))
+          : new DeviceUi(t.id, new AppleRunner(t.s as AppleDriver, t.id, this.config.app?.apple), hooks, new AppleCrashWatcher(t.s as AppleDriver, t.id, this.config.app?.apple))
         : new DeviceUi(t.id, new AndroidRunner(t.a, t.id), hooks, new CrashWatcher(t.a.adbPath, t.id, this.config.app?.android));
     this.#uis.set(t.id, ui);
     return ui;
@@ -281,28 +285,41 @@ export class Engine {
     return this.#android ?? undefined;
   }
 
-  get apple(): AppleDriver | undefined {
+  /** The local simulators, or a remote Mac's when `apple.remote` names one. */
+  get apple(): AppleDevices | undefined {
+    const remote = this.config.apple?.remote;
+    const key = remote ?? '';
+    if (key !== this.#appleKey) {
+      this.#appleKey = key;
+      this.#apple = undefined;
+    }
     if (this.#apple === undefined) {
-      try {
-        this.#apple = new AppleDriver();
-      } catch {
-        this.#apple = null;
+      if (remote) {
+        const token = process.env.PITBOX_REMOTE_TOKEN ?? this.config.apple?.token;
+        this.#apple = token ? new RemoteApple(remote, token) : null;
+      } else {
+        try {
+          this.#apple = new AppleDriver();
+        } catch {
+          this.#apple = null;
+        }
       }
     }
     return this.#apple ?? undefined;
   }
 
-  #needApple(): AppleDriver {
+  #needApple(): AppleDevices {
     const s = this.apple;
-    if (!s) throw new Error('Apple simulators need macOS with Xcode');
+    if (!s) throw new Error(this.config.apple?.remote ? 'apple.remote is set but no token\nhint: set PITBOX_REMOTE_TOKEN to the token `pitbox serve-devices` printed on the Mac' : 'Apple simulators need macOS with Xcode\nhint: on another OS, run `pitbox serve-devices` on a Mac and set apple.remote');
     return s;
   }
+
 
   /**
    * The device a selector names, on either platform: a booted simulator by udid or name, else an Android device.
    * Without a selector, the only online device; Android alone keeps its old behaviour when no simulator runs.
    */
-  async #target(device?: string): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDriver}> {
+  async #target(device?: string): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices}> {
     const s = this.apple;
     const booted = s ? await s.booted().catch(() => []) : [];
     if (s && booted.length) {
@@ -711,7 +728,9 @@ export class Engine {
         // (a launch from the home screen keeps it) and passed as launch arguments (they win over a cached value).
         // A simulator shares the Mac's network, so localhost is the Mac.
         if (this.#dev && bundleId && target === bundleId) {
-          const host = `localhost:${this.#dev.port}`;
+          // A remote Mac reaches this machine at the address it sees; a local simulator at localhost.
+          const here = t.s instanceof RemoteApple ? await t.s.localAddress() : 'localhost';
+          const host = `${here ?? 'localhost'}:${this.#dev.port}`;
           const values = {RCT_jsLocation: host, 'pitbox.devserver': host};
           await t.s.stop(t.id, bundleId);
           await t.s.setDefaults(t.id, bundleId, values).catch(() => undefined);
@@ -722,7 +741,9 @@ export class Engine {
         // A runner already attached reads the shell until the launched app comes to the front.
         const ui = this.#uis.get(t.id);
         if (ui && !target.includes('://')) await ui.runner.call('foreground', {}, 10_000).catch(() => undefined);
-        return {udid: t.id, target, ...r};
+        const lanHost = this.config.devserver?.host;
+        const unreachable = t.s instanceof RemoteApple && this.#dev && (!lanHost || lanHost === '127.0.0.1' || lanHost === 'localhost');
+        return {udid: t.id, target, ...r, ...(unreachable ? {note: "the dev server listens on loopback only, out of the Mac's reach: set devserver.host: '0.0.0.0' (or this machine's VPN address)"} : {})};
       }
       const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this

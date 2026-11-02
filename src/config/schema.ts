@@ -133,6 +133,12 @@ export const configSchema = z.object({
     .object({
       /** Default simulator for `boot`: a name (`iPhone 17`) or a udid. */
       simulator: z.string().optional(),
+      /**
+       * A Mac that serves its simulators (`pitbox serve-devices` there): `http://mac.example.test:7700`. The
+       * token goes in PITBOX_REMOTE_TOKEN (or `token`, kept out of version control).
+       */
+      remote: z.string().optional(),
+      token: z.string().optional(),
     })
     .optional(),
   /**

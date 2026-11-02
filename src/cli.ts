@@ -9,6 +9,7 @@ const HELP = `pitbox — run, drive and debug apps from one tool
 
 setup
   init [--dry-run] [--force]    a first pitbox.config.ts from the project's files; lets Android debug builds use plain HTTP
+  serve-devices [--listen host:port]  serve this Mac's simulators to a pitbox on another machine (apple.remote there)
 
 stand
   up [service…]                 start the stand (all autostart services, the LLM mock) or the named services
@@ -249,6 +250,12 @@ export const main = async () => {
     const {init} = await import('./init/init.ts');
     const r = init({cwd: process.cwd(), force: !!args.flags.force, dryRun: !!args.flags['dry-run']});
     process.stdout.write(`${r.lines.join('\n')}\n`);
+    return;
+  }
+  if (cmd === 'serve-devices') {
+    const {serveDevices} = await import('./remote/deviceHost.ts');
+    await serveDevices(String(args.flags.listen ?? sub ?? '127.0.0.1:7700'));
+    await new Promise(() => undefined);
     return;
   }
   if (cmd === 'mcp') {

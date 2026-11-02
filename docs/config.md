@@ -97,10 +97,26 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 | Field | Meaning |
 |---|---|
 | `simulator` | default simulator for `boot`: a name (`iPhone 17`; the newest runtime wins when names repeat) or a udid |
+| `remote` | a Mac that serves its simulators to this machine: `http://mac.example.test:7700` |
+| `token` | the device host's token; better in `PITBOX_REMOTE_TOKEN` than in the config |
 
 Simulators share the Mac's network, so exposed ports need no forwarding. The UI runner (XCUITest) is built on
 first use per platform and cached under `~/Library/Caches/pitbox/apple-runner`; a changed runner source
 rebuilds it.
+
+### A remote Mac
+
+From Windows or Linux, drive a Mac's simulators over a VPN overlay (Tailscale, WireGuard): on the Mac run
+
+```sh
+PITBOX_TOKEN=<a secret> pitbox serve-devices --listen <the Mac's VPN address>:7700
+```
+
+and on this machine set `apple.remote` and `PITBOX_REMOTE_TOKEN`. Every tool works as with local simulators:
+an `.app` is uploaded for `install`, screenshots come back as files here, flows, baselines and recordings stay
+here; only device operations and runner commands cross the network. `open` points the app at this machine's
+dev server by the address the Mac sees it at, so the dev server must listen beyond loopback
+(`devserver.host: '0.0.0.0'`).
 
 ## actors
 
