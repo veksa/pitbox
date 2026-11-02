@@ -117,8 +117,15 @@ export class AndroidDriver {
     throw new AndroidError(`${avd} did not finish booting in ${Math.round((opts.timeoutMs ?? 240_000) / 1000)}s`, 'try `boot --wipe` if it hangs on the boot screen');
   }
 
-  async shutdown(serial: string) {
+  /** Shuts an emulator down and waits until adb no longer lists it (it takes ~20 s to save and exit). */
+  async shutdown(serial: string, timeoutMs = 60_000): Promise<{ms: number; gone: boolean}> {
+    const t0 = Date.now();
     await this.adb(['emu', 'kill'], serial, {timeoutMs: 10_000});
+    while (Date.now() - t0 < timeoutMs) {
+      if (!(await this.devices()).some(d => d.serial === serial)) return {ms: Date.now() - t0, gone: true};
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    return {ms: Date.now() - t0, gone: false};
   }
 
   async install(serial: string, apk: string, opts: {replace?: boolean; pkg?: string} = {}): Promise<{ms: number; replaced: boolean}> {

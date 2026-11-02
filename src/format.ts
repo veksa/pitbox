@@ -111,6 +111,8 @@ export const formatResult = (method: string, r: unknown): string => {
       return `opened ${x.target} on ${x.serial}${x.totalMs !== undefined ? ` (activity in ${x.totalMs} ms)` : ''}`;
     case 'screenshot':
       return `${x.file} (${Math.round((x.bytes as number) / 1024)} KB)`;
+    case 'shutdown':
+      return x.gone ? `${x.serial} shut down in ${seconds(x.ms as number)}` : `${x.serial} still listed after ${seconds(x.ms as number)}`;
     case 'apps':
       return (x.packages as string[]).join('\n') || 'no third-party packages';
     default:

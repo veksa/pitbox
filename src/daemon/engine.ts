@@ -234,8 +234,7 @@ export class Engine {
     shutdown: async (p: Params) => {
       const a = this.#needAndroid();
       const serial = await a.resolve(str(p, 'device'));
-      await a.shutdown(serial);
-      return {serial};
+      return {serial, ...(await a.shutdown(serial))};
     },
 
     install: async (p: Params) => {
