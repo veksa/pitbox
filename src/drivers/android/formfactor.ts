@@ -108,3 +108,158 @@ export const windowMode = async (shell: Shell, serial: string, pkg: string, comp
   if (box) return {...(await windowMode(shell, serial, pkg, component, 'resize', bounds)), mode};
   return {mode};
 };
+
+// ---- watches ----------------------------------------------------------------------------------------------------
+
+/** The result of a Wear OS debug broadcast: `result=1` is success, `data="…"` says what happened. */
+export const parseBroadcast = (out: string): {ok: boolean; data?: string; code?: number} => {
+  const code = Number(/result=(\d+)/.exec(out)?.[1]);
+  const data = /data="([^"]*)"/.exec(out)?.[1];
+  return {ok: code === 1, data, code: Number.isFinite(code) ? code : undefined};
+};
+
+const broadcast = async (shell: Shell, serial: string, action: 'DEBUG_SURFACE' | 'DEBUG_SYSUI', extras: string) => {
+  const out = await shell(serial, `am broadcast -a com.google.android.wearable.app.${action} ${extras}`);
+  const r = parseBroadcast(out);
+  if (r.code === 0) throw new AndroidError('nothing on this device answered the Wear OS debug broadcast', 'a Wear OS emulator or a watch with developer options on');
+  if (!r.ok) throw new AndroidError(`wear: ${r.data ?? out.trim().split('\n').pop()}`);
+  return r.data ?? '';
+};
+
+/**
+ * What only a watch has, through the system's own debug hooks:
+ * - `tile add|remove <component>` puts a tile in the carousel or takes it out; `tile show <component|index>`
+ *   brings it on screen (adding it first when given a component);
+ * - `face <package|component>` makes a watch face current: a Watch Face Format package, or the component of an
+ *   older face;
+ * - `ambient on|off` enters or leaves the low-power ambient state (always-on display must be enabled);
+ * - `home` goes to the watch face (the home key toggles between the face and the app list).
+ */
+export const wear = async (shell: Shell, serial: string, op: string, args: string[]): Promise<{op: string; detail?: string}> => {
+  const [what, target] = args;
+  switch (op) {
+    case 'tile': {
+      if (!target) throw new AndroidError('wear tile add|show|remove <component>');
+      if (what === 'remove') return {op: 'tile remove', detail: await broadcast(shell, serial, 'DEBUG_SURFACE', `--es operation remove-tile --ecn component ${target}`)};
+      let index = /^\d+$/.test(target) ? Number(target) : undefined;
+      if (index === undefined) {
+        const data = await broadcast(shell, serial, 'DEBUG_SURFACE', `--es operation add-tile --ecn component ${target}`);
+        index = Number(/Index=\[(\d+)\]/.exec(data)?.[1] ?? 0);
+      }
+      if (what === 'add') return {op: 'tile add', detail: `index ${index}`};
+      if (what !== 'show') throw new AndroidError('wear tile add|show|remove <component>');
+      await broadcast(shell, serial, 'DEBUG_SYSUI', `--es operation show-tile --ei index ${index}`);
+      return {op: 'tile show', detail: `index ${index}`};
+    }
+    case 'face': {
+      const id = what;
+      if (!id) throw new AndroidError('wear face <package|component>');
+      const extra = id.includes('/') ? `--ecn component ${id}` : `--es watchFaceId ${id}`;
+      return {op: 'face', detail: await broadcast(shell, serial, 'DEBUG_SURFACE', `--es operation set-watchface ${extra}`)};
+    }
+    case 'ambient': {
+      if (what !== 'on' && what !== 'off') throw new AndroidError('wear ambient on|off');
+      await shell(serial, `input keyevent ${what === 'on' ? 'KEYCODE_SLEEP' : 'KEYCODE_WAKEUP'}`);
+      await new Promise(r => setTimeout(r, 1500));
+      return {op: `ambient ${what}`};
+    }
+    case 'home':
+      await shell(serial, 'am start -a android.intent.action.MAIN -c android.intent.category.HOME');
+      await new Promise(r => setTimeout(r, 1000));
+      return {op: 'home'};
+    default:
+      throw new AndroidError('wear tile add|show|remove <component> | face <package|component> | ambient on|off | home');
+  }
+};
+
+// ---- XR headsets --------------------------------------------------------------------------------------------------
+
+/**
+ * The headset's view on an XR emulator, through the emulator's control channel: `look yaw[,pitch[,roll]]` turns
+ * the head by degrees (turns add up), `move dx,dy,dz` moves it by metres, `recenter` puts the view back in front
+ * of the user. Real headsets have no such channel.
+ */
+export const xrView = async (serial: string, op: string, value?: string): Promise<{op: string; value?: string}> => {
+  const {findEndpoint, call, encode} = await import('./emulatorGrpc.ts');
+  const port = Number(/^emulator-(\d+)$/.exec(serial)?.[1]);
+  const ep = port ? findEndpoint(port) : undefined;
+  if (!ep) throw new AndroidError(`${serial} has no emulator control channel`, 'look, move and recenter work on an XR emulator');
+  const nums = (value ?? '').split(/[\s,]+/).filter(Boolean).map(Number);
+  if (nums.some(n => !Number.isFinite(n))) throw new AndroidError(`xr ${op}: numbers, comma-separated`);
+  const [a = 0, b = 0, c = 0] = nums;
+  const rad = (d: number) => (d * Math.PI) / 180;
+  let event: Buffer;
+  if (op === 'recenter') event = encode.input(9, Buffer.alloc(0));
+  // Yaw turns around the vertical axis (y), pitch around x, roll around z; positive yaw looks left.
+  else if (op === 'look') event = encode.input(10, encode.vec3(rad(b), rad(a), rad(c)));
+  else if (op === 'move') event = encode.input(11, encode.vec3(a, b, c));
+  else throw new AndroidError('xr look yaw[,pitch[,roll]] | move dx,dy,dz | recenter | panel …');
+  await call(ep, 'streamInputEvent', [event]);
+  await new Promise(r => setTimeout(r, 600));
+  return {op, value};
+};
+
+/** The shell's controls of an app's panel on XR, by the ids of its caption and caption menu. */
+export const XR_PANEL: Record<string, {id: string; menu?: boolean}> = {
+  minimize: {id: 'minimize_window'},
+  close: {id: 'close_window'},
+  menu: {id: 'caption_application_icon'},
+  info: {id: 'app_info_button', menu: true},
+  'spatial-audio': {id: 'disable_spatial_audio_button', menu: true},
+  tidy: {id: 'tidy_up_button', menu: true},
+  'close-app': {id: 'close_button', menu: true},
+};
+
+// ---- cars ---------------------------------------------------------------------------------------------------------
+
+/** Vehicle properties (VHAL) the car commands set. */
+const VHAL = {gear: '0x11400400', speed: '0x11600207', parkingBrake: '0x11200402'};
+const GEAR = {park: 4, drive: 8};
+
+/**
+ * What only a car has, through its car service: `day|night|auto` switches the cabin's day-night mode; `drive
+ * [m/s]` releases the parking brake, selects drive and sets a speed — apps that are not made for driving are
+ * then blocked by the system, as in a moving car; `park` stops, selects park and sets the brake; `rotary cw|ccw
+ * [n]` turns the rotary controller.
+ */
+export const car = async (shell: Shell, serial: string, op: string, args: string[]): Promise<{op: string; detail?: string}> => {
+  const vhal = (prop: string, value: number | string) => shell(serial, `cmd car_service inject-vhal-event ${prop} ${value}`);
+  const check = (out: string) => {
+    if (/Unknown command|Can't find service|not found/i.test(out)) throw new AndroidError('no car service on this device', 'car commands work on an Android Automotive emulator or head unit');
+    return out;
+  };
+  switch (op) {
+    case 'day':
+    case 'night':
+      check(await shell(serial, `cmd car_service day-night-mode ${op}`));
+      break;
+    case 'auto':
+      check(await shell(serial, 'cmd car_service day-night-mode sensor'));
+      break;
+    case 'drive': {
+      const speed = Number(args[0] ?? 15);
+      if (!Number.isFinite(speed) || speed <= 0) throw new AndroidError('car drive [speed in m/s, above 0]');
+      check(await vhal(VHAL.parkingBrake, 0));
+      await vhal(VHAL.gear, GEAR.drive);
+      await vhal(VHAL.speed, speed);
+      await new Promise(r => setTimeout(r, 1500));
+      return {op, detail: `${speed} m/s`};
+    }
+    case 'park':
+      check(await vhal(VHAL.speed, 0));
+      await vhal(VHAL.gear, GEAR.park);
+      await vhal(VHAL.parkingBrake, 1);
+      await new Promise(r => setTimeout(r, 1500));
+      break;
+    case 'rotary': {
+      const dir = args[0] === 'ccw' ? 'false' : 'true';
+      const n = Math.max(1, Math.min(Number(args[1] ?? 1) || 1, 20));
+      for (let i = 0; i < n; i++) check(await shell(serial, `cmd car_service inject-rotary -c ${dir}`));
+      break;
+    }
+    default:
+      throw new AndroidError('car day|night|auto | drive [m/s] | park | rotary cw|ccw [n]');
+  }
+  await new Promise(r => setTimeout(r, 800));
+  return {op};
+};

@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
-import {posture, rotate, windowMode} from './formfactor.ts';
+import {car, posture, rotate, wear, windowMode} from './formfactor.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
@@ -199,7 +199,12 @@ export class AndroidDriver {
       const dev = (await this.devices()).find(d => d.avd === avd && d.state === 'device');
       if (!dev) continue;
       const booted = await this.adb(['shell', 'getprop', 'sys.boot_completed'], dev.serial, {timeoutMs: 5000});
-      if (booted.stdout.trim() === '1') return {serial: dev.serial, ms: Date.now() - t0, already: false};
+      if (booted.stdout.trim() === '1') {
+        // An emulator for automation: the screen stays on and the swipe-away lock screen is gone, or it comes back
+        // mid-run and every app is behind it.
+        await this.shell(dev.serial, 'svc power stayon true; wm dismiss-keyguard').catch(() => '');
+        return {serial: dev.serial, ms: Date.now() - t0, already: false};
+      }
     }
     throw new AndroidError(`${avd} did not finish booting in ${Math.round((opts.timeoutMs ?? 240_000) / 1000)}s`, 'try `boot --wipe` if it hangs on the boot screen');
   }
@@ -264,6 +269,16 @@ export class AndroidDriver {
     return rotate((s, c, t) => this.shell(s, c, t), serial, rotation);
   }
 
+  /** Car-only operations: day/night, driving, parking, the rotary controller (see formfactor.ts). */
+  car(serial: string, op: string, args: string[]) {
+    return car((s, c, t) => this.shell(s, c, t), serial, op, args);
+  }
+
+  /** Watch-only operations: tiles, the watch face, ambient, home (see formfactor.ts). */
+  wear(serial: string, op: string, args: string[]) {
+    return wear((s, c, t) => this.shell(s, c, t), serial, op, args);
+  }
+
   /** The app as a freeform window, fullscreen again, or a freeform window resized. */
   window(serial: string, pkg: string, mode: string, bounds?: string) {
     return windowMode((s, c, t) => this.shell(s, c, t), serial, pkg, () => this.launcherActivity(serial, pkg), mode, bounds);
@@ -288,6 +303,8 @@ export class AndroidDriver {
   async open(serial: string, target: string, opts: {relaunch?: boolean; pkg?: string} = {}): Promise<{totalMs?: number; component?: string}> {
     const isUrl = target.includes('://');
     const pkg = isUrl ? opts.pkg : target;
+    // A screen that went dark and its swipe-away lock screen hide whatever is opened; a PIN lock is not touched.
+    await this.shell(serial, 'input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard').catch(() => '');
     if (opts.relaunch && pkg) await this.shell(serial, `am force-stop ${pkg}`);
     let cmd: string;
     let component: string | undefined;
