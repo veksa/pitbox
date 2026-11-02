@@ -116,3 +116,20 @@ describe('cli', () => {
     expect(toCall(parseArgs(['settings', 'fontScale=1.3', 'dark=true'])).params).toMatchObject({fontScale: '1.3', dark: 'true'});
   });
 });
+
+describe('cli and engine agree', () => {
+  it('maps every command to an engine method, never to the daemon stop rpc', async () => {
+    const {Engine} = await import('./daemon/engine.ts');
+    const {DAEMON_STOP} = await import('./daemon/server.ts');
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), '{}');
+    const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
+    const methods = new Set(Object.keys(engine.methods));
+    const commands = ['up', 'down', 'restart', 'status', 'logs x', 'tools', 'tool x', 'actors', 'actor start a b', 'actor stop a', 'actor call a', 'devices', 'boot', 'shutdown', 'install a.apk', 'open', 'stop-app', 'clear-app', 'uninstall', 'apps', 'app-logs', 'settings', 'network full', 'screenshot', 'key back', 'reverse', 'info', 'doctor', 'docs'];
+    for (const c of commands) {
+      const {method} = toCall(parseArgs(c.split(' ')));
+      expect(method, c).not.toBe(DAEMON_STOP);
+      expect(methods.has(method), `${c} → ${method}`).toBe(true);
+    }
+  });
+});

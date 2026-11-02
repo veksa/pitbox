@@ -13,6 +13,9 @@ export const daemonFile = (stateDir: string) => path.join(stateDir, 'daemon.json
 
 export const VERSION = '0.0.0';
 
+/** RPC that stops the daemon itself — named so it cannot collide with an engine method such as `shutdown`. */
+export const DAEMON_STOP = '__stopDaemon';
+
 export const serve = async (configFile?: string) => {
   const engine = await Engine.create(configFile);
   const {stateDir, root, file} = engine.loaded;
@@ -46,7 +49,7 @@ export const serve = async (configFile?: string) => {
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {method: string; params?: Record<string, unknown>};
       method = body.method;
-      if (method === 'shutdown') {
+      if (method === DAEMON_STOP) {
         res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result: {stopping: true}}));
         setTimeout(() => void shutdown(0), 50);
         return;

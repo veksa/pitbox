@@ -3,6 +3,7 @@
 
 import {connect, resolveProject, runningDaemon} from './daemon/client.ts';
 import {formatResult} from './format.ts';
+import {DAEMON_STOP} from './daemon/server.ts';
 
 const HELP = `pitbox — run, drive and debug apps from one tool
 
@@ -158,7 +159,7 @@ export const main = async () => {
       return;
     }
     if (sub === 'stop' || sub === 'restart') {
-      if (running) await running.call('shutdown').catch(() => undefined);
+      if (running) await running.call(DAEMON_STOP).catch(() => undefined);
       if (sub === 'stop') {
         process.stdout.write(running ? 'stopped\n' : 'not running\n');
         return;
