@@ -28,11 +28,25 @@ struct MainView: View {
   @State private var name = ""
   @State private var greeting = ""
   @State private var response = ""
+  @State private var hovered = false
+  @State private var copied = false
+  @State private var shortcut = ""
 
   var body: some View {
+    GeometryReader { g in
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         Text("pitbox example").font(.title).accessibilityIdentifier("title")
+        // What only some devices do: turning (phones, tablets), a pointer and a keyboard (tablets).
+        Text(g.size.width > g.size.height ? "landscape" : "portrait").accessibilityIdentifier("orientation")
+        #if os(iOS)
+        Text(hovered ? "hovered" : "hover here").accessibilityIdentifier("hover_target").onHover { hovered = $0 }
+        Button("Shortcut ⌘K") { shortcut = "shortcut pressed" }.keyboardShortcut("k", modifiers: .command).accessibilityIdentifier("shortcut")
+        Text(shortcut).accessibilityIdentifier("shortcut_result")
+        #endif
+        #if !os(tvOS)
+        Text(copied ? "copied" : "menu here").accessibilityIdentifier("menu_target").contextMenu { Button("Copy") { copied = true } }
+        #endif
         TextField("Your name", text: $name).accessibilityIdentifier("name")
         Button("Greet") { greeting = "Hello, \(name.isEmpty ? "stranger" : name)" }.accessibilityIdentifier("greet")
         Text(greeting).accessibilityIdentifier("greeting")
@@ -47,6 +61,7 @@ struct MainView: View {
       .padding()
     }
     .accessibilityIdentifier("content_list")
+    }
   }
 
   /// The stand runs on the Mac, and a simulator shares the Mac's network: localhost is the stand.

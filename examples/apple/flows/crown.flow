@@ -1,0 +1,7 @@
+# The Digital Crown: the content moves without touching the screen.
+open!
+wait id=title 60
+rotary down 20
+expect gone id=title
+rotary up 20
+expect id=title

@@ -1,0 +1,12 @@
+# An iPad with a pointer and a keyboard: hover states, a context menu on a secondary click, a shortcut, the wheel.
+open!
+wait id=title 30
+mouse hover id=hover_target
+expect text="hovered"
+mouse right id=menu_target
+press text="Copy"
+expect text="copied"
+key meta+k
+expect text="shortcut pressed"
+mouse wheel down 6
+expect gone id=title

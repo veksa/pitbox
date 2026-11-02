@@ -1,0 +1,7 @@
+# Turning a phone or a tablet: the app lays out for the new shape, and turns back.
+open!
+wait id=title 30
+rotate 90
+expect text="landscape"
+rotate 0
+expect text="portrait"
