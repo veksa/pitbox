@@ -18,6 +18,12 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **Dev server** — your bundler (`yarn start`) behind pitbox's proxy: a native file watcher on every platform
   (Metro crawls every directory on Windows otherwise), the main bundle built before the device asks, and, with
   `bytecode: true`, Hermes bytecode compiled on the host so the app skips parsing megabytes of source.
+- **Inside the app, with no app code** (React Native dev bundles served through pitbox): `fresh` says whether
+  the app runs the newest code or a stale bundle; the app's network log; network rules applied inside the app
+  (fail, mock, delay, a WebSocket frozen open, offline); a `traceparent` on every request an action causes;
+  in-flight requests count toward "the UI has settled".
+- **No dev launcher needed**: the Android connect library (autolinked, debug builds only) points the app at the
+  dev server from a link — `pitbox qr` puts it in a QR code for a phone, `open` uses it on emulators.
 - **UI automation on Android** through pitbox's own runner: the screen as short lines with refs, actions that
   wait for the UI to settle and answer with what changed, exact gestures (double tap, swipe velocity), D-pad
   keys and focus for TV.
