@@ -48,8 +48,9 @@ export class AndroidRunner {
     return v ? Number(v) : undefined;
   }
 
-  async #ensureInstalled() {
-    if ((await this.#installedVersion()) === RUNNER_VERSION) return;
+  async #ensureInstalled(force = false) {
+    if (!force && (await this.#installedVersion()) === RUNNER_VERSION) return;
+    if (force) await this.#driver.adb(['uninstall', RUNNER_PACKAGE], this.serial, {timeoutMs: 60_000}).catch(() => undefined);
     const apk = runnerApk();
     if (!fs.existsSync(apk)) throw new AndroidError(`runner APK missing: ${apk}`, 'build it with `yarn build-runner`');
     const r = await this.#driver.adb(['install', '-r', '-t', '-d', apk], this.serial, {timeoutMs: 120_000});
@@ -63,8 +64,19 @@ export class AndroidRunner {
   }
 
   async #start() {
+    try {
+      await this.#attempt(false);
+    } catch (e) {
+      // The package manager can list the runner while its APK is gone (an emulator killed right after the
+      // install): the instrumentation is then "not found" until it is installed again.
+      if (!/INSTRUMENTATION_FAILED/.test((e as Error).message)) throw e;
+      await this.#attempt(true);
+    }
+  }
+
+  async #attempt(reinstall: boolean) {
     this.#teardown();
-    await this.#ensureInstalled();
+    await this.#ensureInstalled(reinstall);
     await this.#driver.shell(this.serial, `am force-stop ${RUNNER_PACKAGE}`);
     const child = spawn(this.#driver.adbPath, ['-s', this.serial, 'shell', 'am', 'instrument', '-w', '-r', '--no-hidden-api-checks', '-e', 'port', String(DEVICE_PORT), `${RUNNER_PACKAGE}/.RunnerInstrumentation`], {windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
     this.#child = child;
