@@ -1,0 +1,94 @@
+// Named stand states: a device snapshot (the app and its data included) plus the project's own backend dump,
+// saved together and restored together — "signed in, three items in the cart" in seconds instead of steps.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import type {AndroidDriver} from '../drivers/android/driver.ts';
+import {quoteArg, resolveShell, runShell} from '../util/proc.ts';
+import {renderTemplate} from '../util/text.ts';
+import type {StandContext} from './services.ts';
+
+export type StatesConfig = {save?: string; restore?: string};
+export type StateInfo = {name: string; savedAt: number; device?: string; avd?: string; backend: boolean};
+
+const snapshotName = (name: string) => `pitbox-${name}`;
+
+export const validStateName = (name: string) => {
+  if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`state name must be letters, digits, . _ - (got "${name}")`);
+  return name;
+};
+
+export class StateStore {
+  readonly #ctx: StandContext;
+  readonly #cfg: StatesConfig;
+  readonly #dir: string;
+
+  constructor(ctx: StandContext, cfg: StatesConfig = {}) {
+    this.#ctx = ctx;
+    this.#cfg = cfg;
+    this.#dir = path.join(ctx.stateDir, 'states');
+  }
+
+  #file(name: string) {
+    return path.join(this.#dir, `${name}.dump`);
+  }
+
+  #meta(name: string) {
+    return path.join(this.#dir, `${name}.json`);
+  }
+
+  list(): StateInfo[] {
+    if (!fs.existsSync(this.#dir)) return [];
+    return fs
+      .readdirSync(this.#dir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => JSON.parse(fs.readFileSync(path.join(this.#dir, f), 'utf8')) as StateInfo)
+      .sort((a, b) => b.savedAt - a.savedAt);
+  }
+
+  async #hook(kind: 'save' | 'restore', name: string): Promise<boolean> {
+    const template = this.#cfg[kind];
+    if (!template) return false;
+    const shell = resolveShell(this.#ctx.shell);
+    const cmd = renderTemplate(template, {name, file: this.#file(name)}, v => quoteArg(v, shell.kind));
+    const r = await runShell(cmd, {cwd: this.#ctx.root, shell: this.#ctx.shell, timeoutMs: 600_000});
+    if (r.code !== 0) throw new Error(`state ${kind} command failed (exit ${r.code}): ${(r.stderr || r.stdout).trim().split('\n').slice(-3).join(' ')}`);
+    return true;
+  }
+
+  async save(name: string, android: AndroidDriver | undefined, serial: string | undefined, avd: string | undefined): Promise<StateInfo> {
+    validStateName(name);
+    fs.mkdirSync(this.#dir, {recursive: true});
+    if (serial) {
+      if (!serial.startsWith('emulator-')) throw new Error('device snapshots need an emulator');
+      const r = await android!.adb(['emu', 'avd', 'snapshot', 'save', snapshotName(name)], serial, {timeoutMs: 180_000});
+      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot failed: ${(r.stdout + r.stderr).trim()}`);
+    }
+    const backend = await this.#hook('save', name);
+    const info: StateInfo = {name, savedAt: Date.now(), device: serial, avd, backend};
+    fs.writeFileSync(this.#meta(name), JSON.stringify(info, null, 2));
+    return info;
+  }
+
+  async restore(name: string, android: AndroidDriver | undefined, serial: string | undefined): Promise<StateInfo & {ms: number}> {
+    validStateName(name);
+    const t0 = Date.now();
+    if (!fs.existsSync(this.#meta(name))) throw new Error(`no state "${name}" (saved: ${this.list().map(s => s.name).join(', ') || 'none'})`);
+    const info = JSON.parse(fs.readFileSync(this.#meta(name), 'utf8')) as StateInfo;
+    // Backend first: the app restored from the snapshot reconnects to data that already matches it.
+    if (info.backend) await this.#hook('restore', name);
+    if (info.device) {
+      if (!serial) throw new Error(`state "${name}" has a device snapshot (${info.avd ?? info.device}); boot that emulator first`);
+      const r = await android!.adb(['emu', 'avd', 'snapshot', 'load', snapshotName(name)], serial, {timeoutMs: 180_000});
+      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot load failed: ${(r.stdout + r.stderr).trim()}`);
+    }
+    return {...info, ms: Date.now() - t0};
+  }
+
+  async remove(name: string, android: AndroidDriver | undefined, serial: string | undefined) {
+    validStateName(name);
+    if (serial) await android?.adb(['emu', 'avd', 'snapshot', 'delete', snapshotName(name)], serial, {timeoutMs: 60_000});
+    fs.rmSync(this.#meta(name), {force: true});
+    fs.rmSync(this.#file(name), {force: true});
+  }
+}
