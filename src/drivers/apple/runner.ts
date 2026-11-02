@@ -112,6 +112,8 @@ export class AppleRunner {
   #nextId = 1;
   readonly #pending = new Map<number, Pending>();
   #starting?: Promise<void>;
+  /** Whether a command has come back since the runner started. */
+  #answered = false;
 
   constructor(driver: AppleDriver, udid: string, bundleId?: string) {
     this.#driver = driver;
@@ -131,6 +133,7 @@ export class AppleRunner {
 
   async #start() {
     this.#teardown();
+    this.#answered = false;
     const sim = (await this.#driver.simulators()).find(s => s.udid === this.udid);
     if (!sim || sim.state !== 'Booted') throw new AppleError(`simulator ${this.udid} is not booted`);
     const {xctestrun} = await buildRunner(sim.kind);
@@ -223,14 +226,21 @@ export class AppleRunner {
     const id = this.#nextId++;
     const socket = this.#socket;
     if (!socket) throw new AppleError('runner not connected');
-    // The first call into an app attaches XCUITest to it, which takes seconds.
-    const limit = Math.max(timeoutMs, 30_000);
+    // The first call into an app attaches XCUITest to it, which takes seconds — on visionOS, up to a minute.
+    const limit = Math.max(timeoutMs, this.#answered ? 30_000 : 120_000);
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
         reject(new AppleError(`runner: ${cmd} timed out after ${limit} ms`));
       }, limit);
-      this.#pending.set(id, {resolve: v => resolve(v as T), reject, timer});
+      this.#pending.set(id, {
+        resolve: v => {
+          this.#answered = true;
+          resolve(v as T);
+        },
+        reject,
+        timer,
+      });
       socket.write(`${JSON.stringify({id, cmd, app: this.bundleId, ...args})}\n`);
     });
   }
