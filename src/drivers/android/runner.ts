@@ -12,7 +12,7 @@ import {AndroidError} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
-export const RUNNER_VERSION = 7;
+export const RUNNER_VERSION = 8;
 const DEVICE_PORT = 7912;
 
 export const runnerApk = (): string => {

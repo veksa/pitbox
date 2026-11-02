@@ -59,7 +59,9 @@ object Relay {
           upstream.connect(InetSocketAddress(target, port), 5000)
           client.tcpNoDelay = true
           upstream.tcpNoDelay = true
-          val a = thread(isDaemon = true) { pipe(client.getInputStream(), upstream.getOutputStream(), upstream) }
+          // The client finishing its request is not passed on: many HTTP servers drop a half-closed connection
+          // before answering. The connection ends when the host side ends it.
+          val a = thread(isDaemon = true) { pipe(client.getInputStream(), upstream.getOutputStream(), null) }
           pipe(upstream.getInputStream(), client.getOutputStream(), client)
           a.join(1000)
           runCatching { upstream.close() }
@@ -72,7 +74,7 @@ object Relay {
     }
   }
 
-  private fun pipe(from: InputStream, to: OutputStream, close: Socket) {
+  private fun pipe(from: InputStream, to: OutputStream, close: Socket?) {
     val buf = ByteArray(32 * 1024)
     try {
       while (true) {
@@ -84,7 +86,7 @@ object Relay {
     } catch (e: Exception) {
       // either side went away
     } finally {
-      runCatching { close.shutdownOutput() }
+      runCatching { close?.shutdownOutput() }
     }
   }
 }
