@@ -25,6 +25,21 @@ describe('watcher patch', () => {
     const out = execFileSync(process.execPath, ['--import', preload, '-e', "console.log(require('metro-file-map').supported())"], {cwd: path.join(dir, 'app'), encoding: 'utf8'}).trim();
     expect(out).toBe('true');
   });
+
+  it('drops recursive watch events that carry no file name instead of passing them to the bundler', () => {
+    const preload = pathToFileURL(path.resolve('src/devserver/preload.ts')).href;
+    const script = [
+      "const fs = require('fs');",
+      "const seen = [];",
+      "const w = fs.watch(process.cwd(), {recursive: true}, (type, name) => seen.push(name));",
+      "w.emit('change', 'rename', null);",
+      "w.emit('change', 'change', 'a.js');",
+      "w.close();",
+      "console.log(JSON.stringify(seen));",
+    ].join(' ');
+    const out = execFileSync(process.execPath, ['--import', preload, '-e', script], {cwd: dir, encoding: 'utf8'}).trim();
+    expect(JSON.parse(out)).toEqual(process.platform === 'win32' ? ['a.js'] : [null, 'a.js']);
+  });
 });
 
 describe('bundle request rules', () => {
