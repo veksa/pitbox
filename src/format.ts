@@ -77,7 +77,9 @@ export const fmtDoctor = (r: DoctorReport): string => {
 export const fmtTool = (r: ToolResult): string => `${r.code === 0 ? '' : `exit ${r.timedOut ? 'timeout' : r.code} · `}${seconds(r.ms)}\n${r.output}`.trimEnd();
 
 export const fmtAct = (r: ActResult): string => {
-  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}`;
+  // A slow action says where its time went, so the next turn knows whether the app or the tool was slow.
+  const slow = r.ms > 3000 && r.phases ? ` · slow: ${Object.entries(r.phases).filter(([, v]) => v >= 100).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
+  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}${slow}`;
   if (!r.diff.changed) return `${head}\nno change on screen`;
   return [head, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
 };

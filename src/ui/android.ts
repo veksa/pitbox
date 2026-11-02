@@ -7,7 +7,7 @@ import {KEYS, type AndroidDriver} from '../drivers/android/driver.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
-export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string};
+export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>};
 
 export type UiHooks = {
   /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
@@ -60,11 +60,23 @@ export class AndroidUi {
    * that animates on the next frame, a navigation that waits for a promise), so an unchanged screen is checked
    * again for a little while before it is reported as unchanged.
    */
+  /** Where the last action's time went (ms per phase) — reported when the action was slow. */
+  phases: Record<string, number> = {};
+
+  #phase(name: string, since: number) {
+    this.phases[name] = (this.phases[name] ?? 0) + (Date.now() - since);
+    return Date.now();
+  }
+
   async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 1200, graceMs = 1200): Promise<{diff: SnapshotDiff; idle: boolean}> {
     const t0 = Date.now();
+    let t = t0;
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
+    t = this.#phase('quiet', t);
     if (this.#hooks.networkIdle) await this.#hooks.networkIdle(1500);
+    t = this.#phase('network', t);
     let snap = await this.snapshot();
+    t = this.#phase('snapshot', t);
     if (!r.idle) {
       // A UI that never goes quiet (a playing video, a looping animation): settled once the snapshot stops
       // changing, instead of waiting for silence that never comes.
@@ -75,12 +87,14 @@ export class AndroidUi {
         snap = next;
         if (same) break;
       }
+      t = this.#phase('stabilise', t);
     }
     let diff = diffSnapshots(before, snap);
     while (!diff.changed && Date.now() - t0 < graceMs) {
       await new Promise(res => setTimeout(res, 250));
       diff = diffSnapshots(before, await this.snapshot());
     }
+    this.#phase('grace', t);
     return {diff, idle: r.idle};
   }
 
@@ -91,6 +105,7 @@ export class AndroidUi {
   }
 
   #begin() {
+    this.phases = {};
     this.#trace = this.#hooks.beforeAction?.();
     return Date.now();
   }
@@ -98,11 +113,13 @@ export class AndroidUi {
   async press(selector: string, kind: 'tap' | 'longpress' | 'doubletap' = 'tap'): Promise<ActResult> {
     const t0 = this.#begin();
     const {snap, target} = await this.#target(selector);
+    let t = this.#phase('target', t0);
     await this.runner.call(kind, {x: target.x, y: target.y});
+    t = this.#phase('input', t);
     if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
     else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
     const settled = await this.#settle(snap);
-    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace};
+    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   async fill(selector: string, text: string): Promise<ActResult> {
@@ -115,7 +132,7 @@ export class AndroidUi {
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
     const settled = await this.#settle(snap);
-    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace};
+    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   async type(text: string): Promise<ActResult> {
@@ -124,7 +141,7 @@ export class AndroidUi {
     const r = await this.runner.call<{set: boolean}>('text', {text, append: true});
     if (!r.set) throw new Error('no focused text field to type into');
     this.record(`type ${quote(text)}`);
-    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace};
+    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   async key(keys: string[]): Promise<ActResult> {
@@ -136,7 +153,7 @@ export class AndroidUi {
       await this.runner.call('key', {code});
     }
     this.record(`key ${keys.join(' ')}`);
-    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace};
+    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   async swipe(spec: string, durationMs = 300): Promise<ActResult> {
@@ -154,7 +171,7 @@ export class AndroidUi {
     const [x1, y1, x2, y2] = coords.map(Math.round) as [number, number, number, number];
     await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
     this.record(`swipe ${spec}${durationMs !== 300 ? ` ${durationMs}` : ''}`);
-    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace};
+    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   /** Swipes in `direction` until `selector` is on screen or the content stops moving. */
@@ -172,7 +189,7 @@ export class AndroidUi {
     }
     if (!matches(snap, selector)) throw new Error(`scrolled ${direction} but "${selector}" never appeared`);
     this.record(`scroll ${direction} until ${selector}`);
-    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace};
+    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases};
   }
 
   async #dirCoords(dir: string) {
