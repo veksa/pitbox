@@ -3,6 +3,12 @@
 import XCTest
 
 final class RunnerTests: XCTestCase {
+  /// An XCUITest failure inside a command (an event it could not synthesize) ends the test, and the runner with
+  /// it, once recorded. It becomes that command's error instead.
+  override func record(_ issue: XCTIssue) {
+    Commands.issues.append(issue.compactDescription)
+  }
+
   func testServe() throws {
     continueAfterFailure = true
     let env = ProcessInfo.processInfo.environment

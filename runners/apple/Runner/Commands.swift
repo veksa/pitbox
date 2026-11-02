@@ -37,11 +37,16 @@ final class Commands {
     return (app(Self.shellId), Self.shellId)
   }
 
+  /// XCUITest failures recorded during the current command.
+  static var issues: [String] = []
+
   func handle(_ req: [String: Any]) -> (reply: [String: Any], stop: Bool) {
     let id = req["id"] ?? 0
     let cmd = req["cmd"] as? String ?? ""
+    Self.issues.removeAll()
     do {
       var out = try run(cmd, req)
+      if let issue = Self.issues.first { return (["id": id, "ok": false, "error": issue], false) }
       out["id"] = id
       out["ok"] = true
       return (out, cmd == "shutdown")
