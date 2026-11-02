@@ -1,0 +1,8 @@
+# A foldable: the app follows the hinge, from the outer screen to the inner one.
+open!
+wait id=title 20
+posture closed
+expect text~="narrow"
+posture open
+expect text~="wide"
+posture reset

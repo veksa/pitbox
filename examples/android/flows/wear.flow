@@ -6,3 +6,8 @@ expect text="Hello, stranger"
 scroll down until id=fetch
 press id=fetch
 wait text~="hello from the stand" 10
+# The crown: content moves without touching the screen.
+rotary up 20
+expect id=title
+rotary down 10
+expect gone id=title

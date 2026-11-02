@@ -70,6 +70,9 @@ locales.
 | `device <serial\|avd>` | runs the following steps on another device |
 | `state <name>` | restores a named stand state (emulator snapshot + backend dump) |
 | `run <flow> key=value…` | runs another flow file with parameters (nesting up to 5 deep) |
+| `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge |
+| `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor |
+| `window freeform [x,y,w,h]` · `window resize x,y,w,h` · `window fullscreen` | the app as a desktop-style window, resized, or fullscreen again (switching mode relaunches the app; freeform windows stay enabled in the device's settings) |
 
 ### Acting
 
@@ -82,11 +85,14 @@ Every action waits for the UI to settle before the next step.
 | `doubletap <selector>` | two taps 90 ms apart (a real double tap) |
 | `fill <selector> "text"` | taps the field and replaces its text |
 | `type "text"` | appends text to the focused field |
-| `key <key>…` | presses keys in order: `back home up down left right center enter del menu search playpause appswitch wakeup`, or a keycode number (TV remotes included) |
+| `key <key>…` | presses keys in order: `back home up down left right center enter del menu search`, keyboard keys (`tab space escape page_up page_down`), media and TV remote keys (`play pause playpause next previous rewind fast_forward volume_up volume_down mute channel_up channel_down guide info captions settings`), watch buttons (`stem_primary stem_1 stem_2`), combinations (`ctrl+c`, `ctrl+shift+tab`, `alt+f4`), or a keycode number |
 | `swipe up\|down\|left\|right [ms]` | swipes across the screen; the duration (default 300 ms) sets the velocity |
 | `swipe x1,y1,x2,y2 [ms]` | swipes between two points |
 | `scroll <direction> until <selector>` | swipes until the target is on screen (stops when the content stops moving, at most 25 swipes) |
 | `touch down <selector>` · `touch move <selector>` · `touch up` | a finger held across steps — check what exists only while touching |
+| `mouse right <selector>` · `mouse hover <selector>` | a mouse: right click (context menus), pointer over the target (hover states) — tablets, desktops, headsets |
+| `mouse wheel up|down [steps] [selector]` | turns the wheel `steps` notches (default 3) over the target or the app's scroller |
+| `rotary up|down [steps]` | a watch crown or bezel; the events go to the focused view, so a scroller that never takes focus does not move (the answer says so) |
 | `sleep <ms>` | waits; prefer `wait` |
 
 ### Checking

@@ -12,7 +12,11 @@ deep link `pitboxexample://detail/<id>`.
 |---|---|---|
 | `smoke` | phone, foldable, tablet, desktop, XR, glasses, car | input, the stand over forwarded ports, a project tool, scrolling to a target, a deep link, back |
 | `tv` | TV | D-pad focus and center presses, the focus walk |
-| `wear` | watch | the same on a round screen a few rows tall |
+| `wear` | watch | the same on a round screen a few rows tall, then the crown |
+| `rotate` | phone, tablet | the layout follows a turn, the sensor takes over again |
+| `fold` | foldable | the app follows the hinge from the outer screen to the inner one |
+| `mouse` | foldable, tablet, desktop, XR | hover, a context menu on a right click, the wheel |
+| `window` | foldable, tablet, desktop | a freeform window, resized, fullscreen again |
 | `crash` | phone | fails on purpose: the crash comes back with the step and the stack |
 
 ```sh

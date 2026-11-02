@@ -19,6 +19,11 @@
             android:text="pitbox example"
             android:textSize="24sp" />
 
+        <TextView
+            android:id="@+id/screen_shape"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
         <EditText
             android:id="@+id/name"
             android:layout_width="match_parent"
@@ -47,6 +52,20 @@
             android:id="@+id/response"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/hover_target"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="12dp"
+            android:text="Hover me" />
+
+        <TextView
+            android:id="@+id/menu_target"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="12dp"
+            android:text="Right-click me" />
 
         <Button
             android:id="@+id/crash"

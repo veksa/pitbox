@@ -1,0 +1,9 @@
+# Turning the device: the window follows, and the sensor takes over again at the end. Rotation is counted from
+# the natural orientation (landscape on many tablets), so the check is the turn itself.
+open!
+wait id=title 20
+rotate 90
+expect text~="r90"
+rotate 0
+expect text~="r0"
+rotate auto

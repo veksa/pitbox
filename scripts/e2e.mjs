@@ -25,13 +25,13 @@ const rnApk = path.join(rnDir, 'android', 'app', 'build', 'outputs', 'apk', 'deb
 
 /** What each kind runs in the native example; `fails` flows must fail, with the app's crash in the verdict. */
 const PLAN = {
-  phone: {flows: ['smoke'], fails: ['crash']},
-  foldable: {flows: ['smoke'], fails: []},
-  tablet: {flows: ['smoke'], fails: []},
-  xr: {flows: ['smoke'], fails: []},
+  phone: {flows: ['smoke', 'rotate'], fails: ['crash']},
+  foldable: {flows: ['smoke', 'fold', 'mouse', 'window'], fails: []},
+  tablet: {flows: ['smoke', 'rotate', 'mouse', 'window'], fails: []},
+  desktop: {flows: ['smoke', 'mouse', 'window'], fails: []},
+  xr: {flows: ['smoke', 'mouse'], fails: []},
   tv: {flows: ['tv'], fails: [], focusMap: true},
   wear: {flows: ['wear'], fails: []},
-  desktop: {flows: ['smoke'], fails: []},
   glasses: {flows: ['smoke'], fails: []},
   automotive: {flows: ['smoke'], fails: []},
 };

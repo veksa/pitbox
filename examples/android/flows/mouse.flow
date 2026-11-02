@@ -1,0 +1,10 @@
+# A mouse on a large screen: hover states, a context menu on a right click, the wheel.
+open!
+wait id=title 20
+mouse hover id=hover_target
+expect text="hovered"
+mouse right id=menu_target
+press text="Copy"
+expect text="copied"
+mouse wheel down 15
+expect gone id=title

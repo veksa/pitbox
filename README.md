@@ -41,6 +41,9 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   by the bundler, bytecode included.
 - **Cold start, measured** — `open!` reports the activity, when the JS bundle started running and what it
   was served (bytecode or source, cached or not); a flow adds the time to its first check.
+- **What only some devices have** — fold and unfold a foldable (`posture`), rotate, run the app in a freeform
+  window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets, desktops and
+  headsets, a watch's crown (`rotary`) and buttons, TV remote and media keys.
 - **Named states** — an emulator snapshot plus the project's backend dump, restored in seconds.
 - **Several devices and variants** — a flow can switch devices (`device <avd>`); `matrix` runs a flow over
   devices × font scales × themes × locales, with full-size screenshots per variant (store screenshots).

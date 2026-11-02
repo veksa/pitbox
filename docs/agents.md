@@ -31,8 +31,13 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   simulator build. The first UI call builds and starts the XCUITest runner (about 15 s once, then cached).
   XCUITest cannot hold a finger between calls (`touch`), and `network`, `perf`, display size and animations
   are reported as unsupported. Apple TV has no touch: drive it with `key`.
-- **TV:** `key` with up/down/left/right/center/back; `inspect what=focus`; `inspect what=focus_map` audits
-  D-pad reachability.
+- **TV:** `key` with up/down/left/right/center/back and remote keys (play, next, channel_up, guide…);
+  `inspect what=focus`; `inspect what=focus_map` audits D-pad reachability.
+- **Foldables, tablets, desktops:** `device action=posture value=closed|half|open|reset`, `device action=rotate
+  value=90|auto`, `device action=window value="freeform 0,0,900,1300"`; a mouse through `press kind=right|hover`
+  and `swipe via=wheel`; shortcuts as `key keys=["ctrl+c"]`.
+- **Watches:** `swipe via=rotary direction=down steps=5` turns the crown; `swipe direction=right` is the
+  system back gesture.
 
 ## Checking instead of looking
 

@@ -1,0 +1,9 @@
+# The app as a desktop-style window, resized, then fullscreen again.
+open!
+wait id=title 20
+window freeform 0,0,900,1300
+wait id=title 20
+window resize 0,0,600,900
+expect id=title
+window fullscreen
+wait id=title 20

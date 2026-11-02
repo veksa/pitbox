@@ -1,7 +1,12 @@
 package dev.pitbox.example
 
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.ContextMenu
+import android.view.MenuItem
+import android.view.MotionEvent
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -15,6 +20,38 @@ class MainActivity : Activity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContentView(R.layout.main)
+
+    // The window's shape, for checks on folding, rotation and resizing: measured from the laid-out window, which
+    // follows every change, whether or not the activity is recreated.
+    val shape = findViewById<TextView>(R.id.screen_shape)
+    val root = findViewById<View>(android.R.id.content)
+    root.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+      val d = resources.displayMetrics.density
+      val w = v.width / d
+      val h = v.height / d
+      // The display's rotation from its natural orientation, which is landscape on many tablets.
+      @Suppress("DEPRECATION") val turn = windowManager.defaultDisplay.rotation * 90
+      val text = "${if (w >= 600) "wide" else "narrow"} ${if (w > h) "landscape" else "portrait"} r$turn"
+      if (shape.text != text) shape.post { shape.text = text }
+    }
+
+    // A watch crown's events go to the focused view, and in touch mode nothing has focus: the scroller asks for it,
+    // as Wear OS apps should.
+    // Only on a watch: on a TV the first D-pad press must reach the first control, not the scroller.
+    if (packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)) {
+      findViewById<View>(R.id.main_screen).apply {
+        isFocusableInTouchMode = true
+        requestFocus()
+      }
+    }
+
+    // A mouse pointer over the view, for hover checks.
+    findViewById<TextView>(R.id.hover_target).setOnHoverListener { v, e ->
+      if (e.actionMasked == MotionEvent.ACTION_HOVER_ENTER || e.actionMasked == MotionEvent.ACTION_HOVER_MOVE) (v as TextView).text = "hovered"
+      false
+    }
+    // A right click opens the context menu.
+    registerForContextMenu(findViewById(R.id.menu_target))
 
     val name = findViewById<EditText>(R.id.name)
     val greeting = findViewById<TextView>(R.id.greeting)
@@ -54,5 +91,14 @@ class MainActivity : Activity() {
         },
       )
     }
+  }
+
+  override fun onCreateContextMenu(menu: ContextMenu, v: View, info: ContextMenu.ContextMenuInfo?) {
+    menu.add(0, 1, 0, "Copy")
+  }
+
+  override fun onContextItemSelected(item: MenuItem): Boolean {
+    findViewById<TextView>(R.id.menu_target).text = "copied"
+    return true
   }
 }
