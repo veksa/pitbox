@@ -7,7 +7,7 @@ import path from 'node:path';
 import {KEYS} from '../drivers/android/driver.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -209,12 +209,15 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
     this.#front(before);
-    const {width: w, height: h} = await this.size();
+    const {width, height} = await this.size();
+    const [ax, ay, ax2, ay2] = swipeArea(before, width, height);
+    const w = ax2 - ax;
+    const h = ay2 - ay;
     const dirs: Record<string, [number, number, number, number]> = {
-      up: [w / 2, h * 0.72, w / 2, h * 0.28],
-      down: [w / 2, h * 0.28, w / 2, h * 0.72],
-      left: [w * 0.8, h / 2, w * 0.2, h / 2],
-      right: [w * 0.2, h / 2, w * 0.8, h / 2],
+      up: [ax + w / 2, ay + h * 0.8, ax + w / 2, ay + h * 0.2],
+      down: [ax + w / 2, ay + h * 0.2, ax + w / 2, ay + h * 0.8],
+      left: [ax + w * 0.85, ay + h / 2, ax + w * 0.15, ay + h / 2],
+      right: [ax + w * 0.15, ay + h / 2, ax + w * 0.85, ay + h / 2],
     };
     const coords = dirs[spec] ?? (spec.split(/[\s,]+/).map(Number) as [number, number, number, number]);
     if (coords.length !== 4 || coords.some(n => !Number.isFinite(n))) throw new Error('swipe up|down|left|right or "x1,y1,x2,y2"');
@@ -257,7 +260,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const swipeDir = {down: 'up', up: 'down', left: 'right', right: 'left'}[direction] ?? direction;
     for (let i = 0; i < max && !matches(snap, selector); i++) {
       const prev = snap.lines.join('\n');
-      await this.runner.call('swipe', await this.#dirCoords(swipeDir), 12_000);
+      await this.runner.call('swipe', await this.#dirCoords(swipeDir, snap), 12_000);
       await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
       snap = await this.snapshot();
       if (snap.lines.join('\n') === prev) break;
@@ -267,9 +270,18 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
   }
 
-  async #dirCoords(dir: string) {
-    const {width: w, height: h} = await this.size();
-    const c: Record<string, number[]> = {up: [w / 2, h * 0.7, w / 2, h * 0.35], down: [w / 2, h * 0.35, w / 2, h * 0.7], left: [w * 0.8, h / 2, w * 0.3, h / 2], right: [w * 0.3, h / 2, w * 0.8, h / 2]};
+  async #dirCoords(dir: string, snap?: Snapshot) {
+    const {width, height} = await this.size();
+    const [ax, ay, ax2, ay2] = swipeArea(snap, width, height);
+    const w = ax2 - ax;
+    const h = ay2 - ay;
+    // Shorter than a page: content that moved stays recognisable between snapshots.
+    const c: Record<string, number[]> = {
+      up: [ax + w / 2, ay + h * 0.75, ax + w / 2, ay + h * 0.3],
+      down: [ax + w / 2, ay + h * 0.3, ax + w / 2, ay + h * 0.75],
+      left: [ax + w * 0.8, ay + h / 2, ax + w * 0.3, ay + h / 2],
+      right: [ax + w * 0.3, ay + h / 2, ax + w * 0.8, ay + h / 2],
+    };
     const [x1, y1, x2, y2] = (c[dir] ?? c.up!).map(Math.round);
     return {x1, y1, x2, y2, duration: 250};
   }

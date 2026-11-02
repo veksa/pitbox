@@ -202,3 +202,22 @@ describe('mcp tools', () => {
     expect(tools.length).toBeLessThanOrEqual(30);
   });
 });
+
+describe('swipe area', () => {
+  it('runs inside the app scroller and above the keyboard, ignoring a keyboard window that spans the screen', async () => {
+    const {buildSnapshot, swipeArea} = await import('./ui/snapshot.ts');
+    const windows = [
+      {type: 'app', title: '', pkg: 'com.example'},
+      {type: 'ime', title: 'Keyboard', pkg: 'ime'},
+      {type: 'system', title: 'Taskbar', pkg: 'launcher'},
+    ];
+    const snap = buildSnapshot(windows, [
+      {p: -1, w: 0, c: 'ScrollView', b: [0, 200, 2000, 2000], f: 's'},
+      {p: -1, w: 1, c: 'FrameLayout', b: [0, 0, 2000, 2100]},
+      {p: 1, w: 1, c: 'KeyboardView', b: [0, 1100, 2000, 2000]},
+      {p: -1, w: 2, c: 'View', b: [0, 2000, 2000, 2100], f: 's'},
+    ]);
+    expect(swipeArea(snap, 2000, 2100)).toEqual([0, 200, 2000, 1100]);
+    expect(swipeArea(undefined, 1080, 2400)).toEqual([0, 0, 1080, 2400]);
+  });
+});
