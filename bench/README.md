@@ -46,6 +46,32 @@ Implications for pitbox:
   Health means a bundle request that completes;
 - a 15.6 MB dev bundle on every cold start is worth the host-side bytecode and on-device cache.
 
+### Device side of a cold start (Android emulator, x86_64, API 36)
+
+Milestones from `logcat -v epoch`: the activity manager's `START`, React Native's bridgeless host
+(`loadJSBundleFromMetro`, `Creating BundleLoader`, `Loading JS Bundle`) and the first `Running "main"`. Times
+are from the launch intent.
+
+| Build | Activity shown | Bundle in hand | JS starts running | JS evaluation |
+|---|---|---|---|---|
+| dev client, Metro just started | 1.9 s | 12.3 s (Metro building: 10.2 s) | 15.5 s | 3.0 s |
+| dev client, Metro warm (2 runs) | 1.6–2.5 s | 2.4–2.9 s | **5.4–6.5 s** | 2.6–3.3 s |
+| release build, bytecode embedded (3 runs) | — | 0.3–0.5 s | **0.59–0.76 s** | 0.2–0.34 s |
+
+With a warm server the transfer itself is small (~0.5–0.9 s for 15.6 MB over a forwarded port); the
+device-side cost of a dev start is **evaluating source instead of bytecode — about 10× slower** — plus the
+dev client's own launcher. A start against a server that was just launched adds the whole graph build.
+
+Implications for pitbox:
+
+- verification passes should run on an embedded-bytecode build: ~0.7 s to running JS instead of
+  5–6 s, on every relaunch of every pass;
+- for the iteration loop, host-compiled bytecode cached on the device removes the 2.6–3.3 s evaluation;
+- a dev server that was not kept warm costs another ~10 s per first launch.
+
+The release build measured was an older build with R8 and no dev tooling, so it is an
+upper bound on the gain rather than an exact one.
+
 ### Token baseline
 
 33 Claude Code sessions that drove devices through an MCP automation server:
@@ -66,6 +92,4 @@ device work in small contexts is what moves the number.
 
 ## Still to measure in P0
 
-- device side of a dev cold start on an emulator: bundle transfer, parse/compile, time to first screen —
-  versus an embedded-bundle build;
 - Rspack (Re.Pack) against Metro on the same app.
