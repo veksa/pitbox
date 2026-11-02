@@ -54,6 +54,14 @@ export const startMcp = async (opts: {config?: string} = {}) => {
     tool('dev_status', 'Dev server: proxy, bytecode cache, prewarm results, the last bundle requests from devices with their timing.', {}, 'devStatus');
     tool('dev_prewarm', 'Build the main bundle (and its bytecode) now so the next app start is served from cache.', {}, 'devPrewarm');
     tool('dev_reload', 'Ask every connected app to reload its JS.', {}, 'devReload');
+    tool('fresh', 'Does the running app execute the newest code? Reported from inside the app; answers stale with the reason (old bundle, rebuild pending) before you debug a fix that never arrived.', {}, 'fresh');
+    tool('app_network', "The app's recent network requests (method, URL, status, time) and socket events, from inside the app.", {limit: z.number().int().optional()}, 'appLog');
+    tool(
+      'net',
+      'Network rules applied inside the app: fail (connection error), mock (status/body), delay (ms), freeze (a WebSocket stays open but silent), offline (all of it), clear, list. match is a URL substring or *.',
+      {action: z.enum(['fail', 'mock', 'delay', 'freeze', 'offline', 'clear', 'list']), match: z.string().optional(), kind: z.enum(['http', 'ws']).optional(), status: z.number().int().optional(), body: z.unknown().optional(), ms: z.number().int().optional()},
+      'net',
+    );
   }
 
   // Android

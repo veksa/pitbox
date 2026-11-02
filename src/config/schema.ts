@@ -70,6 +70,11 @@ export const devserverSchema = z.object({
   env: env.optional(),
   /** Serve the app's main bundle as Hermes bytecode compiled on the host (React Native with Hermes). */
   bytecode: z.boolean().optional(),
+  /**
+   * Splice pitbox's in-app script into the dev bundle: which bundle runs (freshness), network log and rules,
+   * trace headers, in-flight requests for settling. Default on for `metro` and `rspack`.
+   */
+  inApp: z.boolean().optional(),
   /** Platforms whose main bundle is built ahead of the device asking. Default `['android']`. */
   platforms: z.array(z.enum(['android', 'ios'])).optional(),
   /** Main bundle path for prewarming when it cannot be discovered (`/index.bundle?platform={platform}&dev=true`). */

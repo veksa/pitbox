@@ -7,7 +7,14 @@ import {KEYS, type AndroidDriver} from '../drivers/android/driver.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
-export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number};
+export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string};
+
+export type UiHooks = {
+  /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
+  beforeAction?: () => string | undefined;
+  /** Resolves when the app has no requests in flight (or after `timeoutMs`). */
+  networkIdle?: (timeoutMs: number) => Promise<void>;
+};
 
 const quote = (s: string) => JSON.stringify(s);
 
@@ -19,7 +26,11 @@ export class AndroidUi {
   /** Flow lines recorded since `record start`, or undefined when not recording. */
   recording?: string[];
 
-  constructor(driver: AndroidDriver, serial: string) {
+  readonly #hooks: UiHooks;
+  #trace?: string;
+
+  constructor(driver: AndroidDriver, serial: string, hooks: UiHooks = {}) {
+    this.#hooks = hooks;
     this.serial = serial;
     this.runner = new AndroidRunner(driver, serial);
   }
@@ -50,6 +61,10 @@ export class AndroidUi {
   async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 2500, graceMs = 1200): Promise<{diff: SnapshotDiff; idle: boolean}> {
     const t0 = Date.now();
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
+    if (this.#hooks.networkIdle) {
+      await this.#hooks.networkIdle(timeoutMs);
+      await this.runner.call('idle', {quiet: 150, timeout: 1500}, 6000);
+    }
     let diff = diffSnapshots(before, await this.snapshot());
     while (!diff.changed && Date.now() - t0 < graceMs) {
       await new Promise(res => setTimeout(res, 200));
@@ -65,18 +80,23 @@ export class AndroidUi {
     return {snap, target: resolveTarget(snap, selector)};
   }
 
+  #begin() {
+    this.#trace = this.#hooks.beforeAction?.();
+    return Date.now();
+  }
+
   async press(selector: string, kind: 'tap' | 'longpress' | 'doubletap' = 'tap'): Promise<ActResult> {
-    const t0 = Date.now();
+    const t0 = this.#begin();
     const {snap, target} = await this.#target(selector);
     await this.runner.call(kind, {x: target.x, y: target.y});
     if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
     else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
     const settled = await this.#settle(snap);
-    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0};
+    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace};
   }
 
   async fill(selector: string, text: string): Promise<ActResult> {
-    const t0 = Date.now();
+    const t0 = this.#begin();
     const {snap, target} = await this.#target(selector);
     await this.runner.call('tap', {x: target.x, y: target.y});
     await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
@@ -85,20 +105,20 @@ export class AndroidUi {
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
     const settled = await this.#settle(snap);
-    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0};
+    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace};
   }
 
   async type(text: string): Promise<ActResult> {
-    const t0 = Date.now();
+    const t0 = this.#begin();
     const before = this.last;
     const r = await this.runner.call<{set: boolean}>('text', {text, append: true});
     if (!r.set) throw new Error('no focused text field to type into');
     this.record(`type ${quote(text)}`);
-    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0};
+    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace};
   }
 
   async key(keys: string[]): Promise<ActResult> {
-    const t0 = Date.now();
+    const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
     for (const k of keys) {
       const code = KEYS[k.toLowerCase()] ?? Number(k);
@@ -106,11 +126,11 @@ export class AndroidUi {
       await this.runner.call('key', {code});
     }
     this.record(`key ${keys.join(' ')}`);
-    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0};
+    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace};
   }
 
   async swipe(spec: string, durationMs = 300): Promise<ActResult> {
-    const t0 = Date.now();
+    const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
     const {width: w, height: h} = await this.size();
     const dirs: Record<string, [number, number, number, number]> = {
@@ -124,7 +144,7 @@ export class AndroidUi {
     const [x1, y1, x2, y2] = coords.map(Math.round) as [number, number, number, number];
     await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
     this.record(`swipe ${spec}${durationMs !== 300 ? ` ${durationMs}` : ''}`);
-    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0};
+    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace};
   }
 
   /** Swipes in `direction` until `selector` is on screen or the content stops moving. */
@@ -142,7 +162,7 @@ export class AndroidUi {
     }
     if (!matches(snap, selector)) throw new Error(`scrolled ${direction} but "${selector}" never appeared`);
     this.record(`scroll ${direction} until ${selector}`);
-    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0};
+    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace};
   }
 
   async #dirCoords(dir: string) {

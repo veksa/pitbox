@@ -1,6 +1,7 @@
 // The engine the daemon serves: config, stand, Android driver, doctor and docs behind one method table.
 // The CLI and the MCP server call these methods over the daemon's RPC.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
@@ -117,7 +118,25 @@ export class Engine {
     const serial = await a.resolve(device);
     let ui = this.#uis.get(serial);
     if (!ui) {
-      ui = new AndroidUi(a, serial);
+      ui = new AndroidUi(a, serial, {
+        beforeAction: () => {
+          const proxy = this.#dev?.proxy;
+          if (!proxy || !proxy.apps().length) return undefined;
+          const id = crypto.randomBytes(16).toString('hex');
+          proxy.setTrace(id);
+          return id;
+        },
+        networkIdle: async timeoutMs => {
+          const proxy = this.#dev?.proxy;
+          if (!proxy || !proxy.apps().length) return;
+          const deadline = Date.now() + timeoutMs;
+          while (Date.now() < deadline) {
+            const answers = await proxy.query<{inflight: number}>('idle', {}, 800);
+            if (answers.every(a => a.data.inflight <= 0)) return;
+            await new Promise(r => setTimeout(r, 150));
+          }
+        },
+      });
       this.#uis.set(serial, ui);
     }
     return ui;
@@ -316,6 +335,51 @@ export class Engine {
     devPrewarm: async () => {
       if (!this.#dev) throw new Error('no devserver in the config');
       return {prewarm: (await this.#devUp(true)) ?? []};
+    },
+
+    fresh: async () => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      return this.#dev.freshness();
+    },
+
+    appLog: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      const answers = await this.#dev.proxy.query<Record<string, unknown>[]>('log', {limit: num(p, 'limit') ?? 30});
+      return {apps: answers.map(a => ({app: a.app.id, platform: a.app.hello?.platform, entries: a.data}))};
+    },
+
+    net: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      const proxy = this.#dev.proxy;
+      const action = str(p, 'action') ?? 'list';
+      if (action === 'clear') proxy.setRules([]);
+      else if (action === 'offline') {
+        proxy.setRules([
+          {id: 'offline-http', kind: 'http', match: '*', action: 'fail'},
+          {id: 'offline-ws', kind: 'ws', match: '*', action: 'freeze'},
+        ]);
+      } else if (action !== 'list') {
+        if (!['fail', 'mock', 'delay', 'freeze'].includes(action)) throw new Error('net action: fail | mock | delay | freeze | offline | clear | list');
+        let body: unknown = p.body;
+        if (typeof body === 'string') {
+          try {
+            body = JSON.parse(body);
+          } catch {
+            // plain text body
+          }
+        }
+        const rule = {
+          id: `r${proxy.rules.length + 1}-${crypto.randomBytes(2).toString('hex')}`,
+          kind: (str(p, 'kind') as 'http' | 'ws' | undefined) ?? (action === 'freeze' ? 'ws' : 'http'),
+          match: str(p, 'match') ?? '*',
+          action: action as 'fail' | 'mock' | 'delay' | 'freeze',
+          status: num(p, 'status'),
+          body,
+          ms: num(p, 'ms'),
+        };
+        proxy.setRules([...proxy.rules, rule]);
+      }
+      return {rules: proxy.rules, apps: proxy.apps().length};
     },
 
     devReload: async () => {

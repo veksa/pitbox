@@ -13,6 +13,11 @@ export const DEVSERVER = 'devserver';
 
 const IGNORED = /(^|[\\/])(node_modules|\.git|\.pitbox|\.expo|\.gradle|build|Pods|DerivedData|\.cxx)([\\/]|$)/;
 
+export type Freshness = {
+  generation: number;
+  apps: {id: number; platform: string; bundle: string; latest?: string; fresh: boolean; note?: string; runningForS?: number}[];
+};
+
 export type DevserverStatus = {
   port: number;
   internalPort: number;
@@ -59,6 +64,7 @@ export class DevServer {
       host: cfg.host,
       upstreamPort: this.internalPort,
       bytecode: this.hermesc ? {compile: hermesCompiler(this.hermesc, path.join(stateDir, 'bytecode', 'work')), cache: new BytecodeCache(path.join(stateDir, 'bytecode'))} : undefined,
+      inApp: cfg.inApp ?? (cfg.adapter ?? 'metro') !== 'command',
     });
     try {
       const saved = JSON.parse(fs.readFileSync(this.#stateFile, 'utf8')) as {mainUrls?: Record<string, string>};
@@ -163,9 +169,10 @@ export class DevServer {
         continue;
       }
       try {
-        if (this.proxy.opts.bytecode) {
+        if (this.proxy.opts.bytecode || this.proxy.opts.inApp) {
           const r = await this.proxy.bundleFor(url, `localhost:${this.port}`, true);
-          results.push({platform, ms: Date.now() - t0, ok: !r.error, note: r.error ? `bundler answered ${r.status}` : r.cached ? 'bytecode cached' : 'bytecode compiled'});
+          const what = !this.proxy.opts.bytecode ? 'source built' : r.cached ? 'bytecode cached' : 'bytecode compiled';
+          results.push({platform, ms: Date.now() - t0, ok: !r.error, note: r.error ? `bundler answered ${r.status}` : what});
         } else {
           const res = await fetch(`http://127.0.0.1:${this.internalPort}${url}`, {headers: {host: `localhost:${this.port}`}});
           await res.arrayBuffer();
@@ -191,6 +198,31 @@ export class DevServer {
     await new Promise(r => setTimeout(r, 200));
     ws.close();
     return this.proxy.stats.requests.length;
+  }
+
+  /**
+   * Which code each connected app runs, against the newest build: stale when its bundle is older, and possibly
+   * stale when files changed after the newest build (the rebuild has not happened yet).
+   */
+  freshness(): Freshness {
+    const p = this.proxy;
+    const apps = p.apps().map(a => {
+      if (!a.hello) return {id: a.id, platform: '?', bundle: '?', fresh: false, note: 'connected, not introduced yet'};
+      const latest = p.latest.get(a.hello.platform);
+      const built = p.builds.get(a.hello.bundle);
+      const newest = latest ? p.builds.get(latest) : undefined;
+      const pending = newest !== undefined && p.generation > newest.generation;
+      const fresh = !!latest && latest === a.hello.bundle && !pending;
+      const note = fresh
+        ? undefined
+        : latest && latest !== a.hello.bundle
+          ? `runs bundle ${a.hello.bundle}${built ? ` built ${Math.round((Date.now() - built.at) / 1000)}s ago` : ' from before this daemon'}; newest is ${latest} — relaunch or reload the app`
+          : pending
+            ? `files changed after the newest build (${p.generation - newest!.generation} change events) — rebuilding; check again or prewarm`
+            : 'no build recorded for its platform yet';
+      return {id: a.id, platform: a.hello.platform, bundle: a.hello.bundle, latest, fresh, note, runningForS: Math.round((Date.now() - a.hello.startedAt) / 1000)};
+    });
+    return {apps, generation: p.generation};
   }
 
   status(): DevserverStatus {

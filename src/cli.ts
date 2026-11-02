@@ -46,6 +46,10 @@ flows
 
 devserver
   dev [status|prewarm|reload|restart]   the bundler behind pitbox's proxy: device requests, bytecode, prewarming
+  fresh                         does the app run the newest code? (reported from inside the app)
+  app-log [-n 30]               the app's recent network requests and socket events
+  net fail|mock|delay|freeze <match> [--kind http|ws] [--status 503] [--body '{…}'] [--ms 3000]
+  net offline | net clear | net
 
 support
   doctor [--fix] [--only rule,…]
@@ -181,6 +185,12 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       if (!method) throw new Error('dev status|prewarm|reload|restart');
       return {method, params: method === 'restart' ? {services: ['devserver']} : {}};
     }
+    case 'fresh':
+      return {method: 'fresh', params: {}};
+    case 'app-log':
+      return {method: 'appLog', params: {limit: flags.lines}};
+    case 'net':
+      return {method: 'net', params: {action: rest[0] ?? 'list', match: rest[1], kind: flags.kind, status: flags.status, body: flags.body, ms: flags.ms}};
     case 'docs': {
       const [name, op, ...q] = rest;
       return {method: 'docs', params: {name, op, query: q.join(' ') || undefined, context: flags.context, from: flags.from, to: flags.to, depth: flags.depth}};

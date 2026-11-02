@@ -6,7 +6,7 @@ import type {DoctorReport} from './doctor/run.ts';
 import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
-import type {DevserverStatus} from './devserver/devserver.ts';
+import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
 import type {ActResult} from './ui/android.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
@@ -77,7 +77,7 @@ export const fmtDoctor = (r: DoctorReport): string => {
 export const fmtTool = (r: ToolResult): string => `${r.code === 0 ? '' : `exit ${r.timedOut ? 'timeout' : r.code} · `}${seconds(r.ms)}\n${r.output}`.trimEnd();
 
 export const fmtAct = (r: ActResult): string => {
-  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}`;
+  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}`;
   if (!r.diff.changed) return `${head}\nno change on screen`;
   return [head, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
 };
@@ -153,6 +153,20 @@ export const formatResult = (method: string, r: unknown): string => {
       return 'recording: actions from now on become flow steps';
     case 'recordStop':
       return [x.file ? `saved ${x.file}` : 'recorded:', ...(x.lines as string[])].join('\n');
+    case 'fresh': {
+      const f = x as unknown as Freshness;
+      if (!f.apps.length) return 'no app connected to the dev server — not started, a release build, or talking to another server';
+      return f.apps.map(a => (a.fresh ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}` : `✗ app ${a.id} (${a.platform}) is stale: ${a.note}`)).join('\n');
+    }
+    case 'appLog':
+      return (x.apps as {app: number; platform?: string; entries: Record<string, unknown>[]}[])
+        .map(a => [`app ${a.app} (${a.platform ?? '?'})`, ...a.entries.map(e => (e.ws ? `  ws ${e.ev} ${e.ws}${e.rule ? ` [${e.rule}]` : ''}` : `  ${e.m} ${e.url} → ${e.s} in ${e.ms} ms${e.rule ? ` [${e.rule}]` : ''}`))].join('\n'))
+        .join('\n') || 'no app connected';
+    case 'net': {
+      const rules = x.rules as {id: string; kind: string; match: string; action: string; status?: number; ms?: number}[];
+      const lines = rules.map(r => `${r.id}: ${r.action} ${r.kind} matching "${r.match}"${r.status ? ` → ${r.status}` : ''}${r.ms ? ` ${r.ms} ms` : ''}`);
+      return [...(lines.length ? lines : ['no network rules']), `apps connected: ${x.apps}`].join('\n');
+    }
     case 'devReload':
       return 'reload sent to connected apps';
     case 'logs':
