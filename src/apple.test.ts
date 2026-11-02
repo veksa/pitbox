@@ -165,6 +165,26 @@ describe('apple driver', () => {
     }
   });
 
+  it('says when macOS has stopped writing crash reports of the app for the day', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    for (let i = 0; i < 25; i++) {
+      const head = JSON.stringify({app_name: 'MyApp', timestamp: `${today} 10:00:${String(i).padStart(2, '0')}.00 +0200`, bundleID: 'com.example.app'});
+      fs.writeFileSync(path.join(dir, `MyApp-${today}-1000${String(i).padStart(2, '0')}.ips`), `${head}\n{}`);
+    }
+    const saved = AppleCrashWatcher.waitMs;
+    AppleCrashWatcher.waitMs = {quick: 100, long: 100};
+    try {
+      const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+      const [e] = await w.since(Date.now(), undefined, true);
+      expect(e?.summary).toContain('macOS keeps 25 a day per app and has 25 of it today');
+    } finally {
+      AppleCrashWatcher.waitMs = saved;
+    }
+  });
+
   it('lists booted simulators as online devices and idle ones by name', () => {
     const sims = [
       {udid: 'AAA', name: 'iPhone 17', os: 'iOS 27.0', kind: 'phone', state: 'Booted'},

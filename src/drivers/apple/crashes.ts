@@ -136,6 +136,26 @@ export class AppleCrashWatcher {
    */
   static waitMs = {quick: 8000, long: 60_000};
 
+  /** How many reports of one app macOS writes a day; past that its crashes leave none. */
+  static dailyReports = 25;
+
+  /** The app's reports from today, by the header line of each. */
+  #reportsToday(): number {
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    let n = 0;
+    try {
+      for (const name of fs.readdirSync(this.#dir)) {
+        if (!name.endsWith('.ips') || !name.includes(`-${today}-`)) continue;
+        try {
+          const head = JSON.parse(fs.readFileSync(path.join(this.#dir, name), 'utf8').split('\n', 1)[0]!) as {bundleID?: string; timestamp?: string};
+          if (head.bundleID === this.#bundleId && head.timestamp?.startsWith(today)) n++;
+        } catch {}
+      }
+    } catch {}
+    return n;
+  }
+
   async since(since: number, after?: string[], final = false): Promise<AppEvent[]> {
     let found = this.#scan(since);
     const was = await this.#wasRunning;
@@ -151,7 +171,11 @@ export class AppleCrashWatcher {
         await new Promise(r => setTimeout(r, 400));
         found = this.#scan(since);
       }
-      if (!found.length) found = [{at: Date.now(), kind: 'crash', summary: `${this.#bundleId} stopped running during the action (no crash report yet)`, lines: []}];
+      if (!found.length) {
+        const kept = this.#reportsToday();
+        const why = kept >= AppleCrashWatcher.dailyReports ? `no crash report: macOS keeps ${AppleCrashWatcher.dailyReports} a day per app and has ${kept} of it today; remove old ones from ${this.#dir}` : 'no crash report yet';
+        found = [{at: Date.now(), kind: 'crash', summary: `${this.#bundleId} stopped running during the action (${why})`, lines: []}];
+      }
     }
     return found;
   }
