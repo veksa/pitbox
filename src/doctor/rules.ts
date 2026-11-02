@@ -6,6 +6,7 @@ import {run, which} from '../util/proc.ts';
 import {tcpOpen} from '../util/net.ts';
 import {probePort} from '../stand/health.ts';
 import type {Finding, Rule} from './types.ts';
+import {allowCleartextInDebug, cleartextOf, detectProject} from '../init/project.ts';
 
 /** Who listens on a TCP port: `pid name`, best effort. */
 export const portOwner = async (port: number): Promise<string | undefined> => {
@@ -330,4 +331,20 @@ export const metroWindowsWatcher: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, animations, servicesHealthy, dataPartition, metroWindowsWatcher];
+/** Android blocks plain HTTP since API 28: a debug build that may not use it never reaches the stand. */
+const cleartext: Rule = {
+  id: 'android-cleartext',
+  title: 'the Android debug build may use plain HTTP to reach the dev server and the stand',
+  check: async ctx => {
+    const p = detectProject(ctx.config.devserver?.root ? path.resolve(ctx.root, ctx.config.devserver.root) : ctx.root);
+    if (!p?.appModule) return [];
+    const c = cleartextOf(p.appModule);
+    if (c.status === 'blocked') {
+      return [{rule: 'android-cleartext', severity: 'error', message: `debug builds cannot use plain HTTP: ${c.reason}`, hint: 'allow it in the debug manifest, then rebuild', fix: async () => allowCleartextInDebug(p.appModule!)}];
+    }
+    if (c.status === 'config') return [{rule: 'android-cleartext', severity: 'info', message: c.reason}];
+    return [];
+  },
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher];

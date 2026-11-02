@@ -7,6 +7,9 @@ import {DAEMON_STOP} from './daemon/info.ts';
 
 const HELP = `pitbox — run, drive and debug apps from one tool
 
+setup
+  init [--dry-run] [--force]    a first pitbox.config.ts from the project's files; lets Android debug builds use plain HTTP
+
 stand
   up [service…]                 start the stand (all autostart services, the LLM mock) or the named services
   down [service…]               stop what pitbox started
@@ -81,7 +84,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -240,6 +243,12 @@ export const main = async () => {
   const config = args.flags.config as string | undefined;
   if (!cmd || cmd === 'help' || args.flags.help) {
     process.stdout.write(`${HELP}\n`);
+    return;
+  }
+  if (cmd === 'init') {
+    const {init} = await import('./init/init.ts');
+    const r = init({cwd: process.cwd(), force: !!args.flags.force, dryRun: !!args.flags['dry-run']});
+    process.stdout.write(`${r.lines.join('\n')}\n`);
     return;
   }
   if (cmd === 'mcp') {

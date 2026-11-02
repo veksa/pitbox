@@ -50,6 +50,10 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 
 ## Quick start
 
+`pitbox init` in the project writes a first config from what it finds (the app, its id and scheme, the
+bundler, an emulator), lets the Android debug build use plain HTTP when nothing does yet, and adds `.pitbox/`
+to `.gitignore`; `--dry-run` only says what it would do. A config by hand:
+
 ```ts
 // pitbox.config.ts
 import {defineConfig} from '@veksa/pitbox';

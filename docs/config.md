@@ -13,7 +13,7 @@ export default defineConfig({
 });
 ```
 
-`defineConfig` only adds type checking. The config is validated on load; an error names the field
+`pitbox init` writes a first one from the project's files. `defineConfig` only adds type checking. The config is validated on load; an error names the field
 (`services.api.health: probe must start with …`). Edits are picked up by a running daemon without a restart.
 
 ## app
