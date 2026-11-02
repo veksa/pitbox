@@ -107,6 +107,7 @@ export const startMcp = async (opts: {config?: string} = {}) => {
 
   // Flows — run in the daemon: one call, one verdict.
   tool('run', 'Run a flow file (or inline steps, one per line) in the daemon and get one verdict; on failure, the failing line, the error and the screen. Steps: open, goto, as, press, fill, type, key, swipe, scroll … until, wait, expect [gone|focus], tool … contains, sleep, screenshot, run.', {flow: z.string().optional(), steps: z.string().optional(), params: z.record(z.string(), z.string()).optional(), device}, 'run');
+  tool('matrix', 'Run a flow once per variant from the config (devices × font scale × dark × locale); screenshots and visual baselines are kept per variant — also how store screenshots are made. One line per variant.', {flow: z.string().optional(), steps: z.string().optional(), params: z.record(z.string(), z.string()).optional()}, 'matrix');
   tool('goto', 'Open a screen by a route from the config (deep link template).', {route: z.string(), params: z.record(z.string(), z.string()).optional(), device}, 'goto');
   tool('as', 'Sign in as a user with the signIn flow from the config.', {user: z.string(), device}, 'as');
   tool('state_save', 'Save a named stand state: an emulator snapshot (app and data included) plus the backend dump from the config.', {name: z.string(), device}, 'stateSave');

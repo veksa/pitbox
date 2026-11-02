@@ -46,6 +46,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
 
 flows
   run <flow> [param=value…] | run --steps "press id=a"   run a flow in the daemon, get one verdict
+  matrix <flow> [param=value…]  run a flow over the config's variants (devices, font scale, dark, locale)
   goto <route> [param=value…] · as <user>
   record start | record stop [name]
   state save|restore|rm <name> · state list   device snapshot + backend dump, back in seconds
@@ -179,6 +180,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'uiShot', params: {device, name: rest[0], scale: flags.scale}};
     case 'run':
       return {method: 'run', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
+    case 'matrix':
+      return {method: 'matrix', params: {flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
     case 'goto':
       return {method: 'goto', params: {device, route: rest[0], params: kv(rest.slice(1))}};
     case 'as':

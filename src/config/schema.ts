@@ -134,6 +134,18 @@ export const configSchema = z.object({
    * .pitbox/states); the device side is an emulator snapshot taken by pitbox.
    */
   states: z.object({save: z.string().optional(), restore: z.string().optional()}).optional(),
+  /**
+   * Variants for `matrix`: every combination runs the flow once, with screenshots and visual baselines kept
+   * per variant. Devices are serials or AVD names.
+   */
+  matrix: z
+    .object({
+      fontScale: z.array(z.number()).optional(),
+      dark: z.array(z.boolean()).optional(),
+      locale: z.array(z.string()).optional(),
+      devices: z.array(z.string()).optional(),
+    })
+    .optional(),
   /** Directory of visual baselines (`visual <name>`). Default `visual`. */
   visual: z.string().optional(),
   /** Directory of `.flow` files. Default `flows`. */

@@ -16,7 +16,7 @@ export type FlowHost = {
   /** Moves the following steps to another device (serial, AVD name or model). */
   setDevice: (name: string) => Promise<void>;
   visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
-  screenshot: (name?: string) => Promise<string>;
+  screenshot: (name?: string, full?: boolean) => Promise<string>;
 };
 
 export type FlowResult = {
@@ -137,7 +137,7 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number):
       await new Promise(r => setTimeout(r, Number(a[0])));
       return;
     case 'screenshot':
-      notes.push(`screenshot: ${await host.screenshot(a[0])}`);
+      notes.push(`screenshot: ${await host.screenshot(a[0], a[1] === 'full')}`);
       return;
     case 'run': {
       if (depth > 5) throw new Error('flows nested too deep');

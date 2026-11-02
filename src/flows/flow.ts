@@ -20,7 +20,7 @@
 //   device Pixel_8               the following steps run on another device (several devices in one flow)
 //   visual home mask id=player   compare with a stored baseline (stored on the first run)
 //   sleep 500
-//   screenshot [name]
+//   screenshot [name] [full]     JPEG for a look, or full-resolution PNG (store screenshots)
 //   run sign-in user=viewer      another flow file
 //
 // `${name}` in any step is replaced by a run parameter.

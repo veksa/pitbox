@@ -185,7 +185,7 @@ export class Engine {
     return fs.readFileSync(file, 'utf8');
   }
 
-  #flowHost(device?: string): FlowHost {
+  #flowHost(device?: string, variant?: string): FlowHost {
     return {
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
@@ -203,11 +203,19 @@ export class Engine {
       signIn: user => runFlow(this.#flowHost(device), this.#loadFlow(this.#needSignIn()), {user}),
       tool: (name, params) => this.methods.tool({name, params}) as Promise<{code: number | null; output: string}>,
       loadFlow: name => this.#loadFlow(name),
-      visual: async (name, masks) => (await this.ui(device)).visual(name, this.#visualDir(), {masks}),
+      visual: async (name, masks) => (await this.ui(device)).visual(variant ? `${name}@${variant}` : name, this.#visualDir(), {masks}),
       state: async name => {
         await this.methods.stateRestore({name, device});
       },
-      screenshot: async name => (await (await this.ui(device)).screenshot(this.#shotFile(name))).file,
+      screenshot: async (name, full) => {
+        const base = variant ? path.join(variant, name ?? new Date().toISOString().replace(/[:.]/g, '-')) : name;
+        if (full) {
+          const a = this.#needAndroid();
+          const file = path.join(this.#loaded.stateDir, 'shots', `${base ?? 'screen'}.png`);
+          return (await a.screenshot(await a.resolve(device), file)).file;
+        }
+        return (await (await this.ui(device)).screenshot(this.#shotFile(base))).file;
+      },
     };
   }
 
@@ -701,6 +709,43 @@ export class Engine {
       const source = str(p, 'steps') ?? this.#loadFlow(req(p, 'flow'));
       const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).map(([k, v]) => [k, String(v)]));
       return runFlow(this.#flowHost(device), source, params);
+    },
+
+    matrix: async (p: Params) => {
+      const m = this.config.matrix ?? {};
+      const source = str(p, 'steps') ?? this.#loadFlow(req(p, 'flow'));
+      const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).map(([k, v]) => [k, String(v)]));
+      const dims: [string, unknown[]][] = (
+        [
+          ['device', m.devices],
+          ['fontScale', m.fontScale],
+          ['dark', m.dark],
+          ['locale', m.locale],
+        ] as [string, unknown[] | undefined][]
+      ).filter((d): d is [string, unknown[]] => !!d[1]?.length);
+      let combos: Record<string, unknown>[] = [{}];
+      for (const [k, values] of dims) combos = combos.flatMap(c => values.map(v => ({...c, [k]: v})));
+      const a = this.#needAndroid();
+      const pkg = this.config.app?.android;
+      const results: {variant: string; ok: boolean; ms: number; failed?: string}[] = [];
+      for (const combo of combos) {
+        const variant = Object.entries(combo).map(([k, v]) => (k === 'device' ? String(v) : `${k}-${v}`)).join('_') || 'default';
+        const device = combo.device as string | undefined;
+        const serial = await a.resolve(device);
+        await a.settings(serial, {
+          fontScale: combo.fontScale as number | undefined,
+          dark: combo.dark as boolean | undefined,
+          locale: combo.locale && pkg ? {pkg, locales: combo.locale as string} : undefined,
+        });
+        const r = await runFlow(this.#flowHost(device, variant), source, params);
+        results.push({variant, ok: r.ok, ms: r.ms, failed: r.failed ? `line ${r.failed.line}: ${r.failed.error.split('\n')[0]}` : undefined});
+      }
+      // Back to defaults on every device the matrix touched.
+      for (const d of new Set(combos.map(c => c.device as string | undefined))) {
+        const serial = await a.resolve(d);
+        await a.settings(serial, {fontScale: m.fontScale ? 1 : undefined, dark: m.dark ? false : undefined, locale: m.locale && pkg ? {pkg, locales: '""'} : undefined}).catch(() => undefined);
+      }
+      return {results, shots: path.join(this.#loaded.stateDir, 'shots')};
     },
 
     goto: async (p: Params) => {
