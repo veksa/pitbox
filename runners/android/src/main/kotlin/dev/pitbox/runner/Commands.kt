@@ -46,6 +46,7 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
       JSONObject()
     }
     "key" -> { key(req.getInt("code"), req.optInt("meta", 0)); JSONObject() }
+    "touch" -> { touch(req.getString("phase"), req.optInt("x"), req.optInt("y")); JSONObject().put("down", touchDown != null) }
     "text" -> JSONObject().put("set", setText(req.getString("text"), req.optBoolean("append", false), req.optJSONArray("bounds")))
     "action" -> JSONObject().put("done", action(req.getJSONArray("bounds"), req.getString("action")))
     "screenshot" -> screenshot(req.optDouble("scale", 0.5), req.optInt("quality", 70))
@@ -225,6 +226,40 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     inject(motion(down, MotionEvent.ACTION_UP, x2.toFloat(), y2.toFloat()))
   }
 
+  /** A finger that stays down between commands: snapshots can be taken mid-gesture (a scrubber held at 0:42). */
+  private var touchDown: Long? = null
+  private var lastX = 0f
+  private var lastY = 0f
+
+  private fun touch(phase: String, x: Int, y: Int) {
+    when (phase) {
+      "down" -> {
+        if (touchDown != null) touch("up", lastX.toInt(), lastY.toInt())
+        val t = SystemClock.uptimeMillis()
+        touchDown = t
+        inject(motion(t, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat()))
+        lastX = x.toFloat(); lastY = y.toFloat()
+      }
+      "move" -> {
+        val t = touchDown ?: throw IllegalStateException("no finger down")
+        // Moves in ~8 ms steps over 250 ms, so the app sees a drag, not a jump.
+        val steps = 30
+        for (i in 1..steps) {
+          val f = i.toFloat() / steps
+          SystemClock.sleep(8)
+          inject(motion(t, MotionEvent.ACTION_MOVE, lastX + (x - lastX) * f, lastY + (y - lastY) * f))
+        }
+        lastX = x.toFloat(); lastY = y.toFloat()
+      }
+      "up" -> {
+        val t = touchDown ?: return
+        inject(motion(t, MotionEvent.ACTION_UP, lastX, lastY))
+        touchDown = null
+      }
+      else -> throw IllegalArgumentException("touch phase: down | move | up")
+    }
+  }
+
   private fun key(code: Int, meta: Int) {
     val now = SystemClock.uptimeMillis()
     val source = if (code in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_CENTER) InputDevice.SOURCE_DPAD else InputDevice.SOURCE_KEYBOARD
@@ -325,5 +360,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 6
+  const val VERSION = 7
 }
