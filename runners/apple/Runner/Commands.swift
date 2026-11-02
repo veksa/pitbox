@@ -80,6 +80,19 @@ final class Commands {
       // After a launch: wait until the app is in front, so the next tree is the app and not the shell.
       guard let id = req["app"] as? String, !id.isEmpty else { return ["foreground": false] }
       return ["foreground": app(id).wait(for: .runningForeground, timeout: double(req, "timeout", 5000) / 1000)]
+    case "confirmOpen":
+      // `simctl openurl` asks "Open in <app>?" in the shell before a link reaches the app. The question has two
+      // buttons, the confirming one last; its words depend on the system language. tvOS opens links directly.
+      #if os(tvOS) || os(watchOS)
+      return ["confirmed": false]
+      #else
+      let alert = app(Self.shellId).alerts.firstMatch
+      guard alert.waitForExistence(timeout: double(req, "timeout", 3000) / 1000) else { return ["confirmed": false] }
+      let buttons = alert.buttons.allElementsBoundByIndex
+      guard buttons.count == 2 else { return ["confirmed": false] }
+      buttons[1].tap()
+      return ["confirmed": true]
+      #endif
     case "activate":
       // Starting the runner puts its own process in front; bring the app back when it was running.
       if let id = req["app"] as? String, !id.isEmpty {

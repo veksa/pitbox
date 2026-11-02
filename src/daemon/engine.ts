@@ -742,9 +742,15 @@ export class Engine {
         // A runner already attached reads the shell until the launched app comes to the front.
         const ui = this.#uis.get(t.id);
         if (ui && !target.includes('://')) await ui.runner.call('foreground', {}, 10_000).catch(() => undefined);
+        // A link waits behind the shell's "Open in …?" question until someone answers it.
+        let confirmed = false;
+        if (target.includes('://')) {
+          const u = await this.ui(str(p, 'device'));
+          confirmed = !!(await u.runner.call<{confirmed?: boolean}>('confirmOpen', {}, 10_000).catch(() => ({confirmed: false}))).confirmed;
+        }
         const lanHost = this.config.devserver?.host;
         const unreachable = t.s instanceof RemoteApple && this.#dev && (!lanHost || lanHost === '127.0.0.1' || lanHost === 'localhost');
-        return {udid: t.id, target, ...r, ...(unreachable ? {note: "the dev server listens on loopback only, out of the Mac's reach: set devserver.host: '0.0.0.0' (or this machine's VPN address)"} : {})};
+        return {udid: t.id, target, ...r, ...(confirmed ? {confirmed: 'the open-in-app question'} : {}), ...(unreachable ? {note: "the dev server listens on loopback only, out of the Mac's reach: set devserver.host: '0.0.0.0' (or this machine's VPN address)"} : {})};
       }
       const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this
