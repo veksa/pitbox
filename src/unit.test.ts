@@ -238,3 +238,26 @@ describe('avd kinds', () => {
     expect(kindOfAvdConfig(ini({'tag.id': 'android-automotive'}))).toBe('automotive');
   });
 });
+
+describe('form factors', () => {
+  it('reads keys, combinations, letters and keycodes', async () => {
+    const {keyOf} = await import('./drivers/android/formfactor.ts');
+    const keys = {tab: 61, back: 4};
+    expect(keyOf('back', keys)).toEqual({code: 4, meta: 0});
+    expect(keyOf('ctrl+c', keys)).toEqual({code: 31, meta: 0x3000});
+    expect(keyOf('ctrl+shift+tab', keys)).toEqual({code: 61, meta: 0x3041});
+    expect(keyOf('7', keys)).toEqual({code: 14, meta: 0});
+    expect(keyOf('264', keys)).toEqual({code: 264, meta: 0});
+    expect(() => keyOf('hyper+x', keys)).toThrow(/unknown modifier/);
+    expect(() => keyOf('nosuchkey', keys)).toThrow(/unknown key/);
+  });
+
+  it('reads fold states and finds the app task', async () => {
+    const {parseDeviceStates, taskIdOf} = await import('./drivers/android/formfactor.ts');
+    const states = "Supported states: [\n  DeviceState{identifier=0, name='CLOSED', app_accessible=true},\n  DeviceState{identifier=1, name='HALF_OPENED', app_accessible=true},\n]";
+    expect(parseDeviceStates(states)).toEqual([{id: '0', name: 'CLOSED'}, {id: '1', name: 'HALF_OPENED'}]);
+    const dump = '  * Task{1a2b #12 type=home A=10001:com.example.launcher}\n  * Task{3c4d #63 type=standard A=10222:com.example.app U=0 visible=true}\n';
+    expect(taskIdOf(dump, 'com.example.app')).toBe('63');
+    expect(taskIdOf(dump, 'com.example')).toBeUndefined();
+  });
+});

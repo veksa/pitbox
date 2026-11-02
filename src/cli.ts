@@ -42,6 +42,10 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   press|longpress|doubletap <@ref | id=… | text=… | label=… | words | x,y>
   fill <selector> <text> · type <text> · key back|home|up|down|left|right|center|enter|…|<keycode> …
   swipe up|down|left|right|x1,y1,x2,y2 [ms] · scroll down until <selector>
+  mouse right|hover <selector> · mouse wheel up|down [steps] [selector]    tablets, desktops, headsets
+  rotary up|down [steps]        a watch crown or bezel
+  posture closed|half|open|rear|reset    fold a foldable · rotate 0|90|180|270|auto
+  window freeform [x,y,w,h] | fullscreen | resize x,y,w,h    the app as a desktop-style window (relaunches it)
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
   focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
@@ -170,6 +174,21 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'touch', params: {device, phase: rest[0], target: rest.slice(1).join(' ') || undefined}};
     case 'swipe':
       return {method: 'swipe', params: {device, direction: rest[0], duration: rest[1]}};
+    case 'mouse': {
+      // mouse right|hover <target> · mouse wheel up|down [steps] [target]
+      if (rest[0] === 'wheel') {
+        const steps = /^\d+$/.test(rest[2] ?? '') ? Number(rest[2]) : undefined;
+        return {method: 'mouse', params: {device, action: 'wheel', direction: rest[1], steps, target: rest.slice(steps === undefined ? 2 : 3).join(' ') || undefined}};
+      }
+      return {method: 'mouse', params: {device, action: rest[0], target: rest.slice(1).join(' ')}};
+    }
+    case 'rotary':
+      return {method: 'rotary', params: {device, direction: rest[0], steps: rest[1] ? Number(rest[1]) : undefined}};
+    case 'posture':
+    case 'rotate':
+      return {method: cmd, params: {device, value: rest[0]}};
+    case 'window':
+      return {method: 'window', params: {...common, value: rest.join(' ')}};
     case 'scroll':
       return {method: 'scroll', params: {device, direction: rest[0], until: rest.slice(rest[1] === 'until' ? 2 : 1).join(' ')}};
     case 'wait':

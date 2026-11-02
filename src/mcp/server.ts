@@ -81,9 +81,9 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Devices and the app
   tool(
     'device',
-    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now).',
-    {action: z.enum(['list', 'boot', 'shutdown', 'info', 'reverse']), avd: opt.str(), wipe: opt.bool(), device},
-    a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', info: 'info', reverse: 'reverse'})[a.action as string]!,
+    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now); posture value=closed|half|open|rear|reset (foldables), rotate value=0|90|180|270|auto, window value="freeform [x,y,w,h]"|fullscreen|"resize x,y,w,h" (relaunches the app).',
+    {action: z.enum(['list', 'boot', 'shutdown', 'info', 'reverse', 'posture', 'rotate', 'window']), avd: opt.str(), wipe: opt.bool(), value: opt.str(), device},
+    a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', info: 'info', reverse: 'reverse', posture: 'posture', rotate: 'rotate', window: 'window'})[a.action as string]!,
   );
   tool(
     'app',
@@ -101,15 +101,19 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
 
   // UI — every action waits for the UI to settle and answers with what changed.
   tool('snapshot', 'The screen as lines with refs (@e12). Once per new screen; actions then answer with diffs.', {bounds: opt.bool(), system: opt.bool(), device}, 'snapshot');
-  tool('press', 'Tap (kind: longpress, doubletap).', {target, kind: z.enum(['tap', 'longpress', 'doubletap']).optional(), device}, 'press');
+  tool('press', 'Tap (kind: longpress, doubletap; right = mouse right click, hover = mouse over).', {target, kind: z.enum(['tap', 'longpress', 'doubletap', 'right', 'hover']).optional(), device}, a =>
+    a.kind === 'right' || a.kind === 'hover' ? 'mouse' : 'press',
+    a => (a.kind === 'right' || a.kind === 'hover' ? {...a, action: a.kind} : a),
+  );
   tool('fill', 'Replace a field\'s text.', {target, text: z.string(), device}, 'fill');
   tool('type', 'Append text to the focused field.', {text: z.string(), device}, 'type');
-  tool('key', 'Keys: back home up down left right center enter menu … or keycodes.', {keys: z.array(z.string()), device}, 'uiKey');
+  tool('key', 'Keys: back home up down left right center enter menu, media/TV (play next channel_up guide …), watch (stem_1), combos (ctrl+c), or keycodes.', {keys: z.array(z.string()), device}, 'uiKey');
   tool(
     'swipe',
-    'Swipe up/down/left/right or "x1,y1,x2,y2" (duration ms = velocity); with until, scroll until the target shows.',
-    {direction: z.string(), duration: opt.num(), until: opt.str(), device},
-    a => (a.until ? 'scroll' : 'swipe'),
+    'Swipe up/down/left/right or "x1,y1,x2,y2" (duration ms = velocity); with until, scroll until the target shows; via=wheel (mouse) or rotary (watch crown) turns steps notches up/down instead.',
+    {direction: z.string(), duration: opt.num(), until: opt.str(), via: z.enum(['wheel', 'rotary']).optional(), steps: opt.num(), target: opt.str(), device},
+    a => (a.via === 'wheel' ? 'mouse' : a.via === 'rotary' ? 'rotary' : a.until ? 'scroll' : 'swipe'),
+    a => (a.via === 'wheel' ? {...a, action: 'wheel'} : a),
   );
   tool('touch', 'A finger held across calls: down <target>, move <target>, up.', {phase: z.enum(['down', 'move', 'up']), target: opt.str(), device}, 'touch');
   tool('wait', 'Wait for a target (gone: until it disappears; timeout s).', {target, gone: opt.bool(), timeout: opt.num(), device}, 'wait');

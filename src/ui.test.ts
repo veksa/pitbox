@@ -119,6 +119,7 @@ describe('flows', () => {
       setDevice: async (d: string) => void calls.push(`device ${d}`),
       visual: async () => ({status: 'match'}),
       screenshot: async n => `/shots/${n}.jpg`,
+      reshape: async (op, v) => void calls.push(`${op} ${v}`),
     };
     return {host, calls};
   };
@@ -138,6 +139,19 @@ describe('flows', () => {
     expect(r.ok).toBe(true);
     expect(r.notes[0]).toMatch(/^cold start: activity 640 ms · JS running at 2\.9s · wait text=Home at /);
     expect(r.notes.slice(1)).toEqual(['! JS error: boom (fatal)', '    onPress  src/a.ts:3:4']);
+  });
+
+  it('folds, rotates and re-windows the device as flow steps', async () => {
+    const {host, calls} = fakeHost([['Home']]);
+    const r = await runFlow(host, 'posture half\nrotate 90\nwindow freeform 0,0,800,600\nposture reset');
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual(['posture half', 'rotate 90', 'window freeform 0,0,800,600', 'posture reset']);
+  });
+
+  it('rejects a mouse step without a target', async () => {
+    const {host} = fakeHost([['Home']]);
+    const r = await runFlow(host, 'mouse right');
+    expect(r.failed?.error).toMatch(/mouse right\|hover <selector>/);
   });
 
   it('stops at the first failure with the line, the error and the screen', async () => {

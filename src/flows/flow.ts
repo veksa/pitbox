@@ -103,7 +103,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'wait', 'expect', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'posture', 'rotate', 'window', 'wait', 'expect', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -130,7 +130,14 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'sleep':
       case 'run':
       case 'tool':
+      case 'rotary':
+      case 'posture':
+      case 'rotate':
+      case 'window':
         need(1);
+        break;
+      case 'mouse':
+        if (!['right', 'hover', 'wheel'].includes(s.args[0] ?? '') || (s.args[0] !== 'wheel' && s.args.length < 2)) errors.push(`line ${s.line}: mouse right|hover <selector> or mouse wheel up|down [steps] [selector]`);
         break;
       case 'fill':
         need(2);

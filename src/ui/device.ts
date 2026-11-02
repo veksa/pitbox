@@ -5,11 +5,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {KEYS} from '../drivers/android/driver.ts';
+import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
 import {buildSnapshot, diffSnapshots, matches, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
-export type ActResult = {action: string; target?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
+export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
 export type UiHooks = {
   /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
@@ -197,12 +198,70 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const before = this.last ?? (await this.snapshot());
     this.#front(before);
     for (const k of keys) {
-      const code = KEYS[k.toLowerCase()] ?? Number(k);
-      if (!Number.isInteger(code)) throw new Error(`unknown key: ${k} (known: ${Object.keys(KEYS).join(', ')} or a keycode)`);
-      await this.runner.call('key', {code});
+      const {code, meta} = keyOf(k, KEYS);
+      await this.runner.call('key', meta ? {code, meta} : {code});
     }
     this.record(`key ${keys.join(' ')}`);
     return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+  }
+
+  /**
+   * A mouse, for tablets, desktops and headsets: `right` clicks the secondary button on a target (context menus),
+   * `hover` moves the pointer over it (tooltips, hover states), `wheel` turns the wheel `steps` notches up or down
+   * over a target or the middle of the app's scroller.
+   */
+  async mouse(action: 'right' | 'hover' | 'wheel', selector?: string, opts: {direction?: 'up' | 'down'; steps?: number} = {}): Promise<ActResult> {
+    const t0 = this.#begin();
+    const before = this.last ?? (await this.snapshot());
+    this.#front(before);
+    let x: number;
+    let y: number;
+    let label: string;
+    if (selector) {
+      const {snap, target} = await this.#target(selector);
+      x = target.x;
+      y = target.y;
+      label = target.index !== undefined ? selectorFor(snap, target.index) : `${x},${y}`;
+    } else {
+      if (action !== 'wheel') throw new Error(`mouse ${action} needs a target`);
+      const {width, height} = await this.size();
+      const [ax, ay, ax2, ay2] = swipeArea(before, width, height);
+      x = Math.round((ax + ax2) / 2);
+      y = Math.round((ay + ay2) / 2);
+      label = '';
+    }
+    if (action === 'wheel') {
+      const steps = Math.max(1, Math.min(opts.steps ?? 3, 50));
+      // One notch per event, as a wheel sends them; negative scrolls the content down.
+      for (let i = 0; i < steps; i++) await this.runner.call('mouse', {action: 'wheel', x, y, amount: opts.direction === 'up' ? 1 : -1});
+      this.record(`mouse wheel ${opts.direction ?? 'down'} ${steps}${label ? ` ${label}` : ''}`);
+    } else {
+      await this.runner.call('mouse', {action, x, y});
+      this.record(`mouse ${action} ${label}`);
+    }
+    return {action: `mouse ${action}`, target: label || undefined, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+  }
+
+  /**
+   * A watch crown or rotating bezel turned `steps` detents; `down` moves the content as a swipe up would. The
+   * events go to the focused view: a scroller that never takes focus does not move (the app's bug, not the tool's).
+   */
+  async rotary(direction: 'up' | 'down', steps = 3): Promise<ActResult> {
+    const t0 = this.#begin();
+    const before = this.last ?? (await this.snapshot());
+    this.#front(before);
+    // Scrolling views read a positive AXIS_SCROLL as "towards the top".
+    await this.runner.call('rotary', {amount: direction === 'down' ? -1 : 1, steps: Math.max(1, Math.min(steps, 50))}, 15_000);
+    this.record(`rotary ${direction} ${steps}`);
+    const settled = await this.#settle(before);
+    const note = settled.diff.changed ? undefined : 'nothing moved: crown events go to the focused view, and no scroller has focus (a Wear OS app calls requestFocus() on it)';
+    return {action: 'rotary', target: `${direction} ${steps}`, note, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+  }
+
+  /** The screen changed shape (folded, rotated, resized): the next action measures it again. */
+  screenChanged() {
+    this.#size = undefined;
+    this.last = undefined;
   }
 
   async swipe(spec: string, durationMs = 300): Promise<ActResult> {

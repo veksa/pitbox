@@ -217,6 +217,7 @@ export class Engine {
   #flowHost(device?: string, variant?: string): FlowHost {
     return {
       jsErrors: since => this.#jsErrors(since),
+      reshape: (op, value) => this.methods[op]({device, value}),
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
         await this.#target(name);
@@ -323,6 +324,15 @@ export class Engine {
    * The device a selector names, on either platform: a booted simulator by udid or name, else an Android device.
    * Without a selector, the only online device; Android alone keeps its old behaviour when no simulator runs.
    */
+  /** A change to the screen's shape on an Android device; the device's UI session measures the screen again. */
+  async #reshape<T extends Record<string, unknown>>(device: string | undefined, op: (a: AndroidDriver, serial: string) => Promise<T>) {
+    const t = await this.#target(device);
+    if (t.platform === 'apple') throw new Error('posture, rotate and window are Android-only for now');
+    const r = await op(t.a, t.id);
+    this.#uis.get(t.id)?.screenChanged();
+    return {serial: t.id, ...r};
+  }
+
   async #target(device?: string): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices}> {
     const s = this.apple;
     const booted = s ? await s.booted().catch(() => []) : [];
@@ -896,6 +906,15 @@ export class Engine {
     fill: async (p: Params) => (await this.ui(str(p, 'device'))).fill(req(p, 'target'), req(p, 'text')),
     type: async (p: Params) => (await this.ui(str(p, 'device'))).type(req(p, 'text')),
     uiKey: async (p: Params) => (await this.ui(str(p, 'device'))).key(list(p, 'keys')),
+    mouse: async (p: Params) =>
+      (await this.ui(str(p, 'device'))).mouse(req(p, 'action') as 'right' | 'hover' | 'wheel', str(p, 'target'), {direction: str(p, 'direction') as 'up' | 'down' | undefined, steps: num(p, 'steps')}),
+    rotary: async (p: Params) => (await this.ui(str(p, 'device'))).rotary((str(p, 'direction') as 'up' | 'down' | undefined) ?? 'down', num(p, 'steps') ?? 3),
+    posture: async (p: Params) => this.#reshape(str(p, 'device'), (a, serial) => a.posture(serial, req(p, 'value'))),
+    rotate: async (p: Params) => this.#reshape(str(p, 'device'), (a, serial) => a.rotate(serial, req(p, 'value'))),
+    window: async (p: Params) => {
+      const [mode, ...rest] = req(p, 'value').split(/\s+/);
+      return this.#reshape(str(p, 'device'), (a, serial) => a.window(serial, this.#pkg(p), mode!, rest.join(',') || str(p, 'bounds')));
+    },
     touch: async (p: Params) => (await this.ui(str(p, 'device'))).touch(req(p, 'phase') as 'down' | 'move' | 'up', str(p, 'target')),
     swipe: async (p: Params) => (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300),
     scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 25),

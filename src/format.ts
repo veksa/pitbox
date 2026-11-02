@@ -92,7 +92,7 @@ export const fmtAct = (r: ActResult): string => {
   const slow = r.ms > 3000 && r.phases ? ` · slow: ${Object.entries(r.phases).filter(([, v]) => v >= 100).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
   const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${r.trace ? ` · trace ${r.trace}` : ''}${slow}`;
   const broke = (r.crashes ?? []).flatMap(c => [`! ${broken(c)}: ${c.summary}`, ...c.lines.slice(0, c.kind === 'js-error' ? 6 : 4).map(l => `    ${l}`)]);
-  if (!r.diff.changed) return [head, ...broke, 'no change on screen'].join('\n');
+  if (!r.diff.changed) return [head, ...broke, r.note ? `no change on screen — ${r.note}` : 'no change on screen'].join('\n');
   return [head, ...broke, ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
 };
 
@@ -151,7 +151,15 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'swipe':
     case 'touch':
     case 'scroll':
+    case 'mouse':
+    case 'rotary':
       return fmtAct(r as ActResult);
+    case 'posture':
+      return `${x.serial}: ${x.posture === 'reset' ? 'posture back to the hinge' : `posture ${x.posture}`} (states: ${(x.states as string[]).join(', ')})`;
+    case 'rotate':
+      return `${x.serial}: ${x.rotation === 'auto' ? 'rotation follows the sensor' : `rotation locked at ${x.rotation}°`}`;
+    case 'window':
+      return `${x.serial}: ${x.mode === 'fullscreen' ? 'app fullscreen' : x.mode === 'resize' ? `window resized to ${x.bounds}` : `app in a freeform window${x.bounds ? ` at ${x.bounds}` : ''}`}`;
     case 'snapshot':
       return (x.lines as string[]).join('\n') || '(empty screen)';
     case 'run':

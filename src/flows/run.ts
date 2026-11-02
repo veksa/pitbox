@@ -19,6 +19,8 @@ export type FlowHost = {
   setDevice: (name: string) => Promise<void>;
   visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
   screenshot: (name?: string, full?: boolean) => Promise<string>;
+  /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
+  reshape: (op: 'posture' | 'rotate' | 'window', value: string) => Promise<unknown>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
   jsErrors?: (since: number) => Promise<{summary: string; lines: string[]}[]>;
 };
@@ -62,6 +64,22 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     }
     case 'goto':
       return host.goto(a[0]!, kvArgs(a.slice(1)));
+    case 'posture':
+    case 'rotate':
+    case 'window':
+      await host.reshape(s.cmd, a.join(' '));
+      return;
+    case 'rotary':
+      await (await host.ui()).rotary(a[0] === 'up' ? 'up' : 'down', a[1] ? Number(a[1]) : 3);
+      return;
+    case 'mouse': {
+      const ui = await host.ui();
+      if (a[0] === 'wheel') {
+        const steps = /^\d+$/.test(a[2] ?? '') ? Number(a[2]) : undefined;
+        await ui.mouse('wheel', a.slice(steps === undefined ? 2 : 3).join(' ') || undefined, {direction: a[1] === 'up' ? 'up' : 'down', steps});
+      } else await ui.mouse(a[0] as 'right' | 'hover', a.slice(1).join(' '));
+      return;
+    }
     case 'as': {
       const r = await host.signIn(unquote(a[0]!));
       if (!r.ok) throw new Error(`sign-in as ${a[0]} failed at line ${r.failed?.line}: ${r.failed?.error}`);
