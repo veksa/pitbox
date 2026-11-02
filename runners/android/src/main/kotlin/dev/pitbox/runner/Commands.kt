@@ -53,6 +53,7 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     "relay" -> Relay.start(req.getJSONArray("ports"), req.optString("target", "10.0.2.2"))
     "relays" -> Relay.list()
     "unrelay" -> Relay.stopAll()
+    "fingerprint" -> fingerprint(req.optInt("cols", 54), req.optJSONArray("masks"))
     "frames" -> frames(req.optJSONArray("bounds"), req.optInt("count", 4), req.optLong("interval", 400), req.optInt("size", 32))
     else -> throw IllegalArgumentException("unknown command: $cmd")
   }
@@ -347,6 +348,31 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     return JSONObject().put("luma", luma).put("diff", diff)
   }
 
+  /**
+   * The screen as a grid of mean brightness, `cols` wide and as tall as the aspect ratio makes it, with masked
+   * rectangles blanked — enough to tell "the same screen" from "something moved" without sending an image.
+   */
+  private fun fingerprint(cols: Int, masks: JSONArray?): JSONObject {
+    val full = ui.takeScreenshot() ?: throw IllegalStateException("screenshot failed")
+    val rows = (cols * full.height.toDouble() / full.width).toInt().coerceAtLeast(1)
+    val masked = full.copy(Bitmap.Config.ARGB_8888, true)
+    if (masks != null && masks.length() > 0) {
+      val canvas = android.graphics.Canvas(masked)
+      val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK }
+      for (i in 0 until masks.length()) {
+        val m = masks.getJSONArray(i)
+        canvas.drawRect(m.getInt(0).toFloat(), m.getInt(1).toFloat(), m.getInt(2).toFloat(), m.getInt(3).toFloat(), paint)
+      }
+    }
+    val small = Bitmap.createScaledBitmap(masked, cols, rows, true)
+    val px = IntArray(cols * rows)
+    small.getPixels(px, 0, cols, 0, 0, cols, rows)
+    val grid = JSONArray()
+    for (c in px) grid.put((((c shr 16) and 0xff) * 299 + ((c shr 8) and 0xff) * 587 + (c and 0xff) * 114) / 1000)
+    return JSONObject().put("cols", cols).put("rows", rows).put("width", full.width).put("height", full.height).put("grid", grid)
+  }
+
+
   /** A downscaled JPEG, base64 — small enough to hand to a model only when it is really needed. */
   private fun screenshot(scale: Double, quality: Int): JSONObject {
     val full = ui.takeScreenshot() ?: throw IllegalStateException("screenshot failed")
@@ -360,5 +386,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 8
+  const val VERSION = 9
 }
