@@ -5,6 +5,7 @@ import {describe, expect, it} from 'vitest';
 import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
+import {buildSnapshot, swipeArea} from './ui/snapshot.ts';
 import {contentSize, isAppleBundle, parseSimulators, pickSimulator, runtimeName, simKind} from './drivers/apple/driver.ts';
 
 const list = JSON.stringify({
@@ -115,5 +116,26 @@ describe('apple driver', () => {
     ];
     expect(fmtDevices([], [], sims)).toEqual(['✓ iPhone 17  iOS 27.0  AAA', 'simulators: Apple TV 4K']);
     expect(fmtDevices([], [], [])).toEqual(['no devices online']);
+  });
+
+  it('keeps swipes above the keyboard the runner reports as its own window', () => {
+    // The runner's shape: the app, then one Keyboard node in an `ime` window (its keys are left out).
+    const snap = buildSnapshot(
+      [
+        {type: 'app', title: 'MyApp', pkg: 'com.example.app'},
+        {type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'},
+      ],
+      [
+        {p: -1, w: 0, c: 'ScrollView', b: [0, 0, 402, 874], f: 's', id: 'content_list'},
+        {p: 0, w: 0, c: 'TextField', b: [16, 80, 386, 110], f: 'e'},
+        {p: -1, w: 1, c: 'Keyboard', b: [0, 583, 402, 874]},
+      ],
+    );
+    expect(swipeArea(snap, 402, 874)).toEqual([0, 0, 402, 583]);
+  });
+
+  it('builds a snapshot from a window without a package', () => {
+    const snap = buildSnapshot([{type: 'ime', title: 'keyboard'} as never], [{p: -1, w: 0, c: 'Keyboard', b: [0, 500, 400, 800]}]);
+    expect(snap.nodes).toHaveLength(1);
   });
 });

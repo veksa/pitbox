@@ -136,6 +136,9 @@ final class Commands {
   private static let checkable: Set<XCUIElement.ElementType> = [.switch, .toggle, .checkBox, .radioButton]
   private static let scrollable: Set<XCUIElement.ElementType> = [.scrollView, .table, .collectionView]
 
+  /// The keyboard's frame in the tree being built.
+  private var keyboard: CGRect?
+
   private func tree(_ req: [String: Any], maxAge: TimeInterval) throws -> (value: [String: Any], signature: Int) {
     let (a, id) = front(req)
     if let last = lastTree, last.app == id, Date().timeIntervalSince(last.at) <= maxAge { return (last.value, last.signature) }
@@ -146,13 +149,22 @@ final class Commands {
     let root = try a.snapshot()
     let screen = root.frame.isEmpty ? CGRect(origin: .zero, size: XCUIScreen.main.screenshot().image.size) : root.frame
     windows.append(["type": "app", "title": root.label, "pkg": id])
+    keyboard = nil
     walk(root, parent: -1, window: 0, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
+    // The keyboard as its own window, like Android's input method: the host keeps gestures above it. Its keys
+    // stay out — text goes in with `text`.
+    if let k = keyboard {
+      let b = [Int(k.minX.rounded()), Int(k.minY.rounded()), Int(k.maxX.rounded()), Int(k.maxY.rounded())]
+      nodes.append(["p": -1, "w": windows.count, "c": "Keyboard", "b": b])
+      windows.append(["type": "ime", "title": "keyboard", "pkg": "com.apple.keyboard"])
+      hasher.combine(b)
+    }
     // System alerts (permissions, notifications) live in the shell, not in the app.
     if id != Self.shellId {
       let alert = app(Self.shellId).alerts.firstMatch
       if alert.exists, let snap = try? alert.snapshot() {
         windows.append(["type": "app", "title": snap.label, "pkg": Self.shellId])
-        walk(snap, parent: -1, window: 1, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
+        walk(snap, parent: -1, window: windows.count - 1, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
       }
     }
     let value: [String: Any] = ["windows": windows, "nodes": nodes]
@@ -165,6 +177,10 @@ final class Commands {
     if depth > 80 { return }
     var index = parent
     let f = n.frame
+    if n.elementType == .keyboard {
+      if !f.isEmpty && f.intersects(screen) { keyboard = f }
+      return
+    }
     // A skipped wrapper hands its focus down to the control that stands for it.
     var passFocus = false
     let visible = !f.isEmpty && f.intersects(screen) && n.elementType != .application

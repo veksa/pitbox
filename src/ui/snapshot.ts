@@ -91,7 +91,7 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   nodes.forEach((n, i) => {
     const w = windows[n.w];
     // System UI windows (bars, and on XR the shell's own panels and window captions) unless asked for.
-    if (!opts.system && w && w.pkg.startsWith('com.android.systemui')) hidden.add(i);
+    if (!opts.system && w && w.pkg?.startsWith('com.android.systemui')) hidden.add(i);
   });
 
   // Fold unlabelled interactive containers with their text descendants — but not lists (they hold many items),
