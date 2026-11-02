@@ -32,7 +32,8 @@
     "test": "vitest run",
     "check-all": "yarn compile && yarn test",
     "build-runner": "node scripts/build-runner.mjs",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "e2e:apple": "node scripts/e2e-apple.mjs"
   },
   "keywords": [
     "mcp",
