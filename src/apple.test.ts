@@ -135,6 +135,23 @@ describe('apple driver', () => {
     expect((await w.since(t, undefined, true)).map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
   });
 
+  it('waits longer for the report when a flow failed than after an action', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
+    const saved = AppleCrashWatcher.waitMs;
+    AppleCrashWatcher.waitMs = {quick: 100, long: 3000};
+    try {
+      const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+      const t = Date.parse('2026-01-02T10:00:00+02:00');
+      w.begin(['com.example.app']);
+      setTimeout(() => fs.writeFileSync(path.join(dir, 'MyApp-2026-01-02-100001.ips'), ips()), 800);
+      // A report that comes after the quick wait is still found by the check of a failed flow.
+      expect((await w.since(t, undefined, true)).map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
+    } finally {
+      AppleCrashWatcher.waitMs = saved;
+    }
+  });
+
   it('lists booted simulators as online devices and idle ones by name', () => {
     const sims = [
       {udid: 'AAA', name: 'iPhone 17', os: 'iOS 27.0', kind: 'phone', state: 'Booted'},

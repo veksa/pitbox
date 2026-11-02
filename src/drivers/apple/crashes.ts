@@ -130,6 +130,12 @@ export class AppleCrashWatcher {
    */
   #slow?: Promise<boolean>;
 
+  /**
+   * How long a report is waited for once the app is gone: briefly after each action, longer on visionOS and when a
+   * flow has failed — under load the reporter takes close to a minute on every platform.
+   */
+  static waitMs = {quick: 8000, long: 60_000};
+
   async since(since: number, after?: string[], final = false): Promise<AppEvent[]> {
     let found = this.#scan(since);
     const was = await this.#wasRunning;
@@ -140,7 +146,7 @@ export class AppleCrashWatcher {
     const gone = (slow && !!after && !!this.#bundleId && !after.includes(this.#bundleId)) || !(await this.#running().catch(() => true));
     // The app died during the action and its report is not written yet: it takes the reporter a few seconds.
     if (gone) {
-      const deadline = Date.now() + (slow ? 60_000 : 8000);
+      const deadline = Date.now() + (slow || final ? AppleCrashWatcher.waitMs.long : AppleCrashWatcher.waitMs.quick);
       while (!found.length && Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 400));
         found = this.#scan(since);
