@@ -109,6 +109,7 @@ describe('flows', () => {
       tool: async (name, p) => ({code: 0, output: name === 'sql' ? `rows: ${p.query?.length}` : ''}),
       loadFlow: () => 'press text=Next',
       state: async () => undefined,
+      setDevice: async (d: string) => void calls.push(`device ${d}`),
       screenshot: async n => `/shots/${n}.jpg`,
     };
     return {host, calls};
@@ -116,9 +117,9 @@ describe('flows', () => {
 
   it('runs steps in order and passes', async () => {
     const {host, calls} = fakeHost([['Welcome', 'Next'], ['Home']]);
-    const r = await runFlow(host, 'open!\npress text=Next\nexpect text=Home\ntool sql query="abc" contains "rows: 3"\ngoto item id=7');
-    expect(r).toMatchObject({ok: true, steps: 5});
-    expect(calls).toEqual(['open !', 'press text=Next', 'goto item {"id":"7"}']);
+    const r = await runFlow(host, 'open!\npress text=Next\nexpect text=Home\ntool sql query="abc" contains "rows: 3"\ngoto item id=7\ndevice tv-1');
+    expect(r).toMatchObject({ok: true, steps: 6});
+    expect(calls).toEqual(['open !', 'press text=Next', 'goto item {"id":"7"}', 'device tv-1']);
   });
 
   it('stops at the first failure with the line, the error and the screen', async () => {

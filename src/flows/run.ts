@@ -13,6 +13,8 @@ export type FlowHost = {
   tool: (name: string, params: Record<string, string>) => Promise<{code: number | null; output: string}>;
   loadFlow: (name: string) => string;
   state: (name: string) => Promise<void>;
+  /** Moves the following steps to another device (serial, AVD name or model). */
+  setDevice: (name: string) => Promise<void>;
   screenshot: (name?: string) => Promise<string>;
 };
 
@@ -115,6 +117,9 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number):
       }
       return;
     }
+    case 'device':
+      await host.setDevice(a.join(' '));
+      return;
     case 'state':
       await host.state(a[0]!);
       return;

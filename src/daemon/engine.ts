@@ -183,6 +183,11 @@ export class Engine {
 
   #flowHost(device?: string): FlowHost {
     return {
+      // The closures below read `device`, so switching it moves every following step to that device.
+      setDevice: async name => {
+        await this.#needAndroid().resolve(name);
+        device = name;
+      },
       ui: () => this.ui(device),
       open: async (target, relaunch) => {
         await this.methods.open({device, target, relaunch});
