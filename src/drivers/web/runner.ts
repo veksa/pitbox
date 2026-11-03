@@ -30,10 +30,11 @@ export type WebAppConfig = {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Pw = any;
 
+/** The hint goes into the message, as with every other error here: a flow, the CLI and MCP print the message only. */
 export class WebError extends Error {
   readonly hint?: string;
   constructor(message: string, hint?: string) {
-    super(message);
+    super(hint ? `${message}\nhint: ${hint}` : message);
     this.hint = hint;
   }
 }

@@ -3,7 +3,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-import {WebRunner, webKey} from './drivers/web/runner.ts';
+import {WebError, WebRunner, webKey} from './drivers/web/runner.ts';
 import {DeviceUi} from './ui/device.ts';
 import {freePort} from './util/net.ts';
 
@@ -138,5 +138,12 @@ describe('a web flow', () => {
     } finally {
       await e.stopAll();
     }
+  });
+});
+
+describe('web errors', () => {
+  it('carry the hint in the message, which is all a flow prints', () => {
+    expect(new WebError('Playwright is not installed', 'yarn add -D playwright-core').message).toBe('Playwright is not installed\nhint: yarn add -D playwright-core');
+    expect(new WebError('no page').message).toBe('no page');
   });
 });
