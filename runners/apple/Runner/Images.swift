@@ -6,8 +6,17 @@ import UIKit
 import XCTest
 
 enum Images {
+  /// The app's window, where the screen's own screenshot is empty: on visionOS it is 1×1, and a visual check
+  /// would always match. Set for each command that takes an image.
+  static var window: XCUIElement?
+
+  /// visionOS reports element bounds in a space of its own, not as places on the window's image.
+  static func checkRegions(_ any: Bool) throws {
+    if any && window != nil { throw RunnerError("a part of the window cannot be picked out on visionOS: element bounds are not places on its image — check the whole window") }
+  }
+
   private static func screen() -> (cg: CGImage, points: CGSize) {
-    let image = XCUIScreen.main.screenshot().image
+    let image = window?.screenshot().image ?? XCUIScreen.main.screenshot().image
     guard let cg = image.cgImage else { fatalError("screenshot has no bitmap") }
     return (cg, image.size)
   }
@@ -60,6 +69,7 @@ enum Images {
   }
 
   static func fingerprint(cols: Int, masks: [CGRect]) throws -> [String: Any] {
+    try checkRegions(!masks.isEmpty)
     let (cg, points) = screen()
     let scale = CGFloat(cg.width) / max(1, points.width)
     let rows = max(1, Int(Double(cols) * Double(points.height) / Double(points.width)))
@@ -68,6 +78,7 @@ enum Images {
   }
 
   static func frames(bounds: CGRect?, count: Int, interval: TimeInterval, size: Int) throws -> [String: Any] {
+    try checkRegions(bounds != nil)
     var luma: [Double] = []
     var diff: [Double] = []
     var prev: [UInt8]?

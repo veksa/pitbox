@@ -94,9 +94,11 @@ final class Commands {
     case "rotate": return try rotate(req)
     case "rotary": return try rotary(req)
     case "mouse": return try mouse(req)
-    case "screenshot": return try Images.jpeg(scale: double(req, "scale", 0.5), quality: double(req, "quality", 70) / 100)
-    case "fingerprint": return try Images.fingerprint(cols: Int(double(req, "cols", 54)), masks: rects(req["masks"]))
-    case "frames": return try Images.frames(bounds: rects(req["bounds"].map { [$0] }).first, count: Int(double(req, "count", 4)), interval: double(req, "interval", 400) / 1000, size: Int(double(req, "size", 32)))
+    case "screenshot", "fingerprint", "frames":
+      #if os(visionOS)
+      Images.window = front(req).0.windows.firstMatch
+      #endif
+      return try image(cmd, req)
     case "relays": return ["relayed": [Int]()]
     case "foreground":
       // After a launch: wait until the app is in front, so the next tree is the app and not the shell.
@@ -516,6 +518,15 @@ final class Commands {
   #endif
 
   /// Turns the device: Android's rotation in degrees as an orientation. Simulators have no sensor, so `auto`
+  /// A screen image: a downscaled JPEG, a brightness grid, or frames of a region.
+  private func image(_ cmd: String, _ req: [String: Any]) throws -> [String: Any] {
+    switch cmd {
+    case "screenshot": return try Images.jpeg(scale: double(req, "scale", 0.5), quality: double(req, "quality", 70) / 100)
+    case "fingerprint": return try Images.fingerprint(cols: Int(double(req, "cols", 54)), masks: rects(req["masks"]))
+    default: return try Images.frames(bounds: rects(req["bounds"].map { [$0] }).first, count: Int(double(req, "count", 4)), interval: double(req, "interval", 400) / 1000, size: Int(double(req, "size", 32)))
+    }
+  }
+
   /// is portrait again.
   private func rotate(_ req: [String: Any]) throws -> [String: Any] {
     #if os(iOS)
