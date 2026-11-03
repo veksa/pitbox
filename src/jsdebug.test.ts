@@ -8,7 +8,8 @@ import {WebSocketServer} from 'ws';
 import {pickPage, type CdpPage} from './devserver/cdp.ts';
 import {checkExprs, conditionFor, JsDebugger, mapPathOf, parseAt} from './devserver/jsdebug.ts';
 import type {DevProxy} from './devserver/proxy.ts';
-import {bundlePosition, decodeSegment, displayPath, type RawSourceMap} from './devserver/sourcemap.ts';
+import {summarizeProfile, type CpuProfile} from './devserver/jsprofile.ts';
+import {bundlePosition, decodeSegment, displayPath, indexMap, sourceOf, type RawSourceMap} from './devserver/sourcemap.ts';
 import {freePort} from './util/net.ts';
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -81,7 +82,17 @@ describe('source maps', () => {
     expect(() => bundlePosition(map, 'Nope.tsx', 1)).toThrow(/is not in the bundle/);
   });
 
+  it('maps a bundle position back to its source line, a function start before the first mapped token included', () => {
+    const ix = indexMap(map);
+    expect(sourceOf(ix, 10, 0)).toEqual({source: 'src/screens/Home.tsx', line: 3});
+    expect(sourceOf(ix, 10, 99)).toEqual({source: 'src/screens/Home.tsx', line: 3});
+    expect(sourceOf(ix, 11, 0)).toEqual({source: 'src/screens/Home.tsx', line: 6});
+    expect(sourceOf(ix, 0, 0)).toEqual({source: 'node_modules/lib/index.js', line: 1});
+    expect(sourceOf(ix, 500, 0)).toBeUndefined();
+  });
+
   it('shows paths without the bundler root placeholder', () => {
+    expect(displayPath('/[metro-project]/node_modules/%40scope/pkg/a.js')).toBe('node_modules/@scope/pkg/a.js');
     expect(displayPath('/[metro-project]/src/App.tsx')).toBe('src/App.tsx');
     expect(displayPath('C:\\app\\App.tsx')).toBe('C:/app/App.tsx');
   });
@@ -111,6 +122,29 @@ describe('logpoint inputs', () => {
     expect(pickPage(two, 'pixel')?.id).toBe('a');
     expect(pickPage(two, 'emulator-5554')).toBeUndefined();
     expect(pickPage([two[0]!], 'emulator-5554')?.id).toBe('a');
+  });
+});
+
+// A sampled call tree: a library function calls the app's `render`; a host function runs on its own; the rest
+// is the thread waiting. One sample per millisecond.
+const profileOf = (bundle: string): CpuProfile => ({
+  startTime: 0,
+  endTime: 7000,
+  nodes: [
+    {id: 1, callFrame: {functionName: '[root]', url: '[root]', lineNumber: 0, columnNumber: 0}, children: [2, 4]},
+    {id: 2, callFrame: {functionName: 'dispatch', url: bundle, lineNumber: 0, columnNumber: 0}, children: [3]},
+    {id: 3, callFrame: {functionName: 'render', url: bundle, lineNumber: 10, columnNumber: 0}},
+    {id: 4, callFrame: {functionName: '[Host Function] setTimeout', url: '[host]', lineNumber: 0, columnNumber: 0}},
+  ],
+  samples: [1, 1, 3, 3, 3, 2, 4],
+});
+
+describe('js profiles', () => {
+  it('sums up busy time, self time and time with callees, leaving the waiting out', () => {
+    const s = summarizeProfile(profileOf('http://x/index.bundle'));
+    expect(s).toMatchObject({ms: 7, busyMs: 5, samples: 7});
+    expect(s.self.map(x => [x.fn.name, x.ms])).toEqual([['render', 3], ['dispatch', 1], ['[Host Function] setTimeout', 1]]);
+    expect(s.total.map(x => [x.fn.name, x.ms])).toEqual([['dispatch', 4], ['render', 3], ['[Host Function] setTimeout', 1]]);
   });
 });
 
@@ -152,6 +186,8 @@ const fakeInspector = async (): Promise<Fake> => {
         const breakpointId = String(++seq);
         breakpoints.set(breakpointId, {...params.location, condition: params.condition});
         reply({breakpointId, actualLocation: {scriptId: '3', lineNumber: params.location.lineNumber, columnNumber: params.location.columnNumber}});
+      } else if (method === 'Profiler.stop') {
+        reply({profile: profileOf(bundle)});
       } else if (method === 'Debugger.removeBreakpoint') {
         breakpoints.delete(params.breakpointId);
         reply({});
@@ -246,6 +282,19 @@ describe('the app runtime', () => {
       fresh.stop();
       vm.runInContext('delete globalThis.__pitbox', fake.app);
     }
+  });
+
+  it('profiles the JS thread and names the app code apart from libraries and native functions', async () => {
+    expect(await js.profileStart()).toBe(true);
+    const p = await js.profileStop();
+    expect(p).toMatchObject({ms: 7, busyMs: 5});
+    expect(p!.self).toEqual([
+      {at: 'render  src/screens/Home.tsx:3', ms: 3},
+      {at: 'dispatch  node_modules/lib/index.js:1', ms: 1},
+      {at: '[Host Function] setTimeout (native)', ms: 1},
+    ]);
+    expect(p!.app).toEqual([{at: 'render  src/screens/Home.tsx:3', ms: 3}]);
+    expect(await js.profileStop()).toBeUndefined();
   });
 
   it('records a hit without expressions', () => {

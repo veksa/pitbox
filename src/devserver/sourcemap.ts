@@ -40,7 +40,15 @@ export const decodeSegment = (seg: string): number[] => {
 const norm = (p: string) => p.replace(/\\/g, '/');
 
 /** A source path as people read it: without a bundler's root placeholder (`/[metro-project]/App.tsx`). */
-export const displayPath = (p: string) => norm(p).replace(/^\/?\[[\w-]+\]\//, '');
+export const displayPath = (p: string) => {
+  const plain = norm(p).replace(/^\/?\[[\w-]+\]\//, '');
+  try {
+    // Server-relative paths come URL-encoded (`%40scope/pkg`).
+    return decodeURIComponent(plain);
+  } catch {
+    return plain;
+  }
+};
 
 /** Sources whose path ends with `file` (a path from the app root or just a file name). */
 export const sourcesMatching = (map: RawSourceMap, file: string): string[] => {
@@ -120,4 +128,73 @@ export const bundlePosition = (map: RawSourceMap, file: string, line: number, ah
     return {source: displayPath(source), line: l, at};
   }
   throw new Error(`no code at ${file}:${line} or in the ${ahead} lines after it`);
+};
+
+/** Generated line → its mapped segments `[column, source, line (1-based)]`, sorted by column. */
+export type MapIndex = {sources: string[]; lines: Map<number, number[][]>};
+
+/** Indexes every mapping by generated line, once per map, for reverse lookups. */
+export const indexMap = (map: RawSourceMap): MapIndex => {
+  const sources: string[] = [];
+  const sourceIds = new Map<string, number>();
+  const lines = new Map<number, number[][]>();
+  const walk = (m: RawSourceMap, offset: {line: number; column: number}) => {
+    if (m.sections) {
+      for (const sec of m.sections) walk(sec.map, {line: offset.line + sec.offset.line, column: sec.offset.line === 0 ? offset.column + sec.offset.column : sec.offset.column});
+      return;
+    }
+    if (!m.mappings) return;
+    const ids = (m.sources ?? []).map(s => {
+      let id = sourceIds.get(s);
+      if (id === undefined) {
+        id = sources.length;
+        sources.push(s);
+        sourceIds.set(s, id);
+      }
+      return id;
+    });
+    let gl = offset.line;
+    let src = 0;
+    let ol = 0;
+    let first = true;
+    for (const line of m.mappings.split(';')) {
+      let gc = first ? offset.column : 0;
+      first = false;
+      if (line) {
+        let segs = lines.get(gl);
+        for (const seg of line.split(',')) {
+          if (!seg) continue;
+          const v = decodeSegment(seg);
+          gc += v[0]!;
+          if (v.length < 4) continue;
+          src += v[1]!;
+          ol += v[2]!;
+          if (!segs) lines.set(gl, (segs = []));
+          segs.push([gc, ids[src]!, ol + 1]);
+        }
+      }
+      gl++;
+    }
+  };
+  walk(map, {line: 0, column: 0});
+  for (const segs of lines.values()) segs.sort((a, b) => a[0]! - b[0]!);
+  return {sources, lines};
+};
+
+/**
+ * The source line of a bundle position. A function's position is where its declaration starts, which often
+ * precedes the first mapped token on the line, so the nearest mapping at or after it wins (then the line's
+ * last one before it, then the next lines).
+ */
+export const sourceOf = (index: MapIndex, line: number, column: number, ahead = 3): {source: string; line: number} | undefined => {
+  const segs = index.lines.get(line);
+  if (segs?.length) {
+    const seg = segs.find(s => s[0]! >= column) ?? segs[segs.length - 1]!;
+    return {source: displayPath(index.sources[seg[1]!]!), line: seg[2]!};
+  }
+  for (let l = line + 1; l <= line + ahead; l++) {
+    const next = index.lines.get(l)?.[0];
+    if (next) return {source: displayPath(index.sources[next[1]!]!), line: next[2]!};
+  }
+  return undefined;
 };

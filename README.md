@@ -42,7 +42,8 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   with a playing video take milliseconds (the platform's wait-for-animations is skipped).
 - **Checks instead of screenshots** — `media` (is the video playing, or black), `visual` (the screen against a
   baseline, changed regions in pixels), `focus_map` (D-pad reachability, traps, irreversible moves), `perf`
-  (janky frames, frame-time percentiles, memory), `app_tree` (the React tree from inside the app). Crashes,
+  (janky frames, frame-time percentiles, memory, and the JS thread's profile: the functions that took the time,
+  mapped to source lines), `app_tree` (the React tree from inside the app). Crashes,
   ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files and lines
   by the bundler, bytecode included.
 - **Cold start, measured** — `open!` reports the activity, when the JS bundle started running and what it

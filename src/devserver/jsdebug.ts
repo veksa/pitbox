@@ -11,7 +11,8 @@
 import type {CdpEvent, CdpPage} from './cdp.ts';
 import {CdpSession, listPages, pickPage} from './cdp.ts';
 import type {DevProxy} from './proxy.ts';
-import {bundlePosition, type BundlePos, type RawSourceMap} from './sourcemap.ts';
+import {bundlePosition, indexMap, sourceOf, type BundlePos, type MapIndex, type RawSourceMap} from './sourcemap.ts';
+import {isHostFn, summarizeProfile, type CpuProfile, type ProfiledFn} from './jsprofile.ts';
 import {pitboxFmt} from './valuefmt.ts';
 
 // The body below runs inside the app, not in Node. Plain ES5: it is sent as source and evaluated by the runtime.
@@ -101,6 +102,16 @@ export type Logpoint = {
   hits: Hit[];
 };
 
+export type JsProfile = {
+  ms: number;
+  busyMs: number;
+  samples: number;
+  self: {at: string; ms: number}[];
+  /** The app's own functions by time with their callees (library code is in `self`). */
+  app: {at: string; ms: number}[];
+  note?: string;
+};
+
 export type EvalResult = {value?: string; error?: string; app: string; apps: number; ms: number};
 
 const KEEP_HITS = 50;
@@ -159,12 +170,12 @@ export class JsDebugger {
     this.#reload = reload;
   }
 
-  async #open(device?: string): Promise<CdpSession> {
+  async #open(device?: string, waitMs = 10_000): Promise<CdpSession> {
     const cur = this.#session;
     if (cur && !cur.closed && (!device || pickPage([cur.page], device))) return cur;
     // An app that was just opened lists its runtime a few seconds later, once its JS has started.
     let pages = await listPages(this.#port);
-    for (const end = Date.now() + 10_000; !pages.length && Date.now() < end; ) {
+    for (const end = Date.now() + waitMs; !pages.length && Date.now() < end; ) {
       await new Promise(r => setTimeout(r, 300));
       pages = await listPages(this.#port);
     }
@@ -237,6 +248,19 @@ export class JsDebugger {
     this.#debuggerOn = true;
     const end = Date.now() + 3000;
     while (![...this.#scripts.values()].some(x => isMain(x.url)) && Date.now() < end) await new Promise(r => setTimeout(r, 50));
+  }
+
+  readonly #indexes = new Map<string, MapIndex>();
+
+  /** The bundle's source map indexed for reverse lookups, once per build. */
+  async #index(scriptUrl: string): Promise<MapIndex> {
+    const key = `${this.#proxy.generation}|${mapPathOf(scriptUrl)}`;
+    const hit = this.#indexes.get(key);
+    if (hit) return hit;
+    const ix = indexMap(await this.#map(scriptUrl));
+    this.#indexes.clear();
+    this.#indexes.set(key, ix);
+    return ix;
   }
 
   async #map(scriptUrl: string): Promise<RawSourceMap> {
@@ -408,6 +432,59 @@ export class JsDebugger {
       this.#proxy.debugSource = false;
     }
     return {cleared: gone.map(lp => lp.id), bytecodeBack};
+  }
+
+  #profiling?: CdpSession;
+
+  /**
+   * Starts the runtime's sampling profiler; answers false when no app is debuggable (a native app, or none
+   * running), without waiting for one.
+   */
+  async profileStart(device?: string): Promise<boolean> {
+    let s: CdpSession;
+    try {
+      s = await this.#open(device, 0);
+    } catch {
+      return false;
+    }
+    await s.send('Profiler.stop').catch(() => undefined);
+    await s.send('Profiler.start');
+    this.#profiling = s;
+    return true;
+  }
+
+  /** Stops the profiler started by `profileStart` and sums it up; undefined when none was started. */
+  async profileStop(): Promise<JsProfile | undefined> {
+    const s = this.#profiling;
+    this.#profiling = undefined;
+    if (!s) return undefined;
+    if (s.closed) return {ms: 0, busyMs: 0, samples: 0, self: [], app: [], note: 'the app restarted during the measurement: no JS profile'};
+    const {profile} = await s.send<{profile: CpuProfile}>('Profiler.stop', {}, 60_000);
+    const sum = summarizeProfile(profile);
+    const lines = new Map<ProfiledFn, {line: string; app: boolean} | undefined>();
+    for (const f of [...sum.self.map(x => x.fn), ...sum.total.map(x => x.fn)]) {
+      if (lines.has(f)) continue;
+      if (isHostFn(f)) {
+        lines.set(f, {line: `${f.name} (native)`, app: false});
+        continue;
+      }
+      const src = await this.#index(f.url)
+        .then(ix => sourceOf(ix, f.line, f.column))
+        .catch(() => undefined);
+      // Library code is everything under node_modules; the rest of the bundle is the app's.
+      lines.set(f, src ? {line: `${f.name}  ${src.source}:${src.line}`, app: !/(^|\/)node_modules\//.test(src.source)} : {line: `${f.name}  (bundle ${f.line + 1}:${f.column})`, app: false});
+    }
+    const self = sum.self.flatMap(x => {
+      const l = lines.get(x.fn);
+      return l ? [{at: l.line, ms: x.ms}] : [];
+    });
+    const app = sum.total
+      .flatMap(x => {
+        const l = lines.get(x.fn);
+        return l?.app ? [{at: l.line, ms: x.ms}] : [];
+      })
+      .slice(0, 6);
+    return {ms: sum.ms, busyMs: sum.busyMs, samples: sum.samples, self, app};
   }
 
   get page(): CdpPage | undefined {

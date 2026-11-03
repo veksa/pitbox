@@ -7,7 +7,7 @@ import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
-import type {EvalResult, Logpoint} from './devserver/jsdebug.ts';
+import type {EvalResult, JsProfile, Logpoint} from './devserver/jsdebug.ts';
 import type {JsError} from './devserver/proxy.ts';
 import type {ActResult, FocusMap} from './ui/device.ts';
 import type {FlowResult} from './flows/run.ts';
@@ -125,6 +125,19 @@ export const fmtObject = (o: unknown): string => {
 };
 
 /** Formats any engine result by method. */
+const fmtJsProfile = (p?: JsProfile): string[] => {
+  if (!p) return [];
+  if (p.note) return [p.note];
+  if (!p.samples) return ['JS: no samples (the window was too short)'];
+  const share = p.ms ? Math.round((p.busyMs / p.ms) * 100) : 0;
+  const ms = (n: number) => `${String(n).padStart(5)} ms`;
+  return [
+    `JS thread busy ${seconds(p.busyMs)} of ${seconds(p.ms)} (${share}%)`,
+    ...(p.busyMs ? ['  self time:', ...p.self.map(s => `  ${ms(s.ms)}  ${s.at}`)] : []),
+    ...(p.app.length ? ['  app code, with what it called:', ...p.app.map(s => `  ${ms(s.ms)}  ${s.at}`)] : []),
+  ];
+};
+
 const fmtLogpoint = (lp: Logpoint) =>
   `${lp.source ?? lp.file}:${lp.codeLine ?? lp.line}${lp.codeLine && lp.codeLine !== lp.line ? ` (no code at line ${lp.line})` : ''}${lp.exprs.length ? ` · ${lp.exprs.join(', ')}` : ''}`;
 
@@ -186,11 +199,15 @@ export const formatResult = (method: string, r: unknown): string => {
         ...m.asymmetric.map(a => `not reversible: ${a}`),
       ].join('\n');
     }
-    case 'perf':
-      if (x.reset) return String(x.note ?? 'frame stats reset — interact, then read perf');
+    case 'perf': {
+      if (x.reset) return `${String(x.note ?? 'frame stats reset')}${x.jsProfiling ? ' · JS profiler started' : ''} — interact, then read perf`;
       // Without a frame counter (simulators) only the memory line, not a row of question marks.
-      if (x.frames === undefined) return `memory ${x.memoryMb ?? '?'} MB${x.note ? ` · ${x.note}` : ''}`;
-      return `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
+      const head =
+        x.frames === undefined
+          ? `memory ${x.memoryMb ?? '?'} MB${x.note ? ` · ${x.note}` : ''}`
+          : `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
+      return [head, ...fmtJsProfile(x.js as JsProfile | undefined)].join('\n');
+    }
     case 'visual':
       return x.status === 'saved' ? `baseline saved: ${x.baseline}` : x.status === 'match' ? `matches ${x.name} (score ${x.score})` : `differs from ${x.name}: score ${x.score}, ${Math.round((x.changedShare as number) * 1000) / 10}% of the screen, regions ${(x.regions as number[][]).map(r => `[${r.join(',')}]`).join(' ')}\ncurrent: ${x.current}\nbaseline: ${String(x.baseline).replace(/\.json$/, '.jpg')}`;
     case 'media':

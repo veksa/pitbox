@@ -62,7 +62,10 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   the ones thrown at startup before any action. Errors during an action or a flow come back with it anyway.
 - `inspect what=console level=warn` — the app's console since it started (the newest 300 entries), filtered
   by level and `grep`; each warning and error points at the line that logged it (`← greet  App.tsx:20:35`).
-- `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory.
+- `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory, and
+  with a dev server the JS thread over the same window: how busy it was, the functions that took the time
+  themselves, and the app's own functions with what they called (`workHard  App.tsx:14`), about 15 lines.
+  Sampling is ~10 ms, so measure an interaction that takes longer than a few samples.
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.
 - `js action=eval expr=…` — read the app's state from inside (a store, a module's export, a feature flag);

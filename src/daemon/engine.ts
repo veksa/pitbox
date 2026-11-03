@@ -1155,10 +1155,15 @@ export class Engine {
 
     reverse: async () => ({applied: await this.ensureForwards(true), ports: exposedPorts(this.config)}),
 
+    // Frames and memory from the device; with a dev server, the JS thread's profile over the same window.
     perf: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
-      if (t.platform === 'apple') return t.s.perf(t.id, this.#bundleId(p), bool(p, 'reset'));
-      return t.a.perf(t.id, this.#pkg(p), bool(p, 'reset'));
+      const reset = bool(p, 'reset');
+      const device = t.platform === 'apple' ? await t.s.perf(t.id, this.#bundleId(p), reset) : await t.a.perf(t.id, this.#pkg(p), reset);
+      const js = this.#dev?.js;
+      if (!js) return device;
+      if (reset) return {...device, jsProfiling: await js.profileStart(str(p, 'device')).catch(() => false)};
+      return {...device, js: await js.profileStop().catch(e => ({ms: 0, busyMs: 0, samples: 0, self: [], app: [], note: `no JS profile: ${(e as Error).message}`}))};
     },
 
     info: async (p: Params) => {
