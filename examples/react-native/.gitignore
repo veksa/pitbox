@@ -77,3 +77,6 @@ yarn-error.log
 # pitbox and yarn
 .pitbox/
 .yarn/
+
+# The bundle `pitbox dev embed` writes into the app
+android/app/src/main/assets/index.android.bundle
