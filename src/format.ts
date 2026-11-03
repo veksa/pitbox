@@ -250,6 +250,9 @@ export const formatResult = (method: string, r: unknown): string => {
       const head =
         x.frames === undefined
           ? `memory ${x.memoryMb ?? '?'} MB${x.note ? ` · ${x.note}` : ''}`
+          : // With no frames Android still prints percentiles: the top bucket of an empty histogram (4950 ms).
+            x.frames === 0
+            ? `frames 0 — nothing drawn since the reset (no motion, or the app draws on a surface of its own) · memory ${x.memoryMb ?? '?'} MB`
           : `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
       return [head, ...fmtJsProfile(x.js as JsProfile | undefined), ...fmtRenders(x.react as ReactRenders | undefined), ...fmtTrace(x.trace as (TraceSummary & {note?: string}) | undefined)].join('\n');
     }

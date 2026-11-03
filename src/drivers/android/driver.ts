@@ -470,12 +470,15 @@ export class AndroidDriver {
       return m ? Number(m[1]) : undefined;
     };
     const pss = /TOTAL PSS:\s*(\d+)/.exec(mem)?.[1] ?? /TOTAL:\s*(\d+)/.exec(mem)?.[1];
+    const frames = num(/Total frames rendered:\s*(\d+)/);
+    // With no frames the percentiles are the top bucket of an empty histogram (4950 ms), not a measurement.
+    const pct = (re: RegExp) => (frames === 0 ? undefined : num(re));
     return {
-      frames: num(/Total frames rendered:\s*(\d+)/),
+      frames,
       janky: num(/Janky frames:\s*\d+\s*\(([\d.]+)%\)/),
-      p50: num(/50th percentile:\s*(\d+)ms/),
-      p90: num(/90th percentile:\s*(\d+)ms/),
-      p99: num(/99th percentile:\s*(\d+)ms/),
+      p50: pct(/50th percentile:\s*(\d+)ms/),
+      p90: pct(/90th percentile:\s*(\d+)ms/),
+      p99: pct(/99th percentile:\s*(\d+)ms/),
       memoryMb: pss ? Math.round(Number(pss) / 1024) : undefined,
     };
   }

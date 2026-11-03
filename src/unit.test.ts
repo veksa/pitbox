@@ -323,3 +323,18 @@ describe('trace lookup', () => {
     await expect(engine.methods.trace({id: 'nope'})).rejects.toThrow(/32 hex characters/);
   });
 });
+
+describe('android perf', () => {
+  it('reports no frame times when nothing was drawn, not the empty histogram top bucket', async () => {
+    const {AndroidDriver} = await import('./drivers/android/driver.ts');
+    const {formatResult} = await import('./format.ts');
+    const gfx = 'Total frames rendered: 0\nJanky frames: 0 (0.00%)\n50th percentile: 4950ms\n90th percentile: 4950ms\n99th percentile: 4950ms\n';
+    const driver = Object.create(AndroidDriver.prototype) as InstanceType<typeof AndroidDriver>;
+    driver.shell = async (_serial: string, command: string) => (command.includes('gfxinfo') ? gfx : '        TOTAL PSS:   724000');
+    const r = await driver.perf('emulator-5554', 'com.example.app');
+    expect(r).toMatchObject({frames: 0, p50: undefined, p90: undefined, p99: undefined, memoryMb: 707});
+    const text = formatResult('perf', r);
+    expect(text).toMatch(/^frames 0 — nothing drawn since the reset/);
+    expect(text).not.toContain('4950');
+  });
+});
