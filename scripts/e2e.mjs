@@ -174,6 +174,23 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     const perf = pitbox(['perf', '--device', avd]);
     head(perf.out.split('\n').filter(l => /JS thread|workHard/.test(l)).join('\n'), 3);
     checks.push({name: 'js profile names the slow app function', ok: /app code, with what it called:\n\s+\d+ ms {2}workHard {2}App\.tsx:\d+/.test(perf.out)});
+    // An edit reaches the app as a hot update (the app runs bytecode), and a broken edit comes back as text.
+    const appFile = path.join(rnDir, 'App.tsx');
+    const appSource = fs.readFileSync(appFile, 'utf8');
+    try {
+      fs.writeFileSync(appFile, appSource.replace(/(testID="title"[^>]*>\s*)pitbox example/, '$1pitbox example, edited'));
+      const title = pitbox(['wait', 'text=pitbox example, edited', '--timeout', '15', '--device', avd]);
+      const hotFresh = pitbox(['fresh']);
+      head(hotFresh.out, 2);
+      checks.push({name: 'an edit arrives as a hot update', ok: title.code === 0 && /runs the newest code: bundle \w+ with hot updates/.test(hotFresh.out)});
+      fs.writeFileSync(appFile, appSource.replace(/(testID="title"[^>]*>\s*)pitbox example/, '$1pitbox example {{'));
+      const broken = pitbox(['fresh']);
+      head(broken.out, 3);
+      checks.push({name: 'a broken edit comes back as text', ok: /the last edit did not compile/.test(broken.out) && /SyntaxError: App\.tsx/.test(broken.out)});
+    } finally {
+      fs.writeFileSync(appFile, appSource);
+    }
+    pitbox(['wait', 'text=pitbox example', '--timeout', '15', '--device', avd]);
     const ev = pitbox(['js', 'eval', 'Promise.resolve(40 + 2)']);
     head(ev.out, 2);
     checks.push({name: 'js eval', ok: /^= 42/.test(ev.out)});
