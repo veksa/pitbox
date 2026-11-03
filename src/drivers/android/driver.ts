@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {launchHidden, run, type RunResult} from '../../util/proc.ts';
+import {isAlive, launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
 import {car, physicalDisplays, pngFrom, posture, rotate, wear, windowMode} from './formfactor.ts';
@@ -193,11 +193,15 @@ export class AndroidDriver {
     if (opts.coldBoot !== false) args.push('-no-snapshot-load');
     if (opts.wipe) args.push('-wipe-data');
     if (opts.headless) args.push('-no-window');
-    await launchHidden(emulator, args);
+    const pid = await launchHidden(emulator, args);
     const deadline = t0 + (opts.timeoutMs ?? 240_000);
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 2000));
       const dev = (await this.devices()).find(d => d.avd === avd && d.state === 'device');
+      // An emulator that exits on its way up (a lock, the hypervisor, a broken image) leaves nothing to wait for.
+      if (!dev && pid && !isAlive(pid) && !(await this.devices()).some(d => d.avd === avd)) {
+        throw new AndroidError(`the emulator for ${avd} exited ${Math.round((Date.now() - t0) / 1000)}s into its boot`, `start it by hand to see why: emulator -avd ${avd}`);
+      }
       if (!dev) continue;
       const booted = await this.adb(['shell', 'getprop', 'sys.boot_completed'], dev.serial, {timeoutMs: 5000});
       if (booted.stdout.trim() === '1') {
