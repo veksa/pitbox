@@ -42,6 +42,8 @@ export type Snapshot = {
   refs: Map<string, number>;
   /** node index → ref, for nodes that got a line */
   refOf: Map<number, string>;
+  /** node index → the string its line quotes (its text, or the label folded in from its children) */
+  shown?: Map<number, string>;
 };
 
 const has = (n: UiNode, flag: string) => (n.f ?? '').includes(flag);
@@ -145,11 +147,13 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   const lines: string[] = [];
   const refs = new Map<string, number>();
   const refOf = new Map<number, string>();
+  const shown = new Map<number, string>();
   let lastWindow = -1;
   nodes.forEach((n, i) => {
     if (hidden.has(i)) return;
     const own = n.t ?? label.get(i) ?? (interactive(n) ? n.d : undefined);
     if (!own && !n.d && !n.id && !interactive(n)) return;
+    if (own) shown.set(i, own);
     if (n.w !== lastWindow) {
       const w = windows[n.w];
       if (w && w.type !== 'app') lines.push(`— ${w.type}${w.title ? ` "${clean(w.title, 40)}"` : ''}`);
@@ -171,7 +175,7 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
     if (opts.bounds) parts.push(`@[${n.b.join(',')}]`);
     lines.push(parts.join(' '));
   });
-  return {windows, nodes, lines, refs, refOf};
+  return {windows, nodes, lines, refs, refOf, shown};
 };
 
 /** Lines without their refs, for comparing two snapshots. */
@@ -220,19 +224,21 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
   const m = /^(id|text|label)(~?=)(.*)$/s.exec(sel);
   // Lines show any run of whitespace (a no-break space too) as one space; selectors match what lines show.
   const lower = (s?: string) => (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-  let match: (n: UiNode) => boolean;
+  let match: (n: UiNode, i: number) => boolean;
+  // `text=` matches what a line quotes: a control with no text of its own is shown by its label or by the text of
+  // the children folded into it (`button "Close"`).
+  const quoted = (n: UiNode, i: number) => n.t ?? snap.shown?.get(i) ?? (interactive(n) ? n.d : undefined);
   if (m) {
     const [, field, op, raw] = m;
     const v = lower(raw!.replace(/^["']|["']$/g, ''));
-    // `text=` matches what a line quotes: a control with no text of its own is shown by its label (`button "Close"`).
-    const get = (n: UiNode) => lower(field === 'id' ? n.id : field === 'text' ? (n.t ?? (interactive(n) ? n.d : undefined)) : n.d);
-    match = op === '=' ? n => get(n) === v : n => get(n).includes(v);
+    const get = (n: UiNode, i: number) => lower(field === 'id' ? n.id : field === 'text' ? quoted(n, i) : n.d);
+    match = op === '=' ? (n, i) => get(n, i) === v : (n, i) => get(n, i).includes(v);
   } else {
     const v = lower(sel.replace(/^["']|["']$/g, ''));
-    const exact = (n: UiNode) => lower(n.id) === v || lower(n.t) === v || lower(n.d) === v;
-    match = snap.nodes.some(exact) ? exact : n => lower(n.t).includes(v) || lower(n.d).includes(v) || lower(n.id).includes(v);
+    const exact = (n: UiNode, i: number) => lower(n.id) === v || lower(quoted(n, i)) === v || lower(n.d) === v;
+    match = snap.nodes.some(exact) ? exact : (n, i) => lower(quoted(n, i)).includes(v) || lower(n.d).includes(v) || lower(n.id).includes(v);
   }
-  const hits = snap.nodes.map((n, i) => ({n, i})).filter(({n}) => match(n));
+  const hits = snap.nodes.map((n, i) => ({n, i})).filter(({n, i}) => match(n, i));
   if (!hits.length) {
     const prompt = permissionPrompt(snap);
     throw new Error(`nothing matches "${sel}"${prompt ? ` — a permission request is on top: "${prompt}"` : ''}`);

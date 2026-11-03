@@ -38,13 +38,24 @@ describe('snapshot', () => {
   it('resolves refs, ids, text, labels, words and points', () => {
     expect(resolveTarget(snap, '@e2')).toMatchObject({x: 540, y: 2060});
     expect(resolveTarget(snap, 'id=get-started')).toMatchObject({x: 540, y: 2060});
-    expect(resolveTarget(snap, 'text="Get started"').node?.t).toBe('Get started');
+    // The button its line quotes, not the text folded into it.
+    expect(resolveTarget(snap, 'text="Get started"').node?.id).toBe('get-started');
     expect(resolveTarget(snap, 'label=search').node?.d).toBe('Search');
     // The line quotes a textless control's label, so `text=` finds it by what the agent read.
     expect(resolveTarget(snap, 'text=Search').node?.d).toBe('Search');
     expect(resolveTarget(snap, 'popular').node?.t).toBe('Popular items');
     expect(resolveTarget(snap, '10,20')).toEqual({x: 10, y: 20});
     expect(() => resolveTarget(snap, '@e99')).toThrow(/fresh one/);
+  });
+
+  it('finds a control by the label folded in from its children, as its line quotes it', () => {
+    const folded = buildSnapshot(windows, [
+      {p: -1, w: 1, c: 'View', b: [0, 0, 200, 100], f: 'c'},
+      {p: 0, w: 1, c: 'ImageView', b: [10, 10, 60, 60], d: 'Close'},
+    ]);
+    expect(folded.lines).toEqual(['@e1 button "Close"']);
+    expect(resolveTarget(folded, 'text=Close')).toMatchObject({index: 0, ref: '@e1'});
+    expect(resolveTarget(folded, 'Close').index).toBe(0);
   });
 
   it('matches text with no-break spaces the way lines show it', () => {
