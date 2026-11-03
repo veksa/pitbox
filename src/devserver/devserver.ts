@@ -195,7 +195,9 @@ export class DevServer {
   /** Builds every configured platform's main bundle (and bytecode) now, so the device's request is a cache hit. */
   async prewarm(): Promise<NonNullable<DevserverStatus['prewarm']>> {
     const results: NonNullable<DevserverStatus['prewarm']> = [];
-    for (const platform of this.cfg.platforms ?? ['android']) {
+    // By default Android and every platform a device has asked for: an iOS app's bundle is rebuilt after an edit
+    // as an Android one is.
+    for (const platform of this.cfg.platforms ?? [...new Set(['android', ...this.proxy.mainUrls.keys()])]) {
       const t0 = Date.now();
       const url = await this.mainUrl(platform);
       if (!url) {

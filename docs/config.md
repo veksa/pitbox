@@ -76,7 +76,7 @@ devserver: {adapter: 'metro', root: 'mobile', bytecode: true},
 | `env` | extra environment for the bundler |
 | `bytecode` | serve the main bundle as Hermes bytecode compiled on the host with the app's own `hermesc`. While bytecode for new code compiles, devices get source, so they are never slower than with the bundler alone. Off by default: the compiler must match the Hermes the app was built with |
 | `inApp` | splice the in-app script into the dev bundle: freshness, network log and rules, trace headers, in-flight requests. Default on for `metro` and `rspack` |
-| `platforms` | platforms whose main bundle is built before a device asks. Default `['android']` |
+| `platforms` | platforms whose main bundle is built before a device asks. Default `android` and every platform a device has asked for since |
 | `bundlePath` | main bundle path for prewarming when it cannot be discovered from Expo's manifest or a device's request (`{platform}` placeholder) |
 | `startTimeout` | seconds to wait for the bundler (default 180) |
 | `embed` | `dev embed`: `output` — where each platform's bundle is written, relative to `root` (`{android, ios}`; for `metro` and `rspack` Android defaults to `android/app/src/main/assets/index.android.bundle`), `build` — the command that builds the app around it, `timeout` — seconds for it (default 900). The bundle comes whole from the running bundler, as bytecode when the app's `hermesc` is there; a debug build runs it when no dev server answers. Keep the file out of git |

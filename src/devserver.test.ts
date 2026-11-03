@@ -195,6 +195,29 @@ describe('embedded build', () => {
   });
 });
 
+describe('prewarm', () => {
+  it('rebuilds the bundle of every platform a device asked for, not only android', async () => {
+    const {DevServer} = await import('./devserver/devserver.ts');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-prewarm-'));
+    const internalPort = await freePort();
+    const asked: string[] = [];
+    const bundler = http.createServer((req, res) => {
+      asked.push(req.url ?? '');
+      res.end('__d(function(){},0);\n__r(0);');
+    });
+    await new Promise<void>(r => bundler.listen(internalPort, '127.0.0.1', () => r()));
+    try {
+      const dev = new DevServer({adapter: 'metro', internalPort, port: await freePort()}, root, path.join(root, '.pitbox'));
+      dev.proxy.mainUrls.set('ios', '/index.bundle?platform=ios&dev=true');
+      const r = await dev.prewarm();
+      expect(r.map(x => [x.platform, x.ok])).toEqual([['android', false], ['ios', true]]);
+      expect(asked).toContain('/index.bundle?platform=ios&dev=true');
+    } finally {
+      bundler.close();
+    }
+  }, 30_000);
+});
+
 describe('main bundle compression', () => {
   it('gzips the main bundle for a client that asks, and leaves it plain for one that does not', async () => {
     const upPort = await freePort();
