@@ -271,6 +271,10 @@ describe('the app runtime', () => {
   it('awaits a promise the expression returns', async () => {
     expect(await js.evaluate('Promise.resolve().then(() => ({ok: true}))')).toMatchObject({value: '{ok: true}'});
     expect(await js.evaluate('Promise.reject(new TypeError("no"))')).toMatchObject({error: 'TypeError: no'});
+    // `await` at the top, as an expression and in statements.
+    expect(await js.evaluate('await Promise.resolve(3)')).toMatchObject({value: '3'});
+    expect(await js.evaluate('const w = await Promise.resolve(4); globalThis.w4 = w')).toMatchObject({value: 'undefined'});
+    expect(await js.evaluate('w4')).toMatchObject({value: '4'});
   });
 
   it('logs the values at a source line each time it runs, each expression on its own', async () => {

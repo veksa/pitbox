@@ -258,6 +258,17 @@ export class JsDebugger {
     const app = s.page.deviceName ?? s.page.title;
     const apps = (await listPages(this.#port)).length;
     let r = await this.#value<{value?: string; error?: string; pending?: number}>(s, `${HELPER}.run(${JSON.stringify(expr)})`, timeoutMs);
+    // `await` at the top: eval runs a script, where it does not parse; an async function around it does.
+    if (r?.error?.startsWith('SyntaxError') && /\bawait\b/.test(expr)) {
+      const wrapped = await this.#value<typeof r>(s, `${HELPER}.run(${JSON.stringify(`(async () => (${expr}))()`)})`, timeoutMs);
+      const body = wrapped?.error?.startsWith('SyntaxError') ? await this.#value<typeof r>(s, `${HELPER}.run(${JSON.stringify(`(async () => {${expr}\n})()`)})`, timeoutMs) : wrapped;
+      if (!body?.error?.startsWith('SyntaxError')) r = body;
+    }
+    // Git Bash rewrites an argument that looks like a path (`/a/` in `k => /a/.test(k)` becomes `A:/`) before the
+    // CLI sees it, and the app gets code that does not parse.
+    if (r?.error?.startsWith('SyntaxError') && process.platform === 'win32' && /[A-Za-z]:\//.test(expr)) {
+      r = {...r, error: `${r.error} — Git Bash turned a /path/ in the argument into a drive path; run with MSYS_NO_PATHCONV=1`};
+    }
     while (r?.pending !== undefined) {
       if (Date.now() - t0 > timeoutMs) return {error: `the promise did not settle in ${Math.round(timeoutMs / 1000)}s`, app, apps, ms: Date.now() - t0};
       await new Promise(res => setTimeout(res, 100));
