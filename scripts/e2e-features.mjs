@@ -149,6 +149,8 @@ export const featureChecks = async ({pitbox, device, dir, platform, bin}) => {
     return {status: r.status, text: body.choices?.[0]?.message?.content ?? '', ms: Date.now() - t0};
   };
   pitbox(['llm', 'clear']);
+  const count = () => Number(/· (\d+) requests?/.exec(pitbox(['llm', 'log', '-n', '1']).out)?.[1] ?? NaN);
+  const before = count();
   const fixture = await chat('please greet me');
   pitbox(['llm', 'reply', 'forced answer', '--once']);
   const forced = await chat('anything');
@@ -161,7 +163,7 @@ export const featureChecks = async ({pitbox, device, dir, platform, bin}) => {
   pitbox(['llm', 'clear']);
   const log = pitbox(['llm', 'log', '-n', '10']);
   head(log.out, 2);
-  check('the LLM mock: fixtures, a forced reply once, an error, a delay, the log', fixture.text === 'Hello from the mock' && forced.text === 'forced answer' && /mock reply to/.test(after.text) && failed.status === 429 && slow.ms >= 550 && /5 requests/.test(log.out), JSON.stringify({fixture, forced, after, failed: failed.status, slow: slow.ms}));
+  check('the LLM mock: fixtures, a forced reply once, an error, a delay, the log', fixture.text === 'Hello from the mock' && forced.text === 'forced answer' && /mock reply to/.test(after.text) && failed.status === 429 && slow.ms >= 550 && count() - before === 5, JSON.stringify({fixture, forced, after, failed: failed.status, slow: slow.ms, logged: count() - before}));
 
   // ---- actors ----
   const started = pitbox(['actor', 'start', 'peer', 'p1']);

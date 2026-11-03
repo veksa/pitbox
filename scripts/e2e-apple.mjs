@@ -70,6 +70,8 @@ const simFor = kind => {
 };
 
 if (examples.includes('apple')) step('stand');
+// A daemon left from an older build would answer with the older code.
+if (examples.includes('apple')) must(['daemon', 'restart']);
 if (examples.includes('apple')) console.log(must(['up']));
 
 for (const kind of examples.includes('apple') ? wanted : []) {
@@ -155,6 +157,7 @@ if (examples.includes('react-native') && rnSim) {
       if (r.code !== 0) throw new Error(r.out);
       return r.out;
     };
+    ok(rn(['daemon', 'restart']));
     console.log(ok(rn(['up'])));
     if (!wasBooted) console.log(ok(rn(['boot', rnSim.udid])));
     console.log(ok(rn(['install', app, '--device', rnSim.udid])));
