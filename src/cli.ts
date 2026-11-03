@@ -344,6 +344,15 @@ export const main = async () => {
   const client = await connect({config});
   const result = await client.call(method, params);
   process.stdout.write(`${args.flags.json ? JSON.stringify(result, null, 2) : formatResult(method, result)}\n`);
-  if (method === 'up' && (result as {services: {status: string}[]}).services.some(s => s.status === 'failed')) process.exitCode = 1;
+  if (failed(method, result)) process.exitCode = 1;
+};
+
+/** A verdict that failed exits non-zero, so a script or a shell `&&` sees it. */
+export const failed = (method: string, result: unknown): boolean => {
+  const r = result as {ok?: boolean; services?: {status: string}[]; results?: {ok: boolean}[]};
+  if (method === 'up') return !!r.services?.some(s => s.status === 'failed');
+  if (method === 'run' || method === 'as') return r.ok === false;
+  if (method === 'matrix') return !!r.results?.some(v => !v.ok);
+  return false;
 };
 

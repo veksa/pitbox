@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it} from 'vitest';
-import {parseArgs, toCall} from './cli.ts';
+import {failed, parseArgs, toCall} from './cli.ts';
 import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
@@ -108,6 +108,16 @@ describe('llm mock', () => {
 });
 
 describe('cli', () => {
+  it('exits non-zero on a failed verdict', () => {
+    expect(failed('run', {ok: false, steps: 0, ms: 0})).toBe(true);
+    expect(failed('run', {ok: true, steps: 3, ms: 10})).toBe(false);
+    expect(failed('as', {ok: false})).toBe(true);
+    expect(failed('matrix', {results: [{ok: true}, {ok: false}]})).toBe(true);
+    expect(failed('matrix', {results: [{ok: true}]})).toBe(false);
+    expect(failed('up', {services: [{status: 'failed'}]})).toBe(true);
+    expect(failed('press', {})).toBe(false);
+  });
+
   it('maps commands to daemon calls', () => {
     expect(toCall(parseArgs(['up', 'api', 'db']))).toEqual({method: 'up', params: {services: ['api', 'db']}});
     expect(toCall(parseArgs(['tool', 'sql', 'query=select 1']))).toEqual({method: 'tool', params: {name: 'sql', params: {query: 'select 1'}}});
