@@ -20,13 +20,21 @@ type Open = {name: string; start: number; children: {name: string; ms: number; p
 // `  RenderThread-10028   (  10014) [002] .....  3628.484330: tracing_mark_write: B|10014|DrawFrame`
 const LINE = /^\s*(.+?)-(\d+)\s+\(\s*(\d+|-+)\)\s+\[\d+\]\s+\S+\s+([\d.]+):\s+tracing_mark_write:\s+([BE])\|(\d+)(?:\|(.*))?$/;
 
-/** Thread labels: the app's main thread is "main" (its name is the package's tail), the rest by their name. */
-const label = (comm: string, tid: number, pid: number) => (tid === pid ? 'main' : comm.trim());
+/**
+ * Thread labels: the app's main thread is "main" (its name is the package's tail), the rest by their name — from
+ * the device when known, since the trace writes `<...>` for a thread whose name the kernel no longer remembers.
+ */
+const label = (comm: string, tid: number, pid: number, names?: Map<number, string>) => {
+  if (tid === pid) return 'main';
+  const known = names?.get(tid);
+  if (known) return known;
+  return comm.trim() === '<...>' ? `thread ${tid}` : comm.trim();
+};
 
 /** A slice name without the frame numbers and coordinates the platform puts in it (`DrawFrames 1740884`). */
 export const sliceName = (s: string) => s.replace(/\s+-?[\d.]+(?=\s|$)/g, '').trim() || s.trim();
 
-export const summarizeAtrace = (text: string, pid: number, opts: {longMs?: number; long?: number} = {}): TraceSummary => {
+export const summarizeAtrace = (text: string, pid: number, opts: {longMs?: number; long?: number; names?: Map<number, string>} = {}): TraceSummary => {
   const longMs = opts.longMs ?? 16;
   const stacks = new Map<number, Open[]>();
   const names = new Map<number, string>();
@@ -42,7 +50,7 @@ export const summarizeAtrace = (text: string, pid: number, opts: {longMs?: numbe
     if (t > last) last = t;
     if (Number(m[6]) !== pid) continue;
     const tid = Number(m[2]);
-    names.set(tid, label(m[1]!, tid, pid));
+    if (!names.has(tid) || names.get(tid)!.startsWith('thread ')) names.set(tid, label(m[1]!, tid, pid, opts.names));
     let stack = stacks.get(tid);
     if (!stack) stacks.set(tid, (stack = []));
     if (m[5] === 'B') {

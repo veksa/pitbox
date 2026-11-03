@@ -48,6 +48,11 @@ describe('platform trace', () => {
     ]);
   });
 
+  it('names a thread the trace calls <...> from the device, or by its id', () => {
+    const anon = [mark('<...>', 101, 100, 1.0, 'B|100|DrawFrames'), mark('<...>', 101, 100, 1.02, 'E|100'), mark('<...>', 102, 100, 1.0, 'B|100|work'), mark('<...>', 102, 100, 1.001, 'E|100')].join('\n');
+    expect(summarizeAtrace(anon, 100, {names: new Map([[101, 'RenderThread']])}).threads.map(t => t.thread)).toEqual(['RenderThread', 'thread 102']);
+  });
+
   it('checks a budget on the longest main-thread slice, and asks for a trace without one', () => {
     const data = {trace: summarizeAtrace(trace, 100)};
     expect(checkBudgets(data, [parseBudget('slice<16')])).toEqual({ok: false, lines: ['slice 32ms ✗ < 16ms']});

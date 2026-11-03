@@ -493,7 +493,13 @@ export class AndroidDriver {
     const r = await this.adb(['exec-out', 'atrace', '--async_stop', '-a', pkg], serial, {timeoutMs: 60_000});
     const pid = Number((await this.shell(serial, `pidof ${pkg}`)).trim().split(/\s+/)[0]);
     if (!pid) return {ms: 0, threads: [], long: [], longMs: 16};
-    return {...summarizeAtrace(r.stdout, pid), pid};
+    // Thread names from the process itself: the trace has `<...>` for some of them.
+    const list = await this.shell(serial, `for t in /proc/${pid}/task/*; do echo \${t##*/} $(cat $t/comm); done`).catch(() => '');
+    const names = new Map(list.split('\n').flatMap(l => {
+      const m = /^(\d+) (.+)$/.exec(l.trim());
+      return m ? [[Number(m[1]), m[2]!.trim()] as [number, string]] : [];
+    }));
+    return {...summarizeAtrace(r.stdout, pid, {names}), pid};
   }
 
   async info(serial: string): Promise<Record<string, string>> {
