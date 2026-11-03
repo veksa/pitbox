@@ -208,6 +208,79 @@ describe('visual diff', () => {
   });
 });
 
+describe('a keyboard over the target', () => {
+  it('is waited out when it was fullscreen and the app comes back a moment later', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = true;
+    let after = 0;
+    const calls: string[] = [];
+    const greet: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 400, 400, 450], id: 'greet', t: 'Greet', f: 'c'};
+    const keys: UiNode = {p: -1, w: 0, c: 'View', b: [0, 0, 400, 500], id: 'keyboard_area'};
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(args)}`);
+        if (cmd === 'key' && args.code === 4) keyboard = false;
+        if (cmd === 'tree') {
+          // Two snapshots after the keyboard went, the app's window is still missing.
+          if (keyboard || after++ < 2) return {windows: [{type: 'ime', title: 'Keyboard', pkg: 'com.example.ime'}], nodes: [keys]};
+          return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}], nodes: [greet]};
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('dev', runner as never).press('id=greet');
+    expect(calls).toEqual(['key {"code":4}', 'tap {"x":200,"y":425}']);
+  });
+
+  it('is hidden when a fullscreen one comes up on the tap of a fill, and the text goes in after', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = false;
+    let value = '';
+    const calls: string[] = [];
+    const field = (): UiNode => ({p: -1, w: 0, c: 'Field', b: [0, 100, 400, 150], id: 'name', t: value, f: 'ce'});
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (['key', 'tap', 'text'].includes(cmd)) calls.push(cmd);
+        if (cmd === 'tap') keyboard = true;
+        if (cmd === 'key' && args.code === 4) keyboard = false;
+        if (cmd === 'text') {
+          if (keyboard) return {set: false};
+          value = String(args.text);
+          return {set: true};
+        }
+        if (cmd === 'tree') return keyboard ? {windows: [{type: 'ime', title: 'Keyboard', pkg: 'com.example.ime'}], nodes: []} : {windows: [{type: 'app', title: '', pkg: 'com.example.app'}], nodes: [field()]};
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('dev', runner as never).fill('id=name', 'Ada');
+    expect(calls).toEqual(['tap', 'text', 'key', 'text']);
+    expect(value).toBe('Ada');
+  });
+
+  it('is hidden before the tap even when its window shows no views', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = true;
+    const calls: string[] = [];
+    const greet: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 400, 400, 450], id: 'greet', t: 'Greet', f: 'c'};
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(args)}`);
+        if (cmd === 'key' && args.code === 4) keyboard = false;
+        if (cmd === 'tree') return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}, ...(keyboard ? [{type: 'ime', title: 'Keyboard', pkg: 'com.example.ime'}] : [])], nodes: [greet]};
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('dev', runner as never).press('id=greet');
+    expect(calls).toEqual(['key {"code":4}', 'tap {"x":200,"y":425}']);
+  });
+});
+
 describe('focus map', () => {
   it('tells apart cells that share one id', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

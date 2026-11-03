@@ -139,7 +139,9 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     // letter instead.
     // Where the keyboard starts; 0 when its window is there but shows no views of its own size (a car's keyboard
     // exposes only its root).
-    const imeShown = snap.nodes.some(n => snap.windows[n.w]?.type === 'ime');
+    // The window list holds only windows on screen, so an input method window means a keyboard is up — whether
+    // or not it exposes any views (a car's keyboard sometimes shows none at all).
+    const imeShown = snap.windows.some(w => w.type === 'ime');
     const top = ref || !imeShown ? undefined : (keyboardTop(snap, (await this.size()).height) ?? 0);
     let target: ReturnType<typeof resolveTarget> | undefined;
     try {
@@ -149,12 +151,25 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     }
     const covered = top !== undefined && (!target || (target.node && snap.windows[target.node.w]?.type !== 'ime' && target.y >= top));
     if (covered || !target) {
-      await this.runner.call('key', {code: 4});
-      await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
-      snap = await this.snapshot();
+      snap = await this.#hideKeyboard(selector);
       target = resolveTarget(snap, selector);
     }
     return {snap, target};
+  }
+
+  /**
+   * Hides the on-screen keyboard (back) and returns the screen once the app is there again: a fullscreen
+   * keyboard (landscape on a small screen) hides the app's window from the list until a moment after it goes.
+   */
+  async #hideKeyboard(selector?: string): Promise<Snapshot> {
+    await this.runner.call('key', {code: 4});
+    await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
+    const end = Date.now() + 2500;
+    for (;;) {
+      const snap = await this.snapshot();
+      if (!snap.windows.some(w => w.type === 'ime') || (selector && matches(snap, selector)) || Date.now() > end) return snap;
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
 
   /** Crashes, ANRs and JS errors of the app since `since`, for an action's result. */
@@ -200,7 +215,21 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     await this.runner.call('tap', {x: target.x, y: target.y});
     await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
     const editable = target.node && (target.node.f ?? '').includes('e');
-    const r = await this.runner.call<{set: boolean}>('text', {text, ...(editable ? {bounds: target.node!.b} : {})});
+    const args = {text, ...(editable ? {bounds: target.node!.b} : {})};
+    let r = await this.runner.call<{set: boolean}>('text', args);
+    // The tap brought up a fullscreen keyboard, which hides the field's window: with the keyboard gone the field
+    // keeps its focus and takes the text.
+    if (!r.set && (await this.snapshot()).windows.some(w => w.type === 'ime')) {
+      // The layout may have moved with the keyboard: the field where it is now, or the one with input focus.
+      const now = await this.#hideKeyboard(selector);
+      let node: UiNode | undefined;
+      try {
+        node = resolveTarget(now, selector).node;
+      } catch {
+        node = undefined;
+      }
+      r = await this.runner.call<{set: boolean}>('text', {text, ...(node && (node.f ?? '').includes('e') ? {bounds: node.b} : {})});
+    }
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
     const settled = await this.#settle(snap);
