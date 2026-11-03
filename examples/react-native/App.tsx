@@ -9,6 +9,13 @@ const rows = Array.from({length: 40}, (_, i) => `Row ${i + 1}`);
 
 const detailOf = (url: string | null) => /^pitboxexample-rn:\/\/detail\/(\w+)/.exec(url ?? '')?.[1];
 
+// Slow on purpose, so a CPU profile has an app function to name.
+function workHard(): number {
+  let x = 0;
+  for (let i = 0; i < 3e6; i++) x += Math.sqrt(i) % 7;
+  return x;
+}
+
 function failOnPurpose(): never {
   throw new Error('example js error');
 }
@@ -31,6 +38,7 @@ function Main({onFetch, response}: {onFetch: () => void; response: string}) {
       <Button testID="fetch" title="Ask the stand" onPress={onFetch} />
       <Text testID="response">{response}</Text>
       <Button testID="js-error" title="Throw a JS error" onPress={failOnPurpose} />
+      <Button testID="busy" title="Work hard" onPress={() => workHard()} />
     </View>
   );
 }

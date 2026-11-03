@@ -168,6 +168,12 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     const warned = pitbox(['app-console', '--level', 'warn']);
     head(warned.out, 3);
     checks.push({name: 'console warning with its source line', ok: greet.code === 0 && /W {2}greeting without a name {2}← greet {2}App\.tsx:\d+:\d+/.test(warned.out)});
+    // The example's Work hard button runs a slow function: the JS profile must name it, in the app's code.
+    pitbox(['perf', 'reset', '--device', avd]);
+    pitbox(['press', 'id=busy', '--device', avd]);
+    const perf = pitbox(['perf', '--device', avd]);
+    head(perf.out.split('\n').filter(l => /JS thread|workHard/.test(l)).join('\n'), 3);
+    checks.push({name: 'js profile names the slow app function', ok: /app code, with what it called:\n\s+\d+ ms {2}workHard {2}App\.tsx:\d+/.test(perf.out)});
     const ev = pitbox(['js', 'eval', 'Promise.resolve(40 + 2)']);
     head(ev.out, 2);
     checks.push({name: 'js eval', ok: /^= 42/.test(ev.out)});
