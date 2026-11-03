@@ -160,7 +160,7 @@ describe('react commits', () => {
       channel.onmessage!({data: JSON.stringify({type: 'query', what: 'renders', reqId: 9, ...q})});
       return JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' ')).data;
     };
-    expect(ask({start: true})).toEqual({started: true});
+    expect(ask({start: true})).toEqual({started: true, react: true});
 
     function Main() {}
     function Row() {}
@@ -197,6 +197,20 @@ describe('react commits', () => {
     expect(Object.fromEntries(by.Button!.why)).toEqual({'props onPress': 1, 'parent rendered, same props': 1});
     expect(by.Row).toEqual({name: 'Row', n: 1, ms: 2, why: [['mount', 1]]});
     expect(ask({stop: true})).toEqual({error: 'no React measurement running'});
+  });
+
+  it('measures the JS heap over the window, also without React', () => {
+    const {g, sent, sockets} = sandbox();
+    let stats = {js_allocatedBytes: 4_000_000, js_totalAllocatedBytes: 10_000_000, js_numGCs: 2, js_gcTime: 0.004};
+    g.HermesInternal = {getInstrumentedStats: () => stats};
+    const channel = sockets.find(s => s.url === cfg.ws)!;
+    const ask = (q: object) => {
+      channel.onmessage!({data: JSON.stringify({type: 'query', what: 'renders', reqId: 3, ...q})});
+      return JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' ')).data;
+    };
+    expect(ask({start: true})).toEqual({started: true, react: false});
+    stats = {js_allocatedBytes: 5_000_000, js_totalAllocatedBytes: 13_000_000, js_numGCs: 5, js_gcTime: 0.0105};
+    expect(ask({stop: true})).toMatchObject({react: false, commits: 0, heap: {liveBefore: 4_000_000, liveAfter: 5_000_000, allocated: 3_000_000, gcs: 3, gcMs: 6.5}});
   });
 });
 

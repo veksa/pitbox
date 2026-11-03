@@ -69,7 +69,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   with a dev server the JS thread over the same window: how busy it was, the functions that took the time
   themselves, and the app's own functions with what they called (`workHard  App.tsx:14`); and React's commits:
   which components rendered how often, their own time, and why (`Button — props onPress ×4`: a new function
-  each render; `parent rendered, same props`: a `memo` would skip it). About 25 lines.
+  each render; `parent rendered, same props`: a `memo` would skip it); and the JS heap: live bytes before and
+  after, bytes allocated, collections. Live bytes depend on when the collector last ran, so a leak shows as a
+  trend over repeats of a step, not in one window. About 25 lines.
   Sampling is ~10 ms, so measure an interaction that takes longer than a few samples.
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.

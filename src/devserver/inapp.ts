@@ -288,10 +288,20 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     };
     if (!cur.alternate || cur.child !== cur.alternate.child) walk(cur.child);
   };
+  // The JS heap as the runtime counts it (Hermes): live bytes, all bytes allocated, collections.
+  var heapStats = function () {
+    var HI = g.HermesInternal;
+    var s = HI && HI.getInstrumentedStats ? HI.getInstrumentedStats() : null;
+    if (!s) return null;
+    return {live: s.js_allocatedBytes, total: s.js_totalAllocatedBytes, gcs: s.js_numGCs, gcMs: (s.js_gcTime || 0) * 1000};
+  };
   var renders = function (msg: any) {
     var hook = g.__REACT_DEVTOOLS_GLOBAL_HOOK__;
     if (msg.start) {
-      if (!hook) return {error: 'no React dev tools hook in this bundle'};
+      if (!hook) {
+        rec = {since: Date.now(), commits: 0, ms: 0, by: {}, heap: heapStats(), noReact: true};
+        return {started: true, react: false};
+      }
       if (!hook.__pitboxRenders) {
         var orig = hook.onCommitFiberRoot;
         hook.onCommitFiberRoot = function (id: any, root: any) {
@@ -302,8 +312,8 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
         };
         hook.__pitboxRenders = true;
       }
-      rec = {since: Date.now(), commits: 0, ms: 0, by: {}};
-      return {started: true};
+      rec = {since: Date.now(), commits: 0, ms: 0, by: {}, heap: heapStats()};
+      return {started: true, react: true};
     }
     if (!rec) return {error: 'no React measurement running'};
     var r = rec;
@@ -326,7 +336,10 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     });
     var shown = byN.slice(0, 10);
     for (var i = 0; i < byMs.length && i < 5; i++) if (shown.indexOf(byMs[i]) < 0) shown.push(byMs[i]);
-    return {ms: Date.now() - r.since, commits: r.commits, renderMs: Math.round(r.ms * 10) / 10, components: list.length, shown: shown};
+    var h0 = r.heap;
+    var h1 = heapStats();
+    var heap = h0 && h1 ? {liveBefore: h0.live, liveAfter: h1.live, allocated: h1.total - h0.total, gcs: h1.gcs - h0.gcs, gcMs: Math.round((h1.gcMs - h0.gcMs) * 10) / 10} : undefined;
+    return {ms: Date.now() - r.since, react: !r.noReact, commits: r.commits, renderMs: Math.round(r.ms * 10) / 10, components: list.length, shown: shown, heap: heap};
   };
 
   var connect = function (delay: number) {

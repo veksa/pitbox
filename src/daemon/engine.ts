@@ -1167,7 +1167,7 @@ export class Engine {
       const renders = async (q: Record<string, unknown>) => (dev.proxy.listening ? (await dev.proxy.query<Record<string, unknown>>('renders', q, 2000))[0]?.data : undefined);
       if (reset) {
         const [jsProfiling, react] = await Promise.all([dev.js.profileStart(str(p, 'device')).catch(() => false), renders({start: true}).catch(() => undefined)]);
-        return {...device, jsProfiling, reactRecording: !!react?.started};
+        return {...device, jsProfiling, reactRecording: !!react?.started && react.react !== false};
       }
       const [js, react] = await Promise.all([
         dev.js.profileStop().catch(e => ({ms: 0, busyMs: 0, samples: 0, self: [], app: [], note: `no JS profile: ${(e as Error).message}`})),

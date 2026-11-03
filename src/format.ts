@@ -125,12 +125,27 @@ export const fmtObject = (o: unknown): string => {
 };
 
 /** Formats any engine result by method. */
-type ReactRenders = {ms: number; commits: number; renderMs: number; components: number; shown: {name: string; n: number; ms: number; why: [string, number][]}[]};
+type ReactRenders = {
+  ms: number;
+  react?: boolean;
+  commits: number;
+  renderMs: number;
+  components: number;
+  shown: {name: string; n: number; ms: number; why: [string, number][]}[];
+  heap?: {liveBefore: number; liveAfter: number; allocated: number; gcs: number; gcMs: number};
+};
+
+const mb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
 
 const fmtRenders = (r?: ReactRenders): string[] => {
   if (!r) return [];
-  if (!r.commits) return ['React: no commits'];
+  const h = r.heap;
+  // Live bytes depend on when the collector last ran: growth over one window is a hint, a trend over repeats is the finding.
+  const heap = h ? [`JS heap: ${mb(h.liveBefore)} → ${mb(h.liveAfter)} live (${h.liveAfter >= h.liveBefore ? '+' : '−'}${mb(Math.abs(h.liveAfter - h.liveBefore))}), ${mb(h.allocated)} allocated, ${h.gcs} GC${h.gcs === 1 ? '' : 's'} (${h.gcMs} ms)`] : [];
+  if (r.react === false) return heap;
+  if (!r.commits) return [...heap, 'React: no commits'];
   return [
+    ...heap,
     `React: ${r.commits} commit${r.commits === 1 ? '' : 's'}, ${r.renderMs} ms rendering, ${r.components} component${r.components === 1 ? '' : 's'} rendered`,
     ...r.shown.map(c => `  ${String(c.n).padStart(4)}×  ${String(c.ms).padStart(6)} ms  ${c.name} — ${c.why.map(([w, n]) => (n === c.n ? w : `${w} ×${n}`)).join('; ')}`),
   ];
