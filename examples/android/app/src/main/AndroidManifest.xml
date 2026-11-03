@@ -6,7 +6,8 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <application android:label="pitbox example" android:banner="@drawable/banner">
-        <activity android:name=".MainActivity" android:exported="true">
+        <!-- The name field is the first focusable view: without stateHidden a watch opens its fullscreen keyboard on launch. -->
+        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="stateHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
