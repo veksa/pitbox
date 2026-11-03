@@ -422,3 +422,10 @@ describe('a cold start', () => {
     expect(calls.indexOf('am start -W')).toBeGreaterThan(calls.lastIndexOf('dumpsys window windows'));
   });
 });
+
+describe('the device list', () => {
+  it('says why there are no simulators when they cannot be read', async () => {
+    const {formatResult} = await import('./format.ts');
+    expect(formatResult('devices', {devices: [], avds: [], simulators: [], simulatorsError: 'the Mac at http://mac.example.test:7700 refused the token'})).toBe('no devices online\n✗ simulators: the Mac at http://mac.example.test:7700 refused the token');
+  });
+});

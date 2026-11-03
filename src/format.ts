@@ -412,7 +412,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'docs':
       return x.docs ? `docs: ${(x.docs as string[]).join(', ') || 'none configured'}` : (x.lines as string[]).join('\n') || '(no matches)';
     case 'devices':
-      return fmtDevices(x.devices as AndroidDevice[], x.avds as {name: string; kind: string}[], x.simulators as SimRow[] | undefined).join('\n');
+      return [...fmtDevices(x.devices as AndroidDevice[], x.avds as {name: string; kind: string}[], x.simulators as SimRow[] | undefined), ...(x.simulatorsError ? [`✗ simulators: ${x.simulatorsError}`] : [])].join('\n');
     case 'doctor':
       return fmtDoctor(x as unknown as DoctorReport);
     case 'tool':

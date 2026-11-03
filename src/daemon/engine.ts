@@ -916,11 +916,15 @@ export class Engine {
       const a = this.android;
       const s = this.apple;
       if (!a && !s) this.#needAndroid();
-      const sims = s ? await s.simulators().catch(() => []) : [];
+      // A simulator list that cannot be read (a remote Mac that refuses the token, Xcode gone) says why instead of
+      // looking like a Mac without simulators.
+      let simError: string | undefined;
+      const sims = s ? await s.simulators().catch(e => ((simError = (e as Error).message.split('\n')[0]), [])) : [];
       return {
         devices: a ? await a.devices() : [],
         avds: a ? a.avds() : [],
         ...(s ? {simulators: sims.map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state}))} : {}),
+        ...(simError ? {simulatorsError: simError} : {}),
       };
     },
 
