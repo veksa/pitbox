@@ -7,8 +7,9 @@
 //   PITBOX_E2E_SIM_TV="Apple TV 4K (at 1080p)" yarn e2e:apple   a given simulator (name or udid) for a kind
 //   PITBOX_E2E_EXAMPLES=react-native yarn e2e:apple            only examples/react-native, on a phone
 
-import {execFileSync, spawnSync} from 'node:child_process';
+import {execFileSync, spawn, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {rnChecks} from './e2e-rn.mjs';
@@ -137,6 +138,49 @@ for (const kind of examples.includes('apple') ? wanted : []) {
 }
 
 if (examples.includes('apple')) pitbox(['down']);
+
+// A remote Mac, both ends on this one: `serve-devices` with a token, and a project elsewhere that drives this Mac's
+// iPhone through `apple.remote` — the upload of the app, a flow with a deep link, a screenshot coming back.
+const remoteSim = examples.includes('apple') && wanted.includes('phone') ? simFor('phone') : undefined;
+if (remoteSim) {
+  step(`remote Mac: ${remoteSim.name}`);
+  const checks = [];
+  const token = `e2e-${process.pid}`;
+  const port = 7790;
+  const host = spawn(process.execPath, [bin, 'serve-devices', '--listen', `127.0.0.1:${port}`], {env: {...process.env, PITBOX_TOKEN: token}, stdio: 'ignore'});
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-remote-'));
+  fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({app: {apple: 'dev.pitbox.example'}, apple: {remote: `http://127.0.0.1:${port}`}, routes: {detail: 'pitboxexample://detail/{id}'}}));
+  const far = (args, opts = {}) => {
+    const r = spawnSync(process.execPath, [bin, ...args], {cwd: dir, encoding: 'utf8', timeout: opts.timeout ?? 900_000, env: {...process.env, PITBOX_REMOTE_TOKEN: token}});
+    return {code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim()};
+  };
+  const wasBooted = remoteSim.state === 'Booted';
+  try {
+    await new Promise(r => setTimeout(r, 1500));
+    const devices = far(['devices']);
+    checks.push({name: 'the remote Mac lists its simulators', ok: devices.out.includes(remoteSim.name)});
+    if (!wasBooted) far(['boot', remoteSim.udid]);
+    const installed = far(['install', path.join(products, PLAN.phone.app), '--device', remoteSim.udid]);
+    console.log(installed.out.split('\n')[0]);
+    const run = far(['run', '--steps', 'open!\nwait id=title 60\nfill id=name "Remote"\npress id=greet\nexpect text="Hello, Remote"\ngoto detail id=5\nwait text="Detail 5" 15\npress id=back\nexpect id=content_list', '--device', remoteSim.udid]);
+    console.log(run.out.split('\n').slice(0, 2).join('\n'));
+    const shot = far(['screenshot', '--device', remoteSim.udid]);
+    checks.push({name: 'an app uploaded, a flow and a deep link through the remote Mac, a screenshot back', ok: installed.code === 0 && run.code === 0 && /\.png \(\d+ KB\)/.test(shot.out) && shot.out.includes(dir)});
+    // A daemon of its own with the wrong token: the one above keeps the token it started with.
+    far(['daemon', 'stop']);
+    const wrong = spawnSync(process.execPath, [bin, 'devices'], {cwd: dir, encoding: 'utf8', env: {...process.env, PITBOX_REMOTE_TOKEN: 'wrong'}});
+    console.log(`${wrong.stdout}${wrong.stderr}`.trim().split('\n')[0]);
+    checks.push({name: 'a wrong token is turned away, and said so', ok: !`${wrong.stdout}${wrong.stderr}`.includes(remoteSim.udid) && /refused the token/.test(`${wrong.stdout}${wrong.stderr}`)});
+  } catch (e) {
+    checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
+  } finally {
+    far(['daemon', 'stop']);
+    if (!wasBooted) pitbox(['shutdown', '--device', remoteSim.udid], {timeout: 120_000});
+    host.kill();
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+  results.push({kind: 'remote', sim: remoteSim.name, status: checks.every(c => c.ok) ? 'pass' : 'fail', checks});
+}
 
 // examples/react-native on a phone: through pitbox's dev server (the app reads it from its defaults), the same
 // checks as on Android (scripts/e2e-rn.mjs): the in-app channel, the JS runtime, perf and hot updates.
