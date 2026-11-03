@@ -296,7 +296,7 @@ describe('a keyboard over the target', () => {
     const keys: UiNode = {p: -1, w: 0, c: 'View', b: [0, 0, 400, 500], id: 'keyboard_area'};
     const runner = {
       call: async (cmd: string, args: Record<string, unknown> = {}) => {
-        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(args)}`);
+        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(cmd === 'tap' ? {x: args.x, y: args.y} : args)}`);
         if (cmd === 'key' && args.code === 4) keyboard = false;
         if (cmd === 'tree') {
           // Two snapshots after the keyboard went, the app's window is still missing.
@@ -378,7 +378,7 @@ describe('a keyboard over the target', () => {
     const greet: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 400, 400, 450], id: 'greet', t: 'Greet', f: 'c'};
     const runner = {
       call: async (cmd: string, args: Record<string, unknown> = {}) => {
-        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(args)}`);
+        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(cmd === 'tap' ? {x: args.x, y: args.y} : args)}`);
         if (cmd === 'key' && args.code === 4) keyboard = false;
         if (cmd === 'tree') return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}, ...(keyboard ? [{type: 'ime', title: 'Keyboard', pkg: 'com.example.ime'}] : [])], nodes: [greet]};
         if (cmd === 'info') return {width: 400, height: 500};

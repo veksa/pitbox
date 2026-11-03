@@ -77,8 +77,10 @@ final class Commands {
       throw RunnerError("tvOS has no touch — use key up/down/left/right/select")
       #else
       #if os(visionOS)
-      // A synthesized touch at a point does not press a control on visionOS; the control under it is pressed.
-      if let e = control(at: CGPoint(x: double(req, "x", 0), y: double(req, "y", 0)), req) {
+      // A synthesized touch at a point does not press a control on visionOS; the element is pressed. The host's
+      // node first: every window has its own coordinates, so a point can be inside views of several windows.
+      let point = CGPoint(x: double(req, "x", 0), y: double(req, "y", 0))
+      if let e = node(req) ?? control(at: point, req) ?? element(at: point, req, where: { $0 != .application && $0 != .window && $0 != .other }) {
         if cmd == "tap" { e.tap() } else if cmd == "doubletap" { e.doubleTap() } else { e.press(forDuration: double(req, "hold", 800) / 1000) }
         return [:]
       }
@@ -387,6 +389,33 @@ final class Commands {
     element(at: point, req) { Self.tappable.contains($0) || Self.editable.contains($0) }
   }
 
+  /// The element the host aimed at, by its id or label and its frame: found in one snapshot, then fetched by its
+  /// type (a query over every type is slow enough on visionOS to time a tap out).
+  private func node(_ req: [String: Any]) -> XCUIElement? {
+    guard let b = req["bounds"] as? [Double], b.count == 4 else { return nil }
+    let frame = CGRect(x: b[0], y: b[1], width: b[2] - b[0], height: b[3] - b[1])
+    let id = req["ident"] as? String ?? "", label = req["label"] as? String ?? ""
+    if id.isEmpty && label.isEmpty { return nil }
+    let (a, _) = front(req)
+    guard let root = try? a.snapshot() else { return nil }
+    var hit: XCUIElementSnapshot?
+    func visit(_ n: XCUIElementSnapshot) {
+      if hit != nil { return }
+      if (id.isEmpty ? n.label == label : n.identifier == id) && Self.same(n.frame, frame) { hit = n; return }
+      n.children.forEach(visit)
+    }
+    visit(root)
+    guard let n = hit else { return nil }
+    return resolve(n, in: a)
+  }
+
+  /// A live element for a snapshot node: by its type and id or label, at the same frame.
+  private func resolve(_ n: XCUIElementSnapshot, in a: XCUIApplication) -> XCUIElement? {
+    let all = a.descendants(matching: n.elementType)
+    let query = n.identifier.isEmpty ? all.matching(NSPredicate(format: "label == %@", n.label)) : all.matching(identifier: n.identifier)
+    return query.allElementsBoundByIndex.first { Self.same($0.frame, n.frame) }
+  }
+
   private func scroller(at point: CGPoint, _ req: [String: Any]) -> XCUIElement? {
     element(at: point, req) { Self.scrollable.contains($0) }
   }
@@ -403,9 +432,7 @@ final class Commands {
     }
     visit(root)
     guard let n = best else { return nil }
-    let all = a.descendants(matching: n.elementType)
-    let query = n.identifier.isEmpty ? all.matching(NSPredicate(format: "label == %@", n.label)) : all.matching(identifier: n.identifier)
-    return query.allElementsBoundByIndex.first { Self.same($0.frame, n.frame) }
+    return resolve(n, in: a)
   }
 
   private func coordinate(_ req: [String: Any], x xKey: String = "x", y yKey: String = "y") -> XCUICoordinate {
