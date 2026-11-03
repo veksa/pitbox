@@ -137,6 +137,9 @@ describe('cli', () => {
     expect(toCall(parseArgs(['logs', 'api', '-n', '5', '--grep', 'err'])).params).toMatchObject({name: 'api', lines: '5', grep: 'err'});
     expect(toCall(parseArgs(['install', 'app.apk', '--replace', '--device', 'emulator-5554'])).params).toMatchObject({apk: 'app.apk', replace: true, device: 'emulator-5554'});
     expect(toCall(parseArgs(['settings', 'fontScale=1.3', 'dark=true'])).params).toMatchObject({fontScale: '1.3', dark: 'true'});
+    expect(toCall(parseArgs(['wait', 'id=player', '30'])).params).toMatchObject({target: 'id=player', timeout: '30'});
+    expect(toCall(parseArgs(['wait', 'gone', 'text=Loading', '5'])).params).toMatchObject({gone: true, target: 'text=Loading', timeout: '5'});
+    expect(toCall(parseArgs(['wait', 'text=Page 2'])).params).toMatchObject({target: 'text=Page 2'});
   });
 });
 

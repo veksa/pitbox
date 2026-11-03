@@ -208,8 +208,13 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: cmd, params: {device, value: rest.join(' ')}};
     case 'scroll':
       return {method: 'scroll', params: {device, direction: rest[0], until: rest.slice(rest[1] === 'until' ? 2 : 1).join(' ')}};
-    case 'wait':
-      return {method: 'wait', params: {device, gone: rest[0] === 'gone', target: (rest[0] === 'gone' ? rest.slice(1) : rest).join(' '), timeout: flags.timeout}};
+    case 'wait': {
+      // `wait id=x 30` as in a flow: a trailing number is the timeout, not part of the selector.
+      const words = rest[0] === 'gone' ? rest.slice(1) : rest;
+      const last = words[words.length - 1];
+      const trailing = words.length > 1 && /^\d+(\.\d+)?$/.test(last ?? '') ? last : undefined;
+      return {method: 'wait', params: {device, gone: rest[0] === 'gone', target: (trailing ? words.slice(0, -1) : words).join(' '), timeout: flags.timeout ?? trailing}};
+    }
     case 'focus':
       return {method: 'focus', params: {device}};
     case 'focusmap':
