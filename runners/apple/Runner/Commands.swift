@@ -197,6 +197,12 @@ final class Commands {
     return depth < 12 ? n.children.flatMap { parts(of: $0, screen: screen, depth: depth + 1) } : []
   }
 
+  /// Whether a view shows anything: text or a control somewhere inside it.
+  private static func shows(_ n: XCUIElementSnapshot, depth: Int = 0) -> Bool {
+    if !n.label.isEmpty || n.elementType == .button || n.elementType == .staticText { return true }
+    return depth < 12 && n.children.contains { shows($0, depth: depth + 1) }
+  }
+
   /// The keyboard's frame in the tree being built.
   private var keyboard: CGRect?
 
@@ -231,7 +237,8 @@ final class Commands {
     // System alerts (permissions, notifications) live in the shell, not in the app.
     if id != Self.shellId {
       let alert = systemAlert()
-      if alert.exists, let snap = try? alert.snapshot() {
+      // visionOS keeps its alert container whether or not an alert shows: an empty one is not listed.
+      if alert.exists, let snap = try? alert.snapshot(), Self.shows(snap) {
         windows.append(["type": "app", "title": snap.label, "pkg": Self.alertsId])
         walk(snap, parent: -1, window: windows.count - 1, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
       }
