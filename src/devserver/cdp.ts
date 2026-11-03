@@ -33,8 +33,10 @@ export const pickPage = (pages: CdpPage[], device?: string): CdpPage | undefined
   if (!device) return pages[pages.length - 1];
   const d = device.toLowerCase();
   const named = pages.filter(p => `${p.deviceName ?? ''} ${p.title}`.toLowerCase().includes(d));
-  // A device serial (emulator-5554) is not in the page's name; with one page there is nothing to choose.
-  return named[named.length - 1] ?? (pages.length === 1 ? pages[0] : undefined);
+  // A device serial (emulator-5554) is not in the page's name. With every page on one device (one app, or a
+  // relaunch whose old runtime is still listed) the newest is the one; across devices there is no guessing.
+  if (named.length) return named[named.length - 1];
+  return new Set(pages.map(p => p.deviceName ?? p.title)).size === 1 ? pages[pages.length - 1] : undefined;
 };
 
 export type CdpEvent = {method: string; params: Record<string, unknown>};

@@ -122,6 +122,8 @@ describe('logpoint inputs', () => {
     expect(pickPage(two, 'pixel')?.id).toBe('a');
     expect(pickPage(two, 'emulator-5554')).toBeUndefined();
     expect(pickPage([two[0]!], 'emulator-5554')?.id).toBe('a');
+    // A relaunch: the old runtime of the same device is still listed next to the new one.
+    expect(pickPage([page('old', 'Pixel 9 - API 36'), page('new', 'Pixel 9 - API 36')], 'emulator-5554')?.id).toBe('new');
   });
 });
 
