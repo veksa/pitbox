@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {rnChecks} from './e2e-rn.mjs';
+import {featureChecks} from './e2e-features.mjs';
 
 if (process.platform !== 'darwin') {
   console.error('e2e:apple needs a Mac with Xcode');
@@ -26,7 +27,7 @@ const products = path.join(example, 'build', 'Build', 'Products');
 
 /** Per kind: the build that runs there, its flows, and the flows that must fail with the app's crash. */
 const PLAN = {
-  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate'], fails: ['crash']},
+  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate'], fails: ['crash'], features: true},
   foldable: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'fold'], fails: ['crash'], cover: true},
   tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'pointer'], fails: []},
   tv: {platform: 'tvOS Simulator', scheme: 'PitboxExample', app: 'Debug-appletvsimulator/PitboxExample.app', flows: ['tv'], fails: [], focusMap: true},
@@ -113,6 +114,7 @@ for (const kind of examples.includes('apple') ? wanted : []) {
       const shot = pitbox(['screenshot', '--device', sim.udid]);
       checks.push({name: 'screenshot of the lit screen', ok: shot.code === 0 && /\.png \(\d+ KB\)/.test(shot.out)});
     }
+    if (plan.features) checks.push(...(await featureChecks({pitbox, device: sim.udid, dir: example, platform: 'apple', bin})));
     if (plan.windowShot) {
       // visionOS's screen shot is 1×1: images come from the app's window, or visual checks would always match.
       const shot = pitbox(['shot', 'window', '--device', sim.udid]);

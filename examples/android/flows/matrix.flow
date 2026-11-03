@@ -1,0 +1,6 @@
+# Run over the config's matrix (font scales, dark and light): the screen comes up and greets in each variant.
+open!
+wait id=title 30
+press id=greet
+expect text="Hello, stranger"
+screenshot home

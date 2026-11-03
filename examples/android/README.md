@@ -17,6 +17,9 @@ deep link `pitboxexample://detail/<id>`.
 | `wear` | watch | the same on a round screen a few rows tall, then the crown |
 | `watch` | watch | a tile shown and removed, the pitbox face set and its complication served, ambient on and off |
 | `xr` | XR | the view turned and recentered, the panel's menu, tidy up, minimise and back |
+| `xr-poses` | XR | taps, hover, text and the wheel with the head turned away, tilted, upside down, walked off and moving |
+| `xr-panel` | XR | every panel control: spatial audio, app info, tidy up, close the panel, close the app |
+| `xr-world` | XR | the surroundings by night and by day, the room showing through and not |
 | `glasses` | glasses | the temple touchpad moves the focus and presses |
 | `car` | car | night and day, driving blocks the app, parking brings it back |
 | `rotate` | phone, tablet | the layout follows a turn, the sensor takes over again |
@@ -24,6 +27,12 @@ deep link `pitboxexample://detail/<id>`.
 | `mouse` | foldable, tablet, desktop, XR | hover, a context menu on a right click, the wheel |
 | `window` | foldable, tablet, desktop | a freeform window, resized, fullscreen again |
 | `crash` | phone | fails on purpose: the crash comes back with the step and the stack |
+| `sign-in` | phone | what `as <user>` runs: the user's name typed and greeted |
+| `matrix` | phone | run by `matrix` over the config's font scales and dark modes |
+
+On a phone the run also checks the commands around flows (`scripts/e2e-features.mjs`): settings, the network,
+app lifecycle, snapshots, screenshots, visual baselines, media, recording, named states, the matrix, `as`, the
+LLM mock, actors, the stand's logs, doctor, docs and the MCP server.
 
 ```sh
 yarn build && yarn e2e                       # every kind that has an AVD on this machine

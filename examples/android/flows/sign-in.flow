@@ -1,0 +1,6 @@
+# The sign-in that `as <user>` runs: the example has no accounts, so the user's name is greeted instead.
+open!
+wait id=title 30
+fill id=name "${user}"
+press id=greet
+expect text="Hello, ${user}"

@@ -9,6 +9,12 @@ http
   .createServer((req, res) => {
     if (req.url === '/health') return void res.end('ok');
     if (req.url === '/hits') return void res.end(String(hits));
+    // A named state brings the counter back: `state restore` sets it to what `state save` read.
+    const set = /^\/set\?n=(\d+)$/.exec(req.url ?? '');
+    if (set) {
+      hits = Number(set[1]);
+      return void res.end(String(hits));
+    }
     if (req.url === '/reset') {
       hits = 0;
       return void res.end('0');

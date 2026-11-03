@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {rnChecks} from './e2e-rn.mjs';
+import {featureChecks} from './e2e-features.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bin = path.join(root, 'dist', 'bin.js');
@@ -26,7 +27,7 @@ const rnApk = path.join(rnDir, 'android', 'app', 'build', 'outputs', 'apk', 'deb
 
 /** What each kind runs in the native example; `fails` flows must fail, with the app's crash in the verdict. */
 const PLAN = {
-  phone: {flows: ['smoke', 'rotate'], fails: ['crash']},
+  phone: {flows: ['smoke', 'rotate'], fails: ['crash'], features: true},
   foldable: {flows: ['smoke', 'fold', 'mouse', 'window'], fails: []},
   tablet: {flows: ['smoke', 'rotate', 'mouse', 'window'], fails: []},
   desktop: {flows: ['smoke', 'mouse', 'window'], fails: []},
@@ -82,13 +83,13 @@ const deviceOf = (kind, pitbox, must) => {
 
 const results = [];
 
-const runKind = (label, kind, pitbox, must, body) => {
+const runKind = async (label, kind, pitbox, must, body) => {
   let dev;
   const checks = [];
   try {
     dev = deviceOf(kind, pitbox, must);
     if (dev.skip) return results.push({kind: label, status: 'skip', note: dev.skip});
-    body(dev.avd, checks);
+    await body(dev.avd, checks);
   } catch (e) {
     checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
   } finally {
@@ -116,7 +117,7 @@ if (examples.includes('android')) {
       results.push({kind, status: 'skip', note: `no plan for "${kind}"`});
       continue;
     }
-    runKind(kind, kind, pitbox, must, (avd, checks) => {
+    await runKind(kind, kind, pitbox, must, async (avd, checks) => {
       console.log(must(['install', nativeApk, '--device', avd, '--replace']));
       // Watches also get the watch app (tile, complication, ambient) and the watch face that shows it.
       for (const m of plan.apks ?? []) console.log(must(['install', path.join(nativeDir, m, 'build', 'outputs', 'apk', 'debug', `${m}-debug.apk`), '--device', avd, '--replace']));
@@ -130,6 +131,7 @@ if (examples.includes('android')) {
         head(r.out);
         checks.push({name: `${flow} (fails with the crash)`, ok: r.out.startsWith('✗') && /app crashed: java\.lang\.IllegalStateException: example crash/.test(r.out)});
       }
+      if (plan.features) checks.push(...(await featureChecks({pitbox, device: avd, dir: nativeDir, platform: 'android', bin})));
       if (plan.focusMap) {
         const r = pitbox(['focusmap', '--device', avd]);
         head(r.out);
@@ -151,7 +153,7 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
   exec(gradlew(path.join(rnDir, 'android')), ['assembleDebug', '-q', `-PreactNativeArchitectures=${abi}`], path.join(rnDir, 'android'));
   must(['daemon', 'restart']);
   console.log(must(['up'], {timeout: 900_000}));
-  runKind('react-native', 'phone', pitbox, must, (avd, checks) => {
+  await runKind('react-native', 'phone', pitbox, must, async (avd, checks) => {
     console.log(must(['install', rnApk, '--device', avd, '--replace']));
     checks.push(...rnChecks({rn: pitbox, device: avd, rnDir, platform: 'android'}));
   });

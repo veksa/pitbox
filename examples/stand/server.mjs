@@ -12,6 +12,12 @@ http
     const trace = /^00-([0-9a-f]{32})-/.exec(String(req.headers.traceparent ?? ''))?.[1];
     console.log(`${req.method} ${req.url}${trace ? ` trace=${trace}` : ''}`);
     if (req.url === '/hits') return void res.end(String(hits));
+    // A named state brings the counter back: `state restore` sets it to what `state save` read.
+    const set = /^\/set\?n=(\d+)$/.exec(req.url ?? '');
+    if (set) {
+      hits = Number(set[1]);
+      return void res.end(String(hits));
+    }
     if (req.url === '/reset') {
       hits = 0;
       return void res.end('0');
