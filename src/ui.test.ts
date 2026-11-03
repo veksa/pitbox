@@ -40,6 +40,8 @@ describe('snapshot', () => {
     expect(resolveTarget(snap, 'id=get-started')).toMatchObject({x: 540, y: 2060});
     expect(resolveTarget(snap, 'text="Get started"').node?.t).toBe('Get started');
     expect(resolveTarget(snap, 'label=search').node?.d).toBe('Search');
+    // The line quotes a textless control's label, so `text=` finds it by what the agent read.
+    expect(resolveTarget(snap, 'text=Search').node?.d).toBe('Search');
     expect(resolveTarget(snap, 'popular').node?.t).toBe('Popular items');
     expect(resolveTarget(snap, '10,20')).toEqual({x: 10, y: 20});
     expect(() => resolveTarget(snap, '@e99')).toThrow(/fresh one/);

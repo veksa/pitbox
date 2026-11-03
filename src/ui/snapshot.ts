@@ -210,7 +210,8 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
   if (m) {
     const [, field, op, raw] = m;
     const v = lower(raw!.replace(/^["']|["']$/g, ''));
-    const get = (n: UiNode) => lower(field === 'id' ? n.id : field === 'text' ? n.t : n.d);
+    // `text=` matches what a line quotes: a control with no text of its own is shown by its label (`button "Close"`).
+    const get = (n: UiNode) => lower(field === 'id' ? n.id : field === 'text' ? (n.t ?? (interactive(n) ? n.d : undefined)) : n.d);
     match = op === '=' ? n => get(n) === v : n => get(n).includes(v);
   } else {
     const v = lower(sel.replace(/^["']|["']$/g, ''));
