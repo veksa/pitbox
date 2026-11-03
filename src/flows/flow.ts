@@ -15,6 +15,8 @@
 //   wait text="Home" [seconds] | wait gone id=spinner [seconds]
 //   expect text="Welcome" | expect gone id=error | expect focus id=play
 //   expect playing id=player | expect paused id=player   (frames compared on the device; black is not playing)
+//   perf                         start measuring (frames, JS thread, React commits, heap)
+//   expect perf janky<5 js<300 renders:Row<=40   stop measuring and check the numbers against budgets
 //   tool sql query="select 1" contains "1"
 //   state signed-in              restore a named stand state (device snapshot + backend)
 //   device Pixel_8               the following steps run on another device (several devices in one flow)
@@ -24,6 +26,8 @@
 //   run sign-in user=viewer      another flow file
 //
 // `${name}` in any step is replaced by a run parameter.
+
+import {parseBudget} from './budget.ts';
 
 export type Step = {line: number; cmd: string; args: string[]; text: string};
 
@@ -103,7 +107,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'wait', 'expect', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'wait', 'expect', 'perf', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -114,6 +118,7 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'open':
       case 'open!':
       case 'screenshot':
+      case 'perf':
         break;
       case 'goto':
       case 'as':
@@ -152,6 +157,16 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'wait':
       case 'expect':
         need(1);
+        if (s.cmd === 'expect' && s.args[0] === 'perf') {
+          if (s.args.length < 2) errors.push(`line ${s.line}: expect perf needs a budget, like janky<5 or js<300`);
+          for (const t of s.args.slice(1)) {
+            try {
+              parseBudget(t);
+            } catch (e) {
+              errors.push(`line ${s.line}: ${(e as Error).message}`);
+            }
+          }
+        }
         break;
       default:
         errors.push(`line ${s.line}: unknown step "${s.cmd}" (${STEP_COMMANDS.join(', ')})`);

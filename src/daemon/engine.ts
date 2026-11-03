@@ -23,6 +23,8 @@ import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
 import {StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
+import type {PerfData} from '../flows/budget.ts';
+import {formatResult} from '../format.ts';
 import {fillRoute} from '../flows/flow.ts';
 import {DeviceUi, type UiHooks} from '../ui/device.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
@@ -218,6 +220,10 @@ export class Engine {
   #flowHost(device?: string, variant?: string): FlowHost {
     return {
       jsErrors: since => this.#jsErrors(since),
+      perf: async reset => {
+        const data = await this.methods.perf({device, reset});
+        return {data: data as PerfData, text: formatResult('perf', data)};
+      },
       reshape: (op, value) => this.methods[op]({device, value}),
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {

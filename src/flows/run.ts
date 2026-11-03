@@ -3,6 +3,7 @@
 
 import type {DeviceUi} from '../ui/device.ts';
 import {matches, resolveTarget} from '../ui/snapshot.ts';
+import {checkBudgets, parseBudget, type PerfData} from './budget.ts';
 import {kvArgs, parseFlow, unquote, validateFlow, type Step} from './flow.ts';
 import {seconds as fmtSeconds} from '../util/text.ts';
 
@@ -21,6 +22,8 @@ export type FlowHost = {
   screenshot: (name?: string, full?: boolean) => Promise<string>;
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
   reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car', value: string) => Promise<unknown>;
+  /** Starts a perf window (`reset`), or ends it with the numbers and their text as `perf` prints it. */
+  perf: (reset: boolean) => Promise<{data: PerfData; text: string}>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
   jsErrors?: (since: number) => Promise<{summary: string; lines: string[]}[]>;
 };
@@ -127,7 +130,18 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
       await (await host.ui()).wait((hasTimeout ? rest.slice(0, -1) : rest).join(' '), {gone, timeoutMs: seconds(hasTimeout ? last : undefined, 10)});
       return;
     }
+    case 'perf':
+      await host.perf(true);
+      return;
     case 'expect': {
+      if (a[0] === 'perf') {
+        const budgets = a.slice(1).map(parseBudget);
+        const {data, text} = await host.perf(false);
+        const r = checkBudgets(data, budgets);
+        if (!r.ok) throw new Error(`over budget: ${r.lines.filter(l => !l.includes(' ✓ ')).join('; ')}\n${text}`);
+        notes.push(`perf: ${r.lines.join(' · ')}`);
+        return;
+      }
       const ui = await host.ui();
       if (a[0] === 'focus') {
         const want = resolveTarget(await ui.snapshot(), a.slice(1).join(' '));

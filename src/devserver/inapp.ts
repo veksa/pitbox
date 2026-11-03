@@ -319,6 +319,9 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     var r = rec;
     rec = null;
     var list: any[] = [];
+    // Every component's count, for budgets on one of them (`renders:Row<=40`); only the top ones are shown.
+    var counts: any = {};
+    for (var cn in r.by) counts[cn] = r.by[cn].n;
     for (var name in r.by) {
       var e = r.by[name];
       var why: any[] = [];
@@ -339,7 +342,7 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     var h0 = r.heap;
     var h1 = heapStats();
     var heap = h0 && h1 ? {liveBefore: h0.live, liveAfter: h1.live, allocated: h1.total - h0.total, gcs: h1.gcs - h0.gcs, gcMs: Math.round((h1.gcMs - h0.gcMs) * 10) / 10} : undefined;
-    return {ms: Date.now() - r.since, react: !r.noReact, commits: r.commits, renderMs: Math.round(r.ms * 10) / 10, components: list.length, shown: shown, heap: heap};
+    return {ms: Date.now() - r.since, react: !r.noReact, commits: r.commits, renderMs: Math.round(r.ms * 10) / 10, components: list.length, shown: shown, counts: counts, heap: heap};
   };
 
   var connect = function (delay: number) {

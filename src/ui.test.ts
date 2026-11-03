@@ -120,6 +120,10 @@ describe('flows', () => {
       visual: async () => ({status: 'match'}),
       screenshot: async n => `/shots/${n}.jpg`,
       reshape: async (op, v) => void calls.push(`${op} ${v}`),
+      perf: async reset => {
+        calls.push(`perf${reset ? ' reset' : ''}`);
+        return {data: {janky: 7.5, js: {busyMs: 120}, react: {commits: 2, renderMs: 9, counts: {Row: 41}, heap: {liveBefore: 4 * 1048576, liveAfter: 5.5 * 1048576, allocated: 20 * 1048576}}}, text: 'frames 100 · janky 7.5%'};
+      },
     };
     return {host, calls};
   };
@@ -146,6 +150,32 @@ describe('flows', () => {
     const r = await runFlow(host, 'posture half\nrotate 90\nwindow freeform 0,0,800,600\nposture reset');
     expect(r.ok).toBe(true);
     expect(calls).toEqual(['posture half', 'rotate 90', 'window freeform 0,0,800,600', 'posture reset']);
+  });
+
+  it('checks perf budgets over the window since a perf step', async () => {
+    const {host, calls} = fakeHost([['Home']]);
+    const ok = await runFlow(host, 'perf\npress text=Home\nexpect perf js<300 commits<=2 heap<2 allocated<=20');
+    expect(ok.ok).toBe(true);
+    expect(calls).toEqual(['perf reset', 'press text=Home', 'perf']);
+    expect(ok.notes).toContain('perf: js 120ms ✓ < 300ms · commits 2 ✓ <= 2 · heap 1.5MB ✓ < 2MB · allocated 20MB ✓ <= 20MB');
+    const over = await runFlow(host, 'perf\nexpect perf janky<5 js<1s renders:Row<=40 renders:Cell<1');
+    expect(over.ok).toBe(false);
+    expect(over.failed?.error).toMatch(/^over budget: janky 7\.5% ✗ < 5%; renders:Row 41 ✗ <= 40\nframes 100 · janky 7\.5%/);
+  });
+
+  it('rejects a budget it cannot read before running anything', async () => {
+    const {host, calls} = fakeHost([['Home']]);
+    const r = await runFlow(host, 'perf\nexpect perf speed<3');
+    expect(r.ok).toBe(false);
+    expect(r.failed?.error ?? '').toMatch(/unknown perf metric "speed"/);
+    expect(calls).toEqual([]);
+  });
+
+  it('fails a budget on a metric this device cannot measure', async () => {
+    const {host} = fakeHost([['Home']]);
+    host.perf = async () => ({data: {memoryMb: 90, react: {react: false}}, text: 'memory 90 MB'});
+    const r = await runFlow(host, 'perf\nexpect perf janky<5 memory<100');
+    expect(r.failed?.error).toMatch(/janky: not measured here \(this device has no counter for it\)/);
   });
 
   it('rejects a mouse step without a target', async () => {
