@@ -1058,7 +1058,11 @@ export class Engine {
         let confirmed = false;
         if (target.includes('://')) {
           const u = await this.ui(str(p, 'device'));
-          confirmed = !!(await u.runner.call<{confirmed?: boolean}>('confirmOpen', {}, 10_000).catch(() => ({confirmed: false}))).confirmed;
+          // A link of this app (its scheme, its connect link) into the app already in front comes with no question:
+          // the runner stops waiting once it sees the app there. A link of another app is waited for in full.
+          const scheme = target.slice(0, target.indexOf('://')).toLowerCase();
+          const own = !!bundleId && (scheme === this.config.app?.scheme?.toLowerCase() || scheme === `pitbox.${bundleId}`.toLowerCase());
+          confirmed = !!(await u.runner.call<{confirmed?: boolean}>('confirmOpen', {app: own ? bundleId : ''}, 10_000).catch(() => ({confirmed: false}))).confirmed;
         }
         const lanHost = this.config.devserver?.host;
         const unreachable = t.s instanceof RemoteApple && this.#dev && (!lanHost || lanHost === '127.0.0.1' || lanHost === 'localhost');

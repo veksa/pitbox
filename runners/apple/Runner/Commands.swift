@@ -113,7 +113,15 @@ final class Commands {
       #if os(tvOS) || os(watchOS)
       return ["confirmed": false]
       #else
+      // The question is asked only for an app that is not in front: a link into the app already open goes
+      // straight in. So the wait ends once the app is in front with no question up (after a moment for the shell
+      // to put one up), instead of the whole timeout on every link into a running app.
+      // Every `exists` is a query of the whole shell, so it is asked once after the moment, not in a loop.
       let alert = systemAlert()
+      if let id = req["app"] as? String, !id.isEmpty {
+        Thread.sleep(forTimeInterval: 0.25)
+        if app(id).state == .runningForeground && !alert.exists { return ["confirmed": false] }
+      }
       guard alert.waitForExistence(timeout: double(req, "timeout", 3000) / 1000) else { return ["confirmed": false] }
       let buttons = alert.buttons.allElementsBoundByIndex
       guard buttons.count == 2 else { return ["confirmed": false] }
