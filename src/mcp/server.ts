@@ -77,9 +77,9 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   if (config.devserver) {
     tool(
       'dev',
-      'Dev server: status (device requests, bytecode), fresh (does the app run the newest code?), prewarm, reload, qr (connect link; lan for Wi-Fi).',
-      {action: z.enum(['status', 'fresh', 'prewarm', 'reload', 'qr']), lan: opt.bool()},
-      a => ({status: 'devStatus', fresh: 'fresh', prewarm: 'devPrewarm', reload: 'devReload', qr: 'qr'})[a.action as string]!,
+      'Dev server: status (device requests, bytecode), fresh (does the app run the newest code?), prewarm, reload, qr (connect link; lan for Wi-Fi), embed (the bundle into the app\'s sources and the configured build: an app that runs with no dev server).',
+      {action: z.enum(['status', 'fresh', 'prewarm', 'reload', 'qr', 'embed']), lan: opt.bool()},
+      a => ({status: 'devStatus', fresh: 'fresh', prewarm: 'devPrewarm', reload: 'devReload', qr: 'qr', embed: 'devEmbed'})[a.action as string]!,
     );
     // Typical answer: one line for eval (values cut at 4 KB), a few lines per logpoint for hits.
     tool(

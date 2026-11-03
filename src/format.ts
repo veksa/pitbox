@@ -6,7 +6,7 @@ import type {DoctorReport} from './doctor/run.ts';
 import type {ActorState} from './stand/actors.ts';
 import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
-import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
+import type {DevserverStatus, EmbedResult, Freshness} from './devserver/devserver.ts';
 import type {EvalResult, JsProfile, Logpoint} from './devserver/jsdebug.ts';
 import type {TraceSummary} from './drivers/android/atrace.ts';
 import type {JsError} from './devserver/proxy.ts';
@@ -280,6 +280,14 @@ export const formatResult = (method: string, r: unknown): string => {
           return a.latest === a.bundle || !a.hot ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}${hot}` : `✓ app ${a.id} (${a.platform}) runs the newest code: bundle ${a.bundle} with hot updates${hot}`;
         })
         .join('\n');
+    }
+    case 'devEmbed': {
+      const r = x as unknown as EmbedResult & {notIgnored: string[]};
+      const lines = r.bundles.map(b => (b.error ? `✗ ${b.platform}: ${b.error}` : `✓ ${b.platform}: ${b.kind} ${b.kb} KB in ${seconds(b.ms)} → ${b.file}`));
+      if (r.build) lines.push(`${r.build.code === 0 ? '✓' : '✗'} build in ${seconds(r.build.ms)}: ${r.build.command}`, ...(r.build.code === 0 ? [] : r.build.tail.map(l => `    ${l}`)));
+      else if (!r.bundles.some(b => b.error)) lines.push('no build command (devserver.embed.build): build the app now; it runs its own bundle when no dev server answers');
+      for (const f of r.notIgnored) lines.push(`! ${f} is not ignored by git: keep it out of commits (.gitignore)`);
+      return lines.join('\n');
     }
     case 'pair':
       if (x.serial) return `connected ${x.serial} over Wi-Fi`;

@@ -7,9 +7,10 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import type {DevserverConfig, ServiceConfig} from '../config/schema.ts';
 import {lanAddress} from '../util/lan.ts';
+import {runShell} from '../util/proc.ts';
 import {BytecodeCache, findHermesc, hermesCompiler} from './hermes.ts';
 import {JsDebugger} from './jsdebug.ts';
-import {DevProxy, isNativeBundleRequest} from './proxy.ts';
+import {DevProxy, eagerUrl, isNativeBundleRequest} from './proxy.ts';
 
 export const DEVSERVER = 'devserver';
 
@@ -30,6 +31,11 @@ export type Freshness = {
     /** The bundler could not compile the last edit; the app still runs the code before it. */
     compileError?: string;
   }[];
+};
+
+export type EmbedResult = {
+  bundles: {platform: string; file?: string; kb?: number; kind?: 'bytecode' | 'source'; ms: number; error?: string}[];
+  build?: {command: string; code: number | null; ms: number; tail: string[]};
 };
 
 export type DevserverStatus = {
@@ -66,6 +72,7 @@ export class DevServer {
   #debounce?: NodeJS.Timeout;
   #lastPrewarm?: DevserverStatus['prewarm'];
   readonly #stateFile: string;
+  readonly #stateDir: string;
 
   constructor(cfg: DevserverConfig, configRoot: string, stateDir: string) {
     this.cfg = cfg;
@@ -74,6 +81,7 @@ export class DevServer {
     this.internalPort = cfg.internalPort ?? this.port + 1;
     this.hermesc = cfg.bytecode ? findHermesc(this.root) : undefined;
     this.#stateFile = path.join(stateDir, 'devserver.json');
+    this.#stateDir = stateDir;
     this.proxy = new DevProxy({
       port: this.port,
       host: cfg.host === 'lan' ? '0.0.0.0' : cfg.host,
@@ -210,6 +218,50 @@ export class DevServer {
     this.#lastPrewarm = results;
     this.#save();
     return results;
+  }
+
+  /** Where each platform's embedded bundle goes: configured, or the app's assets for React Native on Android. */
+  embedOutputs(): Record<string, string> {
+    const out = this.cfg.embed?.output;
+    if (out && Object.keys(out).length) return Object.fromEntries(Object.entries(out).filter((e): e is [string, string] => !!e[1]));
+    return (this.cfg.adapter ?? 'metro') === 'command' ? {} : {android: 'android/app/src/main/assets/index.android.bundle'};
+  }
+
+  /**
+   * Writes the app's bundle into its sources from the running bundler (whole, as bytecode when the app's Hermes
+   * compiler is there), then runs the configured build: a debug build that runs with no dev server at all.
+   */
+  async embed(): Promise<EmbedResult> {
+    const outputs = this.embedOutputs();
+    if (!Object.keys(outputs).length) throw new Error('nowhere to put the bundle: set devserver.embed.output.{android,ios}');
+    const hermesc = this.hermesc ?? findHermesc(this.root);
+    const bundles: EmbedResult['bundles'] = [];
+    for (const [platform, rel] of Object.entries(outputs)) {
+      const t0 = Date.now();
+      const url = await this.mainUrl(platform);
+      if (!url) {
+        bundles.push({platform, ms: 0, error: 'main bundle URL unknown until a device asks (or set devserver.bundlePath)'});
+        continue;
+      }
+      try {
+        const res = await fetch(`http://127.0.0.1:${this.internalPort}${eagerUrl(url)}`, {headers: {accept: 'application/javascript'}, signal: AbortSignal.timeout(300_000)});
+        const source = Buffer.from(await res.arrayBuffer());
+        if (res.status !== 200 || /json/.test(res.headers.get('content-type') ?? '')) throw new Error(`the bundler answered ${res.status}: ${source.toString('utf8').slice(0, 200)}`);
+        const body = hermesc ? await hermesCompiler(hermesc, path.join(this.#stateDir, 'embed'))(source) : source;
+        const file = path.resolve(this.root, rel);
+        fs.mkdirSync(path.dirname(file), {recursive: true});
+        fs.writeFileSync(file, body);
+        bundles.push({platform, file, kb: Math.round(body.length / 1024), kind: hermesc ? 'bytecode' : 'source', ms: Date.now() - t0});
+      } catch (e) {
+        bundles.push({platform, ms: Date.now() - t0, error: (e as Error).message});
+      }
+    }
+    const command = this.cfg.embed?.build;
+    if (!command || bundles.some(b => b.error)) return {bundles};
+    const t0 = Date.now();
+    const r = await runShell(command, {cwd: this.root, timeoutMs: (this.cfg.embed?.timeout ?? 900) * 1000});
+    const tail = `${r.stdout}\n${r.stderr}`.trim().split(/\r?\n/).filter(l => l.trim()).slice(-6);
+    return {bundles, build: {command, code: r.code, ms: Date.now() - t0, tail}};
   }
 
   /** Asks every connected app to reload, through the bundler's message socket. */

@@ -81,6 +81,19 @@ export const devserverSchema = z.object({
   /** Main bundle path for prewarming when it cannot be discovered (`/index.bundle?platform={platform}&dev=true`). */
   bundlePath: z.string().optional(),
   startTimeout: z.number().positive().optional(),
+  /**
+   * A build with the bundle inside, for a verification pass with no dev server: where each platform's bundle is
+   * written (relative to `root`; for `metro` and `rspack` Android defaults to the app's assets), and the command
+   * that builds the app around it.
+   */
+  embed: z
+    .object({
+      output: z.object({android: z.string().optional(), ios: z.string().optional()}).optional(),
+      build: z.string().optional(),
+      /** Seconds the build may take. Default 900. */
+      timeout: z.number().positive().optional(),
+    })
+    .optional(),
 });
 
 export const configSchema = z.object({

@@ -59,6 +59,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `inspect what=media target=…` — is a video playing (motion between frames, not black).
 - `inspect what=visual name=…` — the screen against a stored baseline; changed regions in pixels.
 - `expect` in flows — presence, absence, focus, playing, paused, `visual`.
+- `dev action=embed` — a verification build with no dev server in the loop: the bundle from the running bundler
+  into the app's sources (bytecode when possible), then the configured build. Install it, stop the dev server
+  (`stand action=down services=["devserver"]`), and the app runs its own bundle against the stand.
 - `dev action=fresh` — does the app run the newest code? Ask before debugging a fix that seems not to work.
   It waits for edits to settle, counts edits that reached the app as hot updates (no reload needed), and when
   the last edit did not compile it says so with the bundler's error and code frame — the app still runs the

@@ -67,7 +67,7 @@ flows
   state save|restore|rm <name> · state list   device snapshot + backend dump, back in seconds
 
 devserver
-  dev [status|prewarm|reload|restart]   the bundler behind pitbox's proxy: device requests, bytecode, prewarming
+  dev [status|prewarm|reload|restart|embed]   the bundler behind pitbox's proxy; embed writes the bundle into the app and builds it
   fresh                         does the app run the newest code? (reported from inside the app)
   qr [--lan]                    QR with the link that points the app at this dev server
   app-tree                      the React tree from inside the app (testIDs, labels, text): reaches what accessibility does not
@@ -249,8 +249,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'doctor', params: {fix: flags.fix, only: flags.only}};
     case 'dev': {
       const sub = rest[0] ?? 'status';
-      const method = ({status: 'devStatus', prewarm: 'devPrewarm', reload: 'devReload', restart: 'restart'} as Record<string, string>)[sub];
-      if (!method) throw new Error('dev status|prewarm|reload|restart');
+      const method = ({status: 'devStatus', prewarm: 'devPrewarm', reload: 'devReload', restart: 'restart', embed: 'devEmbed'} as Record<string, string>)[sub];
+      if (!method) throw new Error('dev status|prewarm|reload|restart|embed');
       return {method, params: method === 'restart' ? {services: ['devserver']} : {}};
     }
     case 'fresh':

@@ -32,6 +32,7 @@ import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
 import {httpAlive} from '../util/net.ts';
+import {run} from '../util/proc.ts';
 
 type Params = Record<string, unknown>;
 
@@ -751,6 +752,18 @@ export class Engine {
     jsClear: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
       return this.#dev.js.clear(str(p, 'id'));
+    },
+
+    // A build with the bundle inside: written from the running bundler into the app's sources, then built.
+    devEmbed: async () => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      if (!this.#dev.proxy.listening) throw new Error('the dev server is not running: the bundle comes from it (stand up)');
+      const r = await this.#dev.embed();
+      // The bundle sits in the app's sources: say so when git would pick it up.
+      const tracked = await Promise.all(
+        r.bundles.filter(b => b.file).map(async b => ((await run('git', ['check-ignore', '-q', b.file!], {cwd: path.dirname(b.file!), timeoutMs: 10_000})).code === 1 ? b.file! : undefined)),
+      );
+      return {...r, notIgnored: tracked.filter(Boolean)};
     },
 
     devReload: async () => {

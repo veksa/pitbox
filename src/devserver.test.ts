@@ -151,3 +151,46 @@ describe('proxy', () => {
     expect(reply).toContain('echo:ping');
   });
 });
+
+describe('embedded build', () => {
+  it("writes the whole bundle from the running bundler into the app's sources, then runs the build", async () => {
+    const {DevServer} = await import('./devserver/devserver.ts');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-embed-'));
+    const internalPort = await freePort();
+    let failing = false;
+    const asked: string[] = [];
+    const bundler = http.createServer((req, res) => {
+      asked.push(req.url ?? '');
+      if (failing) return void res.writeHead(500, {'content-type': 'application/json'}).end('{"type":"TransformError"}');
+      res.end('__d(function(){},0);\n__r(0);');
+    });
+    await new Promise<void>(r => bundler.listen(internalPort, '127.0.0.1', () => r()));
+    try {
+      const build = `node -e "require('fs').writeFileSync('built.txt', require('fs').readFileSync('assets/main.bundle'))"`;
+      const dev = new DevServer({adapter: 'metro', internalPort, port: await freePort(), bundlePath: '/index.bundle?platform={platform}&dev=true&lazy=true', embed: {output: {android: 'assets/main.bundle'}, build}}, root, path.join(root, '.pitbox'));
+      const r = await dev.embed();
+      // No Hermes compiler in this app: the source goes in, from the eager graph.
+      expect(r.bundles).toEqual([{platform: 'android', file: path.join(root, 'assets', 'main.bundle'), kb: 0, kind: 'source', ms: expect.any(Number)}]);
+      expect(asked).toEqual(['/index.bundle?platform=android&dev=true&lazy=false']);
+      expect(r.build).toMatchObject({code: 0});
+      expect(fs.readFileSync(path.join(root, 'built.txt'), 'utf8')).toBe('__d(function(){},0);\n__r(0);');
+      // A bundler error stops before the build.
+      failing = true;
+      fs.rmSync(path.join(root, 'built.txt'));
+      const bad = await dev.embed();
+      expect(bad.bundles[0]!.error).toMatch(/the bundler answered 500/);
+      expect(bad.build).toBeUndefined();
+      expect(fs.existsSync(path.join(root, 'built.txt'))).toBe(false);
+    } finally {
+      bundler.close();
+    }
+  }, 60_000);
+
+  it("puts React Native's Android bundle in the app's assets unless configured, and nowhere for a plain command", async () => {
+    const {DevServer} = await import('./devserver/devserver.ts');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-embed-'));
+    expect(new DevServer({adapter: 'metro'}, root, path.join(root, '.pitbox')).embedOutputs()).toEqual({android: 'android/app/src/main/assets/index.android.bundle'});
+    expect(new DevServer({adapter: 'command', start: 'x'}, root, path.join(root, '.pitbox')).embedOutputs()).toEqual({});
+    await expect(new DevServer({adapter: 'command', start: 'x'}, root, path.join(root, '.pitbox')).embed()).rejects.toThrow(/devserver.embed.output/);
+  });
+});
