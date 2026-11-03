@@ -97,6 +97,18 @@ describe('proxy', () => {
   const get = (url: string, accept?: string) =>
     fetch(`http://127.0.0.1:${port}${url}`, {headers: accept ? {accept} : {}}).then(async r => ({status: r.status, body: await r.text()}));
 
+  it('answers a failed request with its status, and a mock with its body', async () => {
+    proxy.setRules([
+      {id: 'f1', kind: 'http', match: '/a', action: 'fail', status: 503},
+      {id: 'f2', kind: 'http', match: '/b', action: 'fail'},
+      {id: 'm1', kind: 'http', match: '/c', action: 'mock', body: 'mocked'},
+    ]);
+    expect(await get('/pitbox/mock/f1')).toEqual({status: 503, body: '503 from pitbox'});
+    expect((await get('/pitbox/mock/f2')).status).toBe(404);
+    expect(await get('/pitbox/mock/m1')).toEqual({status: 200, body: 'mocked'});
+    proxy.setRules([]);
+  });
+
   it('never makes the device wait for a compile: source first, bytecode from cache once it is ready', async () => {
     const a = await get('/main.bundle?platform=android&lazy=true', 'multipart/mixed');
     expect(a.status).toBe(200);

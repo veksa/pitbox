@@ -407,9 +407,10 @@ export class DevProxy {
 
     const mock = /^\/pitbox\/mock\/([\w-]+)/.exec(url);
     if (mock) {
-      const rule = this.rules.find(r => r.id === mock[1] && r.action === 'mock');
+      const rule = this.rules.find(r => r.id === mock[1] && (r.action === 'mock' || (r.action === 'fail' && r.status)));
       if (!rule) return void res.writeHead(404).end('no such mock');
       if (rule.ms) await new Promise(r => setTimeout(r, rule.ms));
+      if (rule.action === 'fail' && rule.body === undefined) return void res.writeHead(rule.status!, {'content-type': 'text/plain'}).end(`${rule.status} from pitbox`);
       const json = typeof rule.body !== 'string';
       res.writeHead(rule.status ?? 200, {'content-type': json ? 'application/json' : 'text/plain'}).end(json ? JSON.stringify(rule.body ?? {}) : (rule.body as string));
       return;

@@ -96,6 +96,11 @@ describe('in-app script', () => {
     const b = new Xhr();
     b.open('GET', 'https://api.example.test/feed');
     expect(b.url).toBe('http://127.0.0.1:9/pitbox-fail');
+    // With a status, the failure is an HTTP answer from the dev server.
+    channel.onmessage!({data: JSON.stringify({type: 'rules', rules: [{id: 'r2', match: '/feed', action: 'fail', status: 503}]})});
+    const c = new Xhr();
+    c.open('GET', 'https://api.example.test/feed');
+    expect(c.url).toBe(`${cfg.http}/pitbox/mock/r2`);
   });
 
   it('freezes a socket: it stays open, sends nothing, receives nothing', () => {

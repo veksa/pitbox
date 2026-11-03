@@ -64,7 +64,8 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
       var rule = ours(u) ? null : match(u, 'http');
       this.__pb = {id: ++seq, method: method, url: u, rule: rule};
       var args = Array.prototype.slice.call(arguments);
-      if (rule && rule.action === 'fail') args[1] = 'http://127.0.0.1:9/pitbox-fail';
+      // A failure with a status is an HTTP answer with it; without one, the connection fails.
+      if (rule && rule.action === 'fail') args[1] = rule.status ? cfg.http + '/pitbox/mock/' + rule.id : 'http://127.0.0.1:9/pitbox-fail';
       if (rule && rule.action === 'mock') args[1] = cfg.http + '/pitbox/mock/' + rule.id;
       return open.apply(this, args);
     };
