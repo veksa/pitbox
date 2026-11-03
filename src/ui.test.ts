@@ -24,11 +24,22 @@ describe('snapshot', () => {
     const w: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
     const snap = buildSnapshot(w, [
       {p: -1, w: 0, c: 'Other', b: [0, 0, 400, 50], id: 'banner-title'},
-      {p: 0, w: 0, c: 'StaticText', b: [0, 0, 400, 50], t: 'Welcome'},
+      {p: 0, w: 0, c: 'Other', b: [0, 0, 400, 50]},
+      {p: 1, w: 0, c: 'StaticText', b: [0, 0, 400, 50], t: 'Welcome'},
       {p: -1, w: 0, c: 'Other', b: [0, 700, 100, 800], id: 'footer-home', t: 'Home'},
-      {p: 2, w: 0, c: 'StaticText', b: [0, 760, 100, 800], t: 'Home'},
+      {p: 3, w: 0, c: 'StaticText', b: [0, 760, 100, 800], t: 'Home'},
     ]);
     expect(snap.lines).toEqual(['@e1 view "Welcome" #banner-title', '@e2 view "Home" #footer-home']);
+    // iOS: the text as the view's sibling in the same rectangle.
+    const ios = buildSnapshot(w, [
+      {p: -1, w: 0, c: 'Other', b: [0, 0, 400, 300], id: 'banner'},
+      {p: 0, w: 0, c: 'Other', b: [100, 50, 300, 80], id: 'banner-title'},
+      {p: 0, w: 0, c: 'Text', b: [100, 50, 300, 80], t: 'Welcome'},
+      {p: 0, w: 0, c: 'Text', b: [100, 90, 300, 120], t: 'Sign in to continue'},
+      {p: 0, w: 0, c: 'Text', b: [100, 130, 300, 160], t: 'WHAT YOU GET'},
+      {p: 0, w: 0, c: 'Other', b: [100, 130, 300, 160], id: 'intro-title'},
+    ]);
+    expect(ios.lines).toEqual(['@e1 view #banner', '@e2 view "Welcome" #banner-title', '@e3 text "Sign in to continue"', '@e4 view "WHAT YOU GET" #intro-title']);
     expect(resolveTarget(snap, 'text=Welcome').ref).toBe('@e1');
     expect(resolveTarget(snap, 'id=banner-title').ref).toBe('@e1');
   });

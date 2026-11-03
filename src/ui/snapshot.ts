@@ -173,14 +173,28 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   });
 
   // A view that is only an id around one text (`view #banner-title` over `text "Welcome"`): one line,
-  // `view "Welcome" #banner-title`. Both selectors still find it.
+  // `view "Welcome" #banner-title`. Both selectors still find it. On iOS React Native's text comes as the view's
+  // sibling, in the same rectangle, rather than as its child.
+  const same = (a: Bounds, b: Bounds) => a.every((v, k) => v === b[k]);
   nodes.forEach((n, i) => {
     if (hidden.has(i) || !n.id || n.t || n.d || interactive(n) || label.has(i)) return;
-    const children = (kids.get(i) ?? []).filter(j => !hidden.has(j));
+    const twin = [i + 1, i - 1].find(k => {
+      const m = nodes[k];
+      return !!m && m.p === n.p && same(m.b, n.b) && !!m.t && !m.id && !m.d && !interactive(m) && !(kids.get(k) ?? []).length && !hidden.has(k);
+    });
+    if (twin !== undefined) {
+      label.set(i, nodes[twin]!.t!);
+      hidden.add(twin);
+      return;
+    }
+    // The nodes under it that would print, through the empty ones between (no text, id or role: not a line).
+    const printed = (j: number) => !hidden.has(j) && (!!nodes[j]!.t || !!nodes[j]!.d || !!nodes[j]!.id || interactive(nodes[j]!));
+    const below = (k: number): number[] => (kids.get(k) ?? []).flatMap(j => (printed(j) ? [j] : hidden.has(j) ? [] : below(j)));
+    const children = below(i);
     if (children.length !== 1) return;
     const j = children[0]!;
     const m = nodes[j]!;
-    if (m.id || interactive(m) || !m.t || (kids.get(j) ?? []).some(k => !hidden.has(k))) return;
+    if (m.id || m.d || interactive(m) || !m.t || below(j).length) return;
     label.set(i, m.t);
     hidden.add(j);
   });
