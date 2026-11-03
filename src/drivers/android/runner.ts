@@ -53,7 +53,13 @@ export class AndroidRunner {
     if (force) await this.#driver.adb(['uninstall', RUNNER_PACKAGE], this.serial, {timeoutMs: 60_000}).catch(() => undefined);
     const apk = runnerApk();
     if (!fs.existsSync(apk)) throw new AndroidError(`runner APK missing: ${apk}`, 'build it with `yarn build-runner`');
-    const r = await this.#driver.adb(['install', '-r', '-t', '-d', apk], this.serial, {timeoutMs: 120_000});
+    let r = await this.#driver.adb(['install', '-r', '-t', '-d', apk], this.serial, {timeoutMs: 120_000});
+    // A runner built on another machine is signed with another debug key and cannot update this one. It keeps no
+    // data: it goes and the new one is installed.
+    if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match/i.test(r.stdout + r.stderr)) {
+      await this.#driver.adb(['uninstall', RUNNER_PACKAGE], this.serial, {timeoutMs: 60_000}).catch(() => undefined);
+      r = await this.#driver.adb(['install', '-t', '-d', apk], this.serial, {timeoutMs: 120_000});
+    }
     if (!/Success/.test(r.stdout + r.stderr)) throw new AndroidError(`runner install failed: ${(r.stdout + r.stderr).trim().split('\n').pop()}`);
   }
 
