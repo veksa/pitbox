@@ -3,10 +3,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type {ChildProcess} from 'node:child_process';
 import type {ServiceConfig} from '../config/schema.ts';
 import {asArray} from '../config/schema.ts';
-import {isAlive, killTree, killTreeAndWait, liveTree, runShell, spawnShell} from '../util/proc.ts';
+import {isAlive, killTree, killTreeAndWait, liveTree, runShell, startService, type ServiceProcess} from '../util/proc.ts';
 import {tailLines} from '../util/text.ts';
 import {checkProbe, waitForProbe} from './health.ts';
 
@@ -71,7 +70,7 @@ export const stopOrder = (services: Record<string, ServiceConfig>, names: string
 export class ServiceManager {
   readonly #ctx: StandContext;
   #services: Record<string, ServiceConfig>;
-  readonly #children = new Map<string, ChildProcess>();
+  readonly #children = new Map<string, ServiceProcess>();
   readonly #state = new Map<string, ServiceState>();
   readonly #pidFile: string;
 
@@ -200,15 +199,8 @@ export class ServiceManager {
     fs.appendFileSync(logFile, `\n--- pitbox start ${new Date().toISOString()} :: ${svc.start}\n`);
     // The child writes straight into the log file. Piping through the daemon would tie the service to it: once
     // the daemon exits, the next write hits a closed pipe and the service dies of EPIPE.
-    const fd = fs.openSync(logFile, 'a');
     const t0 = Date.now();
-    const child = spawnShell(svc.start, {
-      cwd,
-      env: {...process.env, ...this.#ctx.env, ...svc.env, FORCE_COLOR: '0'},
-      stdio: ['ignore', fd, fd],
-      shell: this.#ctx.shell,
-    });
-    fs.closeSync(fd);
+    const child = await startService(svc.start, {cwd, env: {...this.#ctx.env, ...svc.env, FORCE_COLOR: '0'}, logFile, shell: this.#ctx.shell});
     const log = {write: (line: string) => fs.appendFileSync(logFile, line)};
     // A start command that exits with 0 launched something in the background (`docker compose up -d`): keep
     // waiting for the probe. Any other exit before the service is healthy is a failure.
@@ -243,7 +235,7 @@ export class ServiceManager {
     }
     const probe = await waitForProbe(svc.health, (svc.startTimeout ?? 120) * 1000, {cwd, shell: this.#ctx.shell, abort: () => failedExit});
     if (!probe.ok) {
-      if (!failedExit && !detachedStart) killTree(child);
+      if (!failedExit && !detachedStart) killTree(child.pid ?? 0);
       return this.#failed(name, probe.detail);
     }
     return this.#set(name, {status: 'up', startMs: Date.now() - t0, detail: probe.detail});

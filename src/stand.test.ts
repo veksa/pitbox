@@ -223,3 +223,15 @@ describe('named states', () => {
     expect(store.list()).toEqual([]);
   });
 });
+
+describe('a service started for the stand', () => {
+  it('writes its output into the log and reports its exit code (on Windows through the hidden wrapper)', {timeout: 60_000}, async () => {
+    const {startService} = await import('./util/proc.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-svc-'));
+    const logFile = path.join(dir, 'svc.log');
+    const child = await startService(`node -e "console.log(process.env.GREETING); process.exit(3)"`, {cwd: dir, env: {GREETING: 'hello from the service'}, logFile});
+    const code = await new Promise(r => child.on('exit', c => r(c)));
+    expect(code).toBe(3);
+    expect(fs.readFileSync(logFile, 'utf8')).toContain('hello from the service');
+  });
+});

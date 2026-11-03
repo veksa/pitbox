@@ -3,6 +3,8 @@
 import {spawn, type ChildProcess, type SpawnOptions} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import {EventEmitter} from 'node:events';
+import {fileURLToPath} from 'node:url';
 
 export type ShellKind = 'bash' | 'sh' | 'cmd';
 export type Shell = {kind: ShellKind; file: string; args: (command: string) => string[]};
@@ -158,6 +160,44 @@ Write-Output $p`;
   const pid = Number(out);
   if (!Number.isInteger(pid) || pid <= 0) throw new Error(`could not start ${path.basename(file)}: ${out || r.stderr.trim().split('\n')[0]}`);
   return pid;
+};
+
+/** A started service as the daemon watches it: its pid and one `exit` event with the code or signal. */
+export type ServiceProcess = {pid?: number; on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown};
+
+/**
+ * Starts a stand service through the project shell, its output into `logFile`, outliving the daemon. On Windows
+ * it goes through `launchHidden` and a small wrapper (`svcwrap`) instead of a detached spawn: a detached child has
+ * no console, and every console program it starts (yarn, node) then opens a visible window of its own.
+ */
+export const startService = async (command: string, opts: {cwd: string; env: Record<string, string>; logFile: string; shell?: string}): Promise<ServiceProcess> => {
+  const shell = resolveShell(opts.shell);
+  if (process.platform !== 'win32') {
+    const fd = fs.openSync(opts.logFile, 'a');
+    const child = spawnShell(command, {cwd: opts.cwd, env: {...process.env, ...opts.env}, stdio: ['ignore', fd, fd], shell: opts.shell});
+    fs.closeSync(fd);
+    return child as unknown as ServiceProcess;
+  }
+  const status = `${opts.logFile}.exit`;
+  fs.rmSync(status, {force: true});
+  const here = fileURLToPath(import.meta.url);
+  const wrapper = path.join(path.dirname(here), `svcwrap${path.extname(here)}`);
+  const spec = Buffer.from(JSON.stringify({file: shell.file, args: shell.args(command), cwd: opts.cwd, env: opts.env, log: opts.logFile, status})).toString('base64');
+  const pid = await launchHidden(process.execPath, [wrapper, spec], opts.cwd);
+  const events = new EventEmitter();
+  const timer = setInterval(() => {
+    let r: {code: number | null; signal: string | null} | undefined;
+    try {
+      r = JSON.parse(fs.readFileSync(status, 'utf8'));
+    } catch {
+      if (pid !== undefined && isAlive(pid)) return;
+      r = {code: null, signal: 'SIGKILL'};
+    }
+    clearInterval(timer);
+    events.emit('exit', r!.code, r!.signal);
+  }, 500);
+  timer.unref();
+  return {pid, on: (event, listener) => events.on(event, listener)};
 };
 
 /** Kills a process and everything it started. */
