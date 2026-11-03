@@ -183,6 +183,18 @@ final class Commands {
     #endif
   }
 
+  private static func holds(_ n: XCUIElementSnapshot, depth: Int, _ match: (XCUIElementSnapshot) -> Bool) -> Bool {
+    if match(n) { return true }
+    return depth < 12 && n.children.contains { holds($0, depth: depth + 1, match) }
+  }
+
+  /// The frames on screen inside a window that are smaller than the screen: what the window shows.
+  private static func parts(of n: XCUIElementSnapshot, screen: CGRect, depth: Int) -> [CGRect] {
+    let f = n.frame
+    if depth > 0 && !f.isEmpty && f.height < screen.height * 0.9 && screen.contains(f) { return [f] }
+    return depth < 12 ? n.children.flatMap { parts(of: $0, screen: screen, depth: depth + 1) } : []
+  }
+
   /// The keyboard's frame in the tree being built.
   private var keyboard: CGRect?
 
@@ -227,7 +239,17 @@ final class Commands {
     var index = parent
     let f = n.frame
     if n.elementType == .keyboard {
-      if !f.isEmpty && f.intersects(screen) { keyboard = f }
+      if !f.isEmpty && f.intersects(screen) { keyboard = keyboard.map { $0.union(f) } ?? f }
+      return
+    }
+    // From iOS 26 the keyboard draws out of process, in a window of its own that also holds the prediction bar
+    // and the globe and dictation buttons beside the keys, with an empty host view (`inputView`) in another
+    // window: both windows are the keyboard.
+    if depth == 1 && n.elementType == .window && Self.holds(n, depth: 0, { $0.identifier == "inputView" || $0.elementType == .keyboard }) {
+      // The keyboard's frame comes from the window with the keys; the host view's window adds nothing to it.
+      if Self.holds(n, depth: 0, { $0.elementType == .keyboard }) {
+        for part in Self.parts(of: n, screen: screen, depth: 0) { keyboard = keyboard.map { $0.union(part) } ?? part }
+      }
       return
     }
     // A skipped wrapper hands its focus down to the control that stands for it.
