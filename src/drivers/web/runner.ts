@@ -87,7 +87,8 @@ function pageTree(): {windows: UiWindow[]; nodes: UiNode[]} {
   const vh = window.innerHeight;
   const active = document.activeElement;
   const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
-  const clickableTags = new Set(['BUTTON', 'A', 'SUMMARY', 'SELECT', 'LABEL']);
+  // A <label> is not a control of its own: its text becomes its field's label.
+  const clickableTags = new Set(['BUTTON', 'A', 'SUMMARY', 'SELECT']);
   const clickableRoles = new Set(['button', 'link', 'tab', 'menuitem', 'option', 'checkbox', 'radio', 'switch', 'combobox', 'treeitem']);
   const visit = (el: Element, parent: number) => {
     const st = getComputedStyle(el);
@@ -114,8 +115,10 @@ function pageTree(): {windows: UiWindow[]; nodes: UiNode[]} {
     own = clean(own);
     if (tag === 'IMG') own = '';
     const testId = el.getAttribute('data-testid') ?? el.getAttribute('data-test') ?? el.getAttribute('data-test-id');
-    const domId = el.id && !/[:]/.test(el.id) ? el.id : '';
-    const label = clean(el.getAttribute('aria-label') ?? (tag === 'IMG' ? el.getAttribute('alt') : null) ?? el.getAttribute('title'));
+    // Ids a framework generates (React's useId: `:r0:`, `«r0»`, `_r_0_`) change between renders and name nothing.
+    const domId = el.id && !/[:«]|^_r_\w*_$/.test(el.id) ? el.id : '';
+    const fieldLabel = (editable || checkable || tag === 'SELECT') && (el as HTMLInputElement).labels?.length ? clean((el as HTMLInputElement).labels![0]!.textContent) : '';
+    const label = clean(el.getAttribute('aria-label') ?? (tag === 'IMG' ? el.getAttribute('alt') : null) ?? el.getAttribute('title')) || fieldLabel;
     const interactive = clickable || editable || checkable || scrollable;
     let me = parent;
     if (onScreen && (interactive || own || label || testId || (tag === 'IMG' && r.width >= 24))) {
