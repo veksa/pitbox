@@ -112,6 +112,26 @@ export type JsProfile = {
   note?: string;
 };
 
+/**
+ * One line per function: the profiler reports the position it sampled inside a function, so one function can
+ * come as several lines (`work  App.tsx:14`, `work  App.tsx:16`); they add up under its first line.
+ */
+export const mergeByFunction = (list: {at: string; ms: number}[]): {at: string; ms: number}[] => {
+  const by = new Map<string, {at: string; ms: number; line: number}>();
+  for (const x of list) {
+    const m = /^(.*):(\d+)$/.exec(x.at);
+    const key = m ? m[1]! : x.at;
+    const line = m ? Number(m[2]) : 0;
+    const cur = by.get(key);
+    if (!cur) by.set(key, {at: x.at, ms: x.ms, line});
+    else {
+      cur.ms += x.ms;
+      if (line < cur.line) Object.assign(cur, {at: x.at, line});
+    }
+  }
+  return [...by.values()].sort((a, b) => b.ms - a.ms).map(({at, ms}) => ({at, ms}));
+};
+
 export type EvalResult = {value?: string; error?: string; app: string; apps: number; ms: number};
 
 const KEEP_HITS = 50;
@@ -474,16 +494,18 @@ export class JsDebugger {
       // Library code is everything under node_modules; the rest of the bundle is the app's.
       lines.set(f, src ? {line: `${f.name}  ${src.source}:${src.line}`, app: !/(^|\/)node_modules\//.test(src.source)} : {line: `${f.name}  (bundle ${f.line + 1}:${f.column})`, app: false});
     }
-    const self = sum.self.flatMap(x => {
-      const l = lines.get(x.fn);
-      return l ? [{at: l.line, ms: x.ms}] : [];
-    });
-    const app = sum.total
-      .flatMap(x => {
+    const self = mergeByFunction(
+      sum.self.flatMap(x => {
+        const l = lines.get(x.fn);
+        return l ? [{at: l.line, ms: x.ms}] : [];
+      }),
+    );
+    const app = mergeByFunction(
+      sum.total.flatMap(x => {
         const l = lines.get(x.fn);
         return l?.app ? [{at: l.line, ms: x.ms}] : [];
-      })
-      .slice(0, 6);
+      }),
+    ).slice(0, 6);
     return {ms: sum.ms, busyMs: sum.busyMs, samples: sum.samples, self, app};
   }
 

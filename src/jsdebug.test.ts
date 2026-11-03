@@ -140,6 +140,15 @@ const profileOf = (bundle: string): CpuProfile => ({
 });
 
 describe('js profiles', () => {
+  it('adds up the lines of one function, under its first line', async () => {
+    const {mergeByFunction} = await import('./devserver/jsdebug.ts');
+    expect(mergeByFunction([{at: 'work  App.tsx:16', ms: 36}, {at: 'other  App.tsx:3', ms: 50}, {at: 'work  App.tsx:14', ms: 120}, {at: 'setTimeout (native)', ms: 5}])).toEqual([
+      {at: 'work  App.tsx:14', ms: 156},
+      {at: 'other  App.tsx:3', ms: 50},
+      {at: 'setTimeout (native)', ms: 5},
+    ]);
+  });
+
   it('sums up busy time, self time and time with callees, leaving the waiting out', () => {
     const s = summarizeProfile(profileOf('http://x/index.bundle'));
     expect(s).toMatchObject({ms: 7, busyMs: 5, samples: 7});
