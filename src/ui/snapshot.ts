@@ -349,7 +349,12 @@ export const swipeArea = (snap: Snapshot | undefined, width: number, height: num
  */
 export const onlyClosedKeyboard = (before: Snapshot, after: Snapshot): boolean => {
   const ime = (s: Snapshot) => s.windows.some(w => w.type === 'ime');
-  if (!ime(before) || ime(after)) return false;
+  // React Native decides by the focused field, not by the keyboard: with a hardware keyboard (an emulator's)
+  // there is none on screen, and the first tap still only takes the focus off the field.
+  const focusedField = (s: Snapshot) => s.nodes.some(n => s.windows[n.w]?.type !== 'ime' && (n.f ?? '').includes('e') && (n.f ?? '').includes('F'));
+  const closed = ime(before) && !ime(after);
+  const blurred = !ime(before) && !ime(after) && focusedField(before) && !focusedField(after);
+  if (!closed && !blurred) return false;
   // A window the keyboard had shrunk grows back: what shows up where the keyboard was (more rows of a list) is
   // the screen coming back, not the tap's doing.
   const imeNodes = before.nodes.filter(n => before.windows[n.w]?.type === 'ime');

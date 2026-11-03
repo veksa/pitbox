@@ -228,6 +228,10 @@ describe('apple driver', () => {
     // The window grows back where the keyboard was and shows more rows: still only the keyboard.
     const grown = buildSnapshot([app], [list, {...field, f: 'e'}, greet, {p: 0, w: 0, c: 'Text', b: [16, 700, 386, 740], t: 'Row 12'}]);
     expect(onlyClosedKeyboard(up, grown)).toBe(true);
+    // No keyboard on screen (a hardware one), only the field's focus taken: the tap did not reach the control.
+    const focused = buildSnapshot([app], [list, field, greet]);
+    expect(onlyClosedKeyboard(focused, closed)).toBe(true);
+    expect(onlyClosedKeyboard(focused, greeted)).toBe(false);
   });
 
   it('folds a foldable only to a posture it has, and says when the screens did not change', async () => {

@@ -258,7 +258,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       if (again && kind === 'tap' && !/^@e\d+$/.test(selector.trim())) {
         await this.runner.call(kind, {x: again.x, y: again.y, ...aim(again.node)});
         settled = await this.#settle(snap);
-        note = 'the first tap only closed the keyboard: pressed again';
+        note = 'the first tap only closed the keyboard or took the focus off the field: pressed again';
       } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
     }
     return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...(note ? {note} : {}), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
