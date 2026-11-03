@@ -91,6 +91,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   open).
 - Project tools from the config appear as `tool_<name>` (an SQL query, a protocol call, a seed script).
 - `stand action=logs name=<service>` — the tail of a stand service's log, with `grep`.
+- `trace` — what the backend did for the last action (or `id=` from an action's answer): every action stamps
+  one W3C trace id on the app's requests, and this finds it in all stand services' and actors' logs. The
+  backend has to log the trace id of the `traceparent` header for it to be found.
 
 ## Variants
 

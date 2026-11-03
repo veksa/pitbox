@@ -295,3 +295,21 @@ describe('screens', () => {
     expect([...pngFrom(png)]).toEqual([0x89, 0x50, 0x4e, 0x47, 1, 2]);
   });
 });
+
+describe('trace lookup', () => {
+  it("finds an action's trace id in the stand's service logs, and says so when nothing logged it", async () => {
+    const {Engine} = await import('./daemon/engine.ts');
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({services: {api: {start: 'node api.js'}, db: {start: 'node db.js'}}}));
+    const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
+    const id = 'ab'.repeat(16);
+    fs.mkdirSync(path.dirname(engine.services.logFile('api')), {recursive: true});
+    fs.writeFileSync(engine.services.logFile('api'), `GET /health\nGET /feed trace=${id} 200 12ms\nPOST /like trace=${'cd'.repeat(16)}\nSELECT * FROM feed -- trace=${id}\n`);
+    fs.writeFileSync(engine.services.logFile('db'), 'ready\n');
+    const r = (await engine.methods.trace({id: id.toUpperCase()})) as {found: {name: string; lines: string[]}[]; searched: number};
+    expect(r.searched).toBe(2);
+    expect(r.found).toEqual([{name: 'api', lines: [`GET /feed trace=${id} 200 12ms`, `SELECT * FROM feed -- trace=${id}`]}]);
+    await expect(engine.methods.trace({})).rejects.toThrow(/no action has carried a trace yet/);
+    await expect(engine.methods.trace({id: 'nope'})).rejects.toThrow(/32 hex characters/);
+  });
+});

@@ -17,6 +17,7 @@ stand
   restart <service…>
   status                        services, actors, mock, devices, forwarded ports
   logs <service|actor> [-n 40] [--grep re]
+  trace [id] [-n 20]            what the services and actors logged for an action (its trace id; the last action by default)
   tools                         project tools from the config
   tool <name> [param=value…]    run a project tool
   actors | actor start <type> <name> [--port n] | actor stop <name> | actor call <name> '<json>'
@@ -258,6 +259,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'appTree', params: {limit: flags.lines}};
     case 'app-errors':
       return {method: 'appErrors', params: {limit: flags.lines}};
+    case 'trace':
+      return {method: 'trace', params: {id: rest[0], lines: flags.lines}};
     case 'app-console':
       return {method: 'appConsole', params: {limit: flags.lines, level: flags.level, grep: flags.grep}};
     case 'app-log':

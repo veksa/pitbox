@@ -66,6 +66,8 @@ export class Engine {
   #lastForwardCheck = 0;
   #dev?: DevServer;
   readonly #uis = new Map<string, DeviceUi>();
+  /** The trace id stamped on the requests of the last action (W3C `traceparent`). */
+  #lastTrace?: {id: string; at: number};
   /** Devices with a platform trace running for the current perf window. */
   readonly #tracing = new Set<string>();
 
@@ -168,6 +170,7 @@ export class Engine {
         if (!proxy || !proxy.apps().length) return undefined;
         const id = crypto.randomBytes(16).toString('hex');
         proxy.setTrace(id);
+        this.#lastTrace = {id, at: Date.now()};
         return id;
       },
       jsErrors: since => this.#jsErrors(since),
@@ -751,6 +754,20 @@ export class Engine {
       if (!this.#dev) throw new Error('no devserver in the config');
       await this.#dev.reload();
       return {reloaded: true};
+    },
+
+    // What the backend logged for one agent action: its trace id, searched in every stand service's and actor's log.
+    trace: async (p: Params) => {
+      const given = str(p, 'id');
+      const id = given && given !== 'last' ? given.toLowerCase() : this.#lastTrace?.id;
+      if (!id) throw new Error('no action has carried a trace yet: actions stamp one on app requests when the app runs through the dev server');
+      if (!/^[0-9a-f]{32}$/.test(id)) throw new Error(`a trace id is 32 hex characters, not "${id}"`);
+      const limit = num(p, 'lines') ?? 20;
+      const sources = [
+        ...this.services.names().map(name => ({name, lines: this.services.logTail(name, limit, id)})),
+        ...this.actors.list().map(a => ({name: a.name, lines: this.actors.logTail(a.name, limit, id)})),
+      ];
+      return {id, at: this.#lastTrace?.id === id ? this.#lastTrace.at : undefined, searched: sources.length, found: sources.filter(s => s.lines.length)};
     },
 
     logs: async (p: Params) => {

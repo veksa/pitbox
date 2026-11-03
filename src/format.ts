@@ -281,6 +281,12 @@ export const formatResult = (method: string, r: unknown): string => {
         })
         .join('\n');
     }
+    case 'trace': {
+      const found = x.found as {name: string; lines: string[]}[];
+      const when = x.at ? ` (the last action, ${seconds(Date.now() - (x.at as number))} ago)` : '';
+      if (!found.length) return `trace ${x.id}${when}: no line in the logs of ${x.searched} service(s) and actor(s) mentions it — the backend may not log the trace id of the traceparent header`;
+      return [`trace ${x.id}${when}`, ...found.flatMap(s => [`${s.name} (${s.lines.length} line${s.lines.length === 1 ? '' : 's'})`, ...s.lines.map(l => `  ${l.length > 220 ? `${l.slice(0, 220)}…` : l}`)])].join('\n');
+    }
     case 'jsEval': {
       const e = x as unknown as EvalResult;
       const where = e.apps > 1 ? `  (in ${e.app}; ${e.apps} apps are debuggable — pick one with device)` : '';
