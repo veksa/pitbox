@@ -53,6 +53,16 @@ const list = (p: Params, k: string): string[] => {
 /** Machine-wide pitbox state, shared by every project. */
 const machineRelayFile = () => path.join(os.homedir(), '.pitbox', 'relay-avds.json');
 
+/** What an Apple simulator cannot do of the Android-only form factor commands, and why. */
+const APPLE_HAS_NO = {
+  posture: 'posture is for Android foldables here: a foldable iPhone folds through its own path',
+  rotate: 'rotate is for Android here',
+  xr: 'xr is for Android XR emulators: a visionOS simulator takes no head pose, surroundings or panel controls from tools — its view moves only in the Simulator window',
+  car: 'car is for Android Automotive: simctl has no CarPlay device to drive',
+  wear: 'wear is for Wear OS: on an Apple Watch use rotary for the crown',
+  window: 'window is for Android: Apple simulators have no desktop windows',
+} as const;
+
 export class Engine {
   #loaded: LoadedConfig;
   #mtime: number;
@@ -354,9 +364,9 @@ export class Engine {
    * Without a selector, the only online device; Android alone keeps its old behaviour when no simulator runs.
    */
   /** A change to the screen's shape on an Android device; the device's UI session measures the screen again. */
-  async #reshape<T extends Record<string, unknown>>(device: string | undefined, op: (a: AndroidDriver, serial: string) => Promise<T>) {
+  async #reshape<T extends Record<string, unknown>>(device: string | undefined, what: keyof typeof APPLE_HAS_NO, op: (a: AndroidDriver, serial: string) => Promise<T>) {
     const t = await this.#target(device);
-    if (t.platform === 'apple') throw new Error('window is for Android: Apple simulators have no desktop windows');
+    if (t.platform === 'apple') throw new Error(APPLE_HAS_NO[what]);
     const r = await op(t.a, t.id);
     this.#uis.get(t.id)?.screenChanged();
     return {serial: t.id, ...r};
@@ -1120,7 +1130,7 @@ export class Engine {
         this.#uis.get(t.id)?.screenChanged();
         return r;
       }
-      return this.#reshape(str(p, 'device'), (a, serial) => a.posture(serial, req(p, 'value')));
+      return this.#reshape(str(p, 'device'), 'posture', (a, serial) => a.posture(serial, req(p, 'value')));
     },
     rotate: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
@@ -1139,11 +1149,12 @@ export class Engine {
         ui.screenChanged();
         return {udid: t.id, rotation: r.rotation};
       }
-      return this.#reshape(str(p, 'device'), (a, serial) => a.rotate(serial, req(p, 'value')));
+      return this.#reshape(str(p, 'device'), 'rotate', (a, serial) => a.rotate(serial, req(p, 'value')));
     },
     xr: async (p: Params) => {
       const [op, ...rest] = req(p, 'value').split(/\s+/);
       if (op === 'panel') {
+        if ((await this.#target(str(p, 'device'))).platform === 'apple') throw new Error(APPLE_HAS_NO.xr);
         const what = rest[0] ?? '';
         const control = XR_PANEL[what];
         if (!control) throw new Error(`xr panel ${Object.keys(XR_PANEL).join('|')}`);
@@ -1160,19 +1171,19 @@ export class Engine {
         const turned = clicked?.startsWith('disable_') ? 'off' : clicked?.startsWith('enable_') ? 'on' : undefined;
         return {serial: ui.serial, op: `panel ${what}`, ...(turned ? {value: turned} : {})};
       }
-      return this.#reshape(str(p, 'device'), async (_a, serial) => xrView(serial, op!, rest.join(',')));
+      return this.#reshape(str(p, 'device'), 'xr', async (_a, serial) => xrView(serial, op!, rest.join(',')));
     },
     car: async (p: Params) => {
       const [op, ...args] = req(p, 'value').split(' ').filter(Boolean);
-      return this.#reshape(str(p, 'device'), (a, serial) => a.car(serial, op!, args));
+      return this.#reshape(str(p, 'device'), 'car', (a, serial) => a.car(serial, op!, args));
     },
     wear: async (p: Params) => {
       const [op, ...args] = req(p, 'value').split(/\s+/);
-      return this.#reshape(str(p, 'device'), (a, serial) => a.wear(serial, op!, args));
+      return this.#reshape(str(p, 'device'), 'wear', (a, serial) => a.wear(serial, op!, args));
     },
     window: async (p: Params) => {
       const [mode, ...rest] = req(p, 'value').split(/\s+/);
-      return this.#reshape(str(p, 'device'), (a, serial) => a.window(serial, this.#pkg(p), mode!, rest.join(',') || str(p, 'bounds')));
+      return this.#reshape(str(p, 'device'), 'window', (a, serial) => a.window(serial, this.#pkg(p), mode!, rest.join(',') || str(p, 'bounds')));
     },
     touch: async (p: Params) => (await this.ui(str(p, 'device'))).touch(req(p, 'phase') as 'down' | 'move' | 'up', str(p, 'target')),
     swipe: async (p: Params) => (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300),
