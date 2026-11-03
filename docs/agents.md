@@ -57,6 +57,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `inspect what=visual name=…` — the screen against a stored baseline; changed regions in pixels.
 - `expect` in flows — presence, absence, focus, playing, paused, `visual`.
 - `dev action=fresh` — does the app run the newest code? Ask before debugging a fix that seems not to work.
+  It waits for edits to settle, counts edits that reached the app as hot updates (no reload needed), and when
+  the last edit did not compile it says so with the bundler's error and code frame — the app still runs the
+  code before it.
 - `inspect what=network`, `inspect what=tree` — the app's requests and its React tree, from inside.
 - `inspect what=errors` — recent JS errors with source stacks (`src/file.ts:31:39` and the line itself), also
   the ones thrown at startup before any action. Errors during an action or a flow come back with it anyway.

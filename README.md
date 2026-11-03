@@ -20,7 +20,8 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   (Metro crawls every directory on Windows otherwise), the main bundle built before the device asks, and, with
   `bytecode: true`, Hermes bytecode compiled on the host so the app skips parsing megabytes of source.
 - **Inside the app, with no app code** (React Native dev bundles served through pitbox): `fresh` says whether
-  the app runs the newest code or a stale bundle; the app's network log; network rules applied inside the app
+  the app runs the newest code (a new bundle or hot updates) or a stale bundle, and shows the compile error of
+  an edit that broke the build; hot updates keep working when the app runs host bytecode; the app's network log; network rules applied inside the app
   (fail, mock, delay, a WebSocket frozen open, offline); a `traceparent` on every request an action causes;
   in-flight requests count toward "the UI has settled"; the app's console from its start, warnings and errors
   with the source line that logged them.

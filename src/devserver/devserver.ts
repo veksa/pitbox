@@ -17,7 +17,19 @@ const IGNORED = /(^|[\\/])(node_modules|\.git|\.pitbox|\.expo|\.gradle|build|Pod
 
 export type Freshness = {
   generation: number;
-  apps: {id: number; platform: string; bundle: string; latest?: string; fresh: boolean; note?: string; runningForS?: number}[];
+  apps: {
+    id: number;
+    platform: string;
+    bundle: string;
+    latest?: string;
+    fresh: boolean;
+    note?: string;
+    runningForS?: number;
+    /** Edits that reached the app as hot updates since it loaded its bundle. */
+    hot?: {updates: number; lastS: number; modules: number};
+    /** The bundler could not compile the last edit; the app still runs the code before it. */
+    compileError?: string;
+  }[];
 };
 
 export type DevserverStatus = {
@@ -132,6 +144,7 @@ export class DevServer {
       this.#watcher = fs.watch(this.root, {recursive: true}, (_event, file) => {
         if (!file || IGNORED.test(String(file))) return;
         this.proxy.generation++;
+        this.proxy.lastChangeAt = Date.now();
         if (this.#debounce) clearTimeout(this.#debounce);
         this.#debounce = setTimeout(() => void this.prewarm(), 800);
       });
@@ -216,6 +229,13 @@ export class DevServer {
    * Which code each connected app runs, against the newest build: stale when its bundle is older, and possibly
    * stale when files changed after the newest build (the rebuild has not happened yet).
    */
+  /** Waits (up to `maxMs`) for edits to settle: no file change in the last second and no hot-update round running. */
+  async settled(maxMs = 5000): Promise<void> {
+    const end = Date.now() + maxMs;
+    const busy = () => Date.now() - this.proxy.lastChangeAt < 1000 || this.proxy.hotClients().some(h => !h.closedAt && h.inRound);
+    while (busy() && Date.now() < end) await new Promise(r => setTimeout(r, 150));
+  }
+
   freshness(): Freshness {
     const p = this.proxy;
     const apps = p.apps().map(a => {
@@ -224,7 +244,16 @@ export class DevServer {
       const built = p.builds.get(a.hello.bundle);
       const newest = latest ? p.builds.get(latest) : undefined;
       const pending = newest !== undefined && p.generation > newest.generation;
-      const fresh = !!latest && latest === a.hello.bundle && !pending;
+      // The app's hot-update connection (one per app and platform in practice).
+      const hot = p.hotClients().find(h => !h.closedAt && h.platform === a.hello!.platform && h.connectedAt >= a.connectedAt - 60_000);
+      const hotInfo = hot?.lastUpdate ? {updates: hot.updates, lastS: Math.round((Date.now() - hot.lastUpdate.at) / 1000), modules: hot.lastUpdate.modules} : undefined;
+      if (hot?.lastError) {
+        return {id: a.id, platform: a.hello.platform, bundle: a.hello.bundle, latest, fresh: false, note: 'the last edit did not compile; the app runs the code before it', compileError: hot.lastError.message || hot.lastError.type, hot: hotInfo};
+      }
+      // A hot-update round that compiled after the last file change: the app runs the newest code without a new
+      // bundle. The bundler and pitbox hear of a change separately, so a second of slack between the two.
+      const hotFresh = !!hot?.registered && !hot.inRound && hot.syncedAt !== undefined && hot.syncedAt >= p.lastChangeAt - 1000;
+      const fresh = (!!latest && latest === a.hello.bundle && !pending) || hotFresh;
       const note = fresh
         ? undefined
         : latest && latest !== a.hello.bundle
@@ -232,7 +261,7 @@ export class DevServer {
           : pending
             ? `files changed after the newest build (${p.generation - newest!.generation} change events) — rebuilding; check again or prewarm`
             : 'no build recorded for its platform yet';
-      return {id: a.id, platform: a.hello.platform, bundle: a.hello.bundle, latest, fresh, note, runningForS: Math.round((Date.now() - a.hello.startedAt) / 1000)};
+      return {id: a.id, platform: a.hello.platform, bundle: a.hello.bundle, latest, fresh, note, runningForS: Math.round((Date.now() - a.hello.startedAt) / 1000), hot: hotInfo};
     });
     return {apps, generation: p.generation};
   }

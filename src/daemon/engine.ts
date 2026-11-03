@@ -640,6 +640,7 @@ export class Engine {
 
     fresh: async () => {
       if (!this.#dev) throw new Error('no devserver in the config');
+      await this.#dev.settled();
       return this.#dev.freshness();
     },
 

@@ -227,7 +227,14 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'fresh': {
       const f = x as unknown as Freshness;
       if (!f.apps.length) return 'no app connected to the dev server — not started, a release build, or talking to another server';
-      return f.apps.map(a => (a.fresh ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}` : `✗ app ${a.id} (${a.platform}) is stale: ${a.note}`)).join('\n');
+      return f.apps
+        .map(a => {
+          const hot = a.hot ? ` · ${a.hot.updates} hot update${a.hot.updates === 1 ? '' : 's'}, the last ${a.hot.lastS}s ago (${a.hot.modules} module${a.hot.modules === 1 ? '' : 's'})` : '';
+          if (a.compileError) return [`✗ app ${a.id} (${a.platform}): ${a.note}${hot}`, ...a.compileError.split('\n').filter(l => l.trim()).slice(0, 8).map(l => `    ${l}`)].join('\n');
+          if (!a.fresh) return `✗ app ${a.id} (${a.platform}) is stale: ${a.note}${hot}`;
+          return a.latest === a.bundle || !a.hot ? `✓ app ${a.id} (${a.platform}) runs the newest bundle ${a.bundle}${hot}` : `✓ app ${a.id} (${a.platform}) runs the newest code: bundle ${a.bundle} with hot updates${hot}`;
+        })
+        .join('\n');
     }
     case 'jsEval': {
       const e = x as unknown as EvalResult;
