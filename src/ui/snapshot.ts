@@ -27,6 +27,8 @@ export type UiWindow = {type: string; title: string; pkg: string};
 /** Packages of the platform's own apps: the permission controller, the package installer, the launcher. */
 const SYSTEM_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinstaller|launcher|apps\.nexuslauncher)/;
 const PERMISSION_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinstaller)$/;
+// The process an Apple runner reads system alerts from (permissions, "Open in …?"): iOS's shell, visionOS's.
+const SHELL_ALERT = /^com\.apple\.(springboard|RealityNotifications)$/;
 
 /** The question of a runtime permission request over the app ("Allow MyApp to send you notifications?"), if any. */
 export const permissionPrompt = (snap: Pick<Snapshot, 'windows' | 'nodes'>): string | undefined => {
@@ -279,7 +281,13 @@ export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; 
   const mine = chain(index);
   const meets = (a: Bounds, b: Bounds) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
   const drawn = (m: UiNode) => interactive(m) || !!m.t || !!m.d || /image/i.test(m.c);
-  const above = (m: UiNode) => (m.w < n.w ? snap.windows[m.w]?.type === 'app' : m.w === n.w && m.z !== undefined && n.z !== undefined && m.z > n.z);
+  // Android lists the top window first. An Apple runner lists the shell's alert after the app, and it is on top of
+  // everything: nothing covers a node of it, and it covers the app.
+  const alert = (w: number) => SHELL_ALERT.test(snap.windows[w]?.pkg ?? '');
+  const above = (m: UiNode) =>
+    alert(n.w) ? m.w === n.w && m.z !== undefined && n.z !== undefined && m.z > n.z
+    : alert(m.w) ? true
+    : m.w < n.w ? snap.windows[m.w]?.type === 'app' : m.w === n.w && m.z !== undefined && n.z !== undefined && m.z > n.z;
   const covers = snap.nodes
     .map((m, j) => ({m, j}))
     .filter(({m, j}) => drawn(m) && above(m) && meets(m.b, n.b) && !mine.has(j) && !chain(j).has(index));

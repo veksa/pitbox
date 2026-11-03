@@ -285,6 +285,16 @@ describe('a target with something drawn over its centre', () => {
     expect(r.note).toMatch(/^tapped \d+,\d+: the centre is under @e1 .*Tools/);
   });
 
+  it('is not covered in an iOS shell alert, which the runner lists after the app but which is on top', async () => {
+    const {tapPoint} = await import('./ui/snapshot.ts');
+    const windows: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}, {type: 'app', title: 'Allow?', pkg: 'com.apple.springboard'}];
+    const list: UiNode = {p: -1, w: 0, c: 'List', b: [0, 0, 1000, 2000], f: 'cs', d: 'Popular'};
+    const allow: UiNode = {p: -1, w: 1, c: 'Button', b: [500, 900, 800, 1000], t: 'Allow', f: 'c'};
+    const behind: UiNode = {p: -1, w: 0, c: 'Button', b: [500, 900, 800, 1000], id: 'start', f: 'c'};
+    expect(tapPoint(buildSnapshot(windows, [list, allow]), 1)).toEqual({x: 650, y: 950});
+    expect(tapPoint(buildSnapshot(windows, [behind, allow]), 0).coveredBy).toMatch(/Allow/);
+  });
+
   it('is tapped in the centre when what overlaps it is painted below, or is its own child', async () => {
     const {tapPoint} = await import('./ui/snapshot.ts');
     expect(tapPoint(buildSnapshot(app, [{...fab, z: 0}, profile]), 1)).toEqual({x: 980, y: 180});
