@@ -927,6 +927,10 @@ export class Engine {
 
     open: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
+      // A daemon that just started brings the proxy and the forwards up on its first tick, seconds later; an app
+      // launched before that asks a port nobody serves and a dev launcher shows "Connection reset".
+      if (this.#dev && !this.#dev.proxy.listening) await this.#devUp(false).catch(() => undefined);
+      if (t.platform !== 'apple') await this.ensureForwards().catch(() => undefined);
       if (t.platform === 'apple') {
         const bundleId = str(p, 'pkg') ?? this.config.app?.apple;
         const target = str(p, 'target') ?? (this.config.app?.connect ? this.connectUrl() : undefined) ?? this.#bundleId(p);
