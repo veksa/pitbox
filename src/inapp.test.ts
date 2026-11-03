@@ -276,7 +276,7 @@ describe('proxy with the in-app script', () => {
       res.writeHead(200, {'content-type': 'application/javascript'}).end(`var v="${version}";\n__r(1);\n__r(0);`);
     });
     await new Promise<void>(r => upstream.listen(upPort, '127.0.0.1', () => r()));
-    proxy = new DevProxy({port, upstreamPort: upPort, inApp: true, root});
+    proxy = new DevProxy({port, upstreamPort: upPort, inApp: true, root, pingMs: 100});
     await proxy.start();
   });
 
@@ -320,6 +320,22 @@ describe('proxy with the in-app script', () => {
     await fetch(`http://127.0.0.1:${port}/index.bundle?platform=android`, {headers: {accept: 'multipart/mixed'}});
     expect(proxy.latest.get('android')).not.toBe(bundle);
     ws.close();
+  });
+
+  it('drops an app session that stops answering pings, keeps one that answers', async () => {
+    // Sessions an earlier test closed are gone first.
+    await new Promise(r => setTimeout(r, 300));
+    const before = proxy.apps().length;
+    const live = new WsClient(`ws://127.0.0.1:${port}/pitbox/app`);
+    // A dead app behind a relay: the socket stays open on the host and nothing answers.
+    const dead = new WsClient(`ws://127.0.0.1:${port}/pitbox/app`, {autoPong: false});
+    await Promise.all([new Promise(r => live.on('open', r)), new Promise(r => dead.on('open', r))]);
+    await new Promise(r => setTimeout(r, 50));
+    expect(proxy.apps().length).toBe(before + 2);
+    await new Promise(r => setTimeout(r, 400));
+    expect(proxy.apps().length).toBe(before + 1);
+    live.close();
+    dead.terminate();
   });
 
   it('times an app start: the bundle request, then when the bundle started running', async () => {

@@ -36,6 +36,8 @@ export type ProxyOptions = {
   inApp?: boolean;
   /** App directory: symbolicated paths are shown relative to it. */
   root?: string;
+  /** How often app and hot sessions are pinged; one without a pong by the next ping is dropped. Default 10 s. */
+  pingMs?: number;
 };
 
 export type NetRule = {
@@ -352,9 +354,26 @@ export class DevProxy {
     return this.errors.filter(e => e.at >= since);
   }
 
+  /**
+   * Drops a session whose app is gone without a close: a relay or a forward can keep the host side of a dead
+   * app's socket open, and it would stay listed as a running app (answering nothing) until pitbox restarts.
+   */
+  #keepAlive(ws: WebSocket) {
+    let alive = true;
+    ws.on('pong', () => (alive = true));
+    const timer = setInterval(() => {
+      if (!alive) return void ws.terminate();
+      alive = false;
+      ws.ping();
+    }, this.opts.pingMs ?? 10_000);
+    timer.unref();
+    ws.on('close', () => clearInterval(timer));
+  }
+
   #onApp(ws: WebSocket, remote: string) {
     const app: AppSession = {id: ++this.#appSeq, ws, remote, connectedAt: Date.now()};
     this.#apps.set(app.id, app);
+    this.#keepAlive(ws);
     ws.on('message', raw => {
       let msg: {type?: string; reqId?: number; data?: unknown} & Partial<AppHello>;
       try {
@@ -449,6 +468,7 @@ export class DevProxy {
   #onHot(app: WebSocket, req: http.IncomingMessage) {
     const h: HotClient & {close: () => void} = {id: ++this.#hotSeq, connectedAt: Date.now(), registered: false, updates: 0, inRound: false, close: () => undefined};
     this.hot.set(h.id, h);
+    this.#keepAlive(app);
     // Closed clients older than the newest ten are forgotten.
     const closed = [...this.hot.values()].filter(x => x.closedAt).sort((a, b) => b.connectedAt - a.connectedAt);
     for (const old of closed.slice(10)) this.hot.delete(old.id);
