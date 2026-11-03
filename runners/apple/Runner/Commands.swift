@@ -495,7 +495,8 @@ final class Commands {
     }
     #endif
     switch code {
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
+    // visionOS: a press of the Digital Crown, which brings up Home.
     case 3: XCUIDevice.shared.press(.home)
     #endif
     case 66: a.typeText("\n")
