@@ -261,6 +261,38 @@ describe('a keyboard over the target', () => {
     expect(value).toBe('Ada');
   });
 
+  it('is waited for after a fill, when it comes up a moment after the screen settled', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = false;
+    let trees = 0;
+    let pressFrom = Infinity;
+    const calls: string[] = [];
+    const field: UiNode = {p: -1, w: 0, c: 'Field', b: [0, 100, 400, 150], id: 'name', f: 'ce'};
+    const greet: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 400, 400, 450], id: 'greet', t: 'Greet', f: 'c'};
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (['key', 'tap'].includes(cmd)) calls.push(cmd);
+        if (cmd === 'key' && args.code === 4) keyboard = false;
+        if (cmd === 'tree') {
+          trees++;
+          // The press's first look at the screen has no keyboard yet; it is there on the second.
+          if (trees === pressFrom + 2) keyboard = true;
+          return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}, ...(keyboard ? [{type: 'ime', title: 'Keyboard', pkg: 'com.example.ime'}] : [])], nodes: [field, greet]};
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        if (cmd === 'text') return {set: true};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    await ui.fill('id=name', 'Ada');
+    calls.length = 0;
+    pressFrom = trees;
+    await ui.press('id=greet');
+    expect(calls).toEqual(['key', 'tap']);
+  });
+
   it('is hidden before the tap even when its window shows no views', async () => {
     const {DeviceUi} = await import('./ui/device.ts');
     let keyboard = true;

@@ -130,10 +130,23 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return {diff, idle: r.idle};
   }
 
+  /** Text went into a field: a keyboard may still be on its way up. */
+  #typed = false;
+
   /** Resolves against the last snapshot for refs, against a fresh one for everything else. */
   async #target(selector: string) {
     const ref = /^@e\d+$/.test(selector.trim());
     let snap = ref && this.last ? this.last : await this.snapshot();
+    // Right after text went in, the keyboard can show up a moment after the screen looked settled; a tap taken
+    // from the screen before it would land on a key.
+    if (this.#typed && !ref) {
+      this.#typed = false;
+      const end = Date.now() + 1000;
+      while (!snap.windows.some(w => w.type === 'ime') && Date.now() < end) {
+        await new Promise(r => setTimeout(r, 150));
+        snap = await this.snapshot();
+      }
+    }
     // A target under the on-screen keyboard, or pushed out of a window the keyboard shrank (a car's keyboard
     // covers half the screen), is reached by hiding the keyboard first; tapping its coordinates would type a
     // letter instead.
@@ -232,6 +245,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     }
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
+    this.#typed = true;
     const settled = await this.#settle(snap);
     return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
   }
@@ -243,6 +257,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const r = await this.runner.call<{set: boolean}>('text', {text, append: true});
     if (!r.set) throw new Error('no focused text field to type into');
     this.record(`type ${quote(text)}`);
+    this.#typed = true;
     return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
   }
 
