@@ -15,6 +15,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {rnChecks} from './e2e-rn.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bin = path.join(root, 'dist', 'bin.js');
@@ -152,71 +153,7 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
   console.log(must(['up'], {timeout: 900_000}));
   runKind('react-native', 'phone', pitbox, must, (avd, checks) => {
     console.log(must(['install', rnApk, '--device', avd, '--replace']));
-    const smoke = pitbox(['run', 'smoke', '--device', avd]);
-    head(smoke.out);
-    checks.push({name: 'smoke', ok: smoke.code === 0 && smoke.out.startsWith('✓')});
-    const fresh = pitbox(['fresh']);
-    head(fresh.out, 3);
-    checks.push({name: 'fresh bundle', ok: /runs the newest bundle/.test(fresh.out)});
-    const log = pitbox(['app-log', '-n', '50']);
-    checks.push({name: 'network log', ok: /localhost:4100\/hello/.test(log.out)});
-    const err = pitbox(['run', 'js-error', '--device', avd]);
-    head(err.out, 8);
-    checks.push({name: 'js error with its source line', ok: err.out.startsWith('✓') && /! JS error: example js error/.test(err.out) && /App\.tsx:\d+:\d+/.test(err.out)});
-    const greet = pitbox(['run', 'console', '--device', avd]);
-    head(greet.out, 2);
-    const warned = pitbox(['app-console', '--level', 'warn']);
-    head(warned.out, 3);
-    checks.push({name: 'console warning with its source line', ok: greet.code === 0 && /W {2}greeting without a name {2}← greet {2}App\.tsx:\d+:\d+/.test(warned.out)});
-    // The example's Work hard button runs a slow function: the JS profile must name it, in the app's code.
-    // Typing first: the name is Main's state, so React's commits must name Main and why it rendered.
-    pitbox(['perf', 'reset', '--device', avd]);
-    pitbox(['fill', 'id=name', 'Perf', '--device', avd]);
-    pitbox(['press', 'id=busy', '--device', avd]);
-    const perf = pitbox(['perf', '--device', avd]);
-    head(perf.out.split('\n').filter(l => /JS thread|workHard|React:|Main —/.test(l)).join('\n'), 5);
-    checks.push({name: 'js profile names the slow app function', ok: /app code, with what it called:(\n {4}\s*\d+ ms {2}\S.*)*?\n {4}\s*\d+ ms {2}workHard {2}App\.tsx:\d+/.test(perf.out)});
-    checks.push({name: 'react commits name a component and why it rendered', ok: /React: \d+ commits?/.test(perf.out) && /\d+× +[\d.]+ ms {2}Main — state/.test(perf.out)});
-    const budgets = pitbox(['run', 'perf', '--device', avd]);
-    head(budgets.out, 3);
-    checks.push({name: 'perf budgets in a flow', ok: budgets.code === 0 && /perf: js \d+ms ✓/.test(budgets.out)});
-    // The platform trace over a scroll: the app's main thread and its render thread are in it.
-    pitbox(['perf', 'reset', 'trace', '--device', avd]);
-    pitbox(['swipe', 'up', '--device', avd]);
-    const traced = pitbox(['perf', '--device', avd]);
-    head(traced.out.split('\n').filter(l => l.startsWith('platform trace')).join('\n'), 1);
-    checks.push({name: 'platform trace of the app', ok: /platform trace [\d.]+s: .*\bmain \d+ ms/.test(traced.out) && /RenderThread \d+ ms/.test(traced.out)});
-    // An edit reaches the app as a hot update (the app runs bytecode), and a broken edit comes back as text.
-    // The title is back on screen first: the trace above scrolled the list.
-    pitbox(['scroll', 'up', 'until', 'id=title', '--device', avd]);
-    const appFile = path.join(rnDir, 'App.tsx');
-    const appSource = fs.readFileSync(appFile, 'utf8');
-    try {
-      fs.writeFileSync(appFile, appSource.replace(/(testID="title"[^>]*>\s*)pitbox example/, '$1pitbox example, edited'));
-      const title = pitbox(['wait', 'text=pitbox example, edited', '--timeout', '15', '--device', avd]);
-      const hotFresh = pitbox(['fresh']);
-      head(hotFresh.out, 2);
-      checks.push({name: 'an edit arrives as a hot update', ok: title.code === 0 && /runs the newest code: bundle \w+ with hot updates/.test(hotFresh.out)});
-      fs.writeFileSync(appFile, appSource.replace(/(testID="title"[^>]*>\s*)pitbox example/, '$1pitbox example {{'));
-      const broken = pitbox(['fresh']);
-      head(broken.out, 3);
-      checks.push({name: 'a broken edit comes back as text', ok: /the last edit did not compile/.test(broken.out) && /SyntaxError: App\.tsx/.test(broken.out)});
-    } finally {
-      fs.writeFileSync(appFile, appSource);
-    }
-    pitbox(['wait', 'text=pitbox example', '--timeout', '15', '--device', avd]);
-    const ev = pitbox(['js', 'eval', 'Promise.resolve(40 + 2)']);
-    head(ev.out, 2);
-    checks.push({name: 'js eval', ok: /^= 42/.test(ev.out)});
-    // A logpoint on the Greet button's line, which runs on every render: it must see the typed name.
-    const greetLine = fs.readFileSync(path.join(rnDir, 'App.tsx'), 'utf8').split('\n').findIndex(l => l.includes('testID="greet"')) + 1;
-    const lp = pitbox(['js', 'log', `App.tsx:${greetLine}`, 'name']);
-    head(lp.out, 2);
-    pitbox(['fill', 'id=name', 'Logpoint', '--device', avd]);
-    const hits = pitbox(['js', 'hits', '-n', '3']);
-    head(hits.out, 4);
-    checks.push({name: 'logpoint sees a local', ok: lp.code === 0 && /"Logpoint"/.test(hits.out)});
-    pitbox(['js', 'clear']);
+    checks.push(...rnChecks({rn: pitbox, device: avd, rnDir, platform: 'android'}));
   });
   pitbox(['down']);
   pitbox(['daemon', 'stop']);

@@ -11,6 +11,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {rnChecks} from './e2e-rn.mjs';
 
 if (process.platform !== 'darwin') {
   console.error('e2e:apple needs a Mac with Xcode');
@@ -127,8 +128,8 @@ for (const kind of examples.includes('apple') ? wanted : []) {
 
 if (examples.includes('apple')) pitbox(['down']);
 
-// examples/react-native on a phone: through pitbox's dev server (the app reads it from its defaults), the
-// in-app channel (freshness, the network log) and a JS error mapped back to its source line.
+// examples/react-native on a phone: through pitbox's dev server (the app reads it from its defaults), the same
+// checks as on Android (scripts/e2e-rn.mjs): the in-app channel, the JS runtime, perf and hot updates.
 const rnSim = wanted.includes('phone') ? simFor('phone') : undefined;
 if (examples.includes('react-native') && rnSim) {
   const rn = (args, opts = {}) => pitbox(args, {...opts, cwd: rnDir});
@@ -149,16 +150,7 @@ if (examples.includes('react-native') && rnSim) {
     console.log(ok(rn(['up'])));
     if (!wasBooted) console.log(ok(rn(['boot', rnSim.udid])));
     console.log(ok(rn(['install', app, '--device', rnSim.udid])));
-    const smoke = rn(['run', 'smoke-ios', '--device', rnSim.udid]);
-    console.log(smoke.out.split('\n').slice(0, 6).join('\n'));
-    checks.push({name: 'smoke', ok: smoke.code === 0 && smoke.out.startsWith('✓')});
-    const fresh = rn(['fresh']);
-    console.log(fresh.out.split('\n').slice(0, 3).join('\n'));
-    checks.push({name: 'fresh bundle', ok: /runs the newest bundle/.test(fresh.out)});
-    checks.push({name: 'network log', ok: /localhost:4100\/hello/.test(rn(['app-log', '-n', '50']).out)});
-    const err = rn(['run', 'js-error', '--device', rnSim.udid]);
-    console.log(err.out.split('\n').slice(0, 8).join('\n'));
-    checks.push({name: 'js error with its source line', ok: err.out.startsWith('✓') && /! JS error: example js error/.test(err.out) && /App\.tsx:\d+:\d+/.test(err.out)});
+    checks.push(...rnChecks({rn, device: rnSim.udid, rnDir, platform: 'apple'}));
   } catch (e) {
     checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
   } finally {
