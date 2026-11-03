@@ -91,7 +91,8 @@ export const rnChecks = ({rn, device, rnDir, platform}) => {
     const title = on(['wait', 'text=pitbox example, edited', '--timeout', '15']);
     const hotFresh = rn(['fresh']);
     head(hotFresh.out, 2);
-    check('an edit arrives as a hot update', title.code === 0 && /runs the newest code: bundle \w+ with hot updates/.test(hotFresh.out));
+    // Fresh either way: on the newest bundle with the update on top, or on the bundle the update was rebuilt into.
+    check('an edit arrives as a hot update', title.code === 0 && /^✓ app \d+ \(\w+\) runs the newest (code|bundle).* · [1-9]\d* hot updates?/m.test(hotFresh.out));
     fs.writeFileSync(appFile, appSource.replace(/(testID="title"[^>]*>\s*)pitbox example/, '$1pitbox example {{'));
     const broken = rn(['fresh']);
     head(broken.out, 3);
