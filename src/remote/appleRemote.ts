@@ -69,7 +69,8 @@ export class RemoteApple implements AppleDevices {
   open = (udid: string, target: string, opts: {relaunch?: boolean; bundleId?: string; args?: string[]} = {}) => this.call<{totalMs?: number; pid?: number}>('open', {udid, target, opts});
   stop = async (udid: string, bundleId: string) => void (await this.call('stop', {udid, bundleId}));
   clear = async (udid: string, bundleId: string) => void (await this.call('clear', {udid, bundleId}));
-  appStateSave = async (udid: string, bundleId: string, name: string) => void (await this.call('appStateSave', {udid, bundleId, name}, 120_000));
+  // An older device host answers nothing: the app then counts as not running, as before.
+  appStateSave = async (udid: string, bundleId: string, name: string) => ({wasRunning: !!(await this.call<{wasRunning?: boolean} | undefined>('appStateSave', {udid, bundleId, name}, 120_000))?.wasRunning});
   appStateRestore = async (udid: string, bundleId: string, name: string) => void (await this.call('appStateRestore', {udid, bundleId, name}, 120_000));
   appStateDelete = async (udid: string, bundleId: string, name: string) => void (await this.call('appStateDelete', {udid, bundleId, name}));
   uninstall = async (udid: string, bundleId: string) => void (await this.call('uninstall', {udid, bundleId}));

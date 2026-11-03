@@ -255,15 +255,18 @@ export class AppleDriver {
 
   /**
    * A simulator's side of a named state: a copy of the app's data container (simctl has no snapshot of a whole
-   * simulator). The app is stopped first, so nothing is half written.
+   * simulator). The app is stopped first, so nothing is half written; whether it was running is returned, so the
+   * caller can launch it again.
    */
-  async appStateSave(udid: string, bundleId: string, name: string) {
+  async appStateSave(udid: string, bundleId: string, name: string): Promise<{wasRunning: boolean}> {
+    const wasRunning = (await this.pid(udid, bundleId).catch(() => undefined)) !== undefined;
     await this.stop(udid, bundleId);
     const dir = await this.#container(udid, bundleId);
     const dest = this.#appStateDir(udid, bundleId, name);
     fs.rmSync(dest, {recursive: true, force: true});
     fs.mkdirSync(path.dirname(dest), {recursive: true});
     fs.cpSync(dir, dest, {recursive: true});
+    return {wasRunning};
   }
 
   /** Brings the app's data back as it was saved, with the app stopped; the next launch starts from it. */

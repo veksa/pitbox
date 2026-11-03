@@ -101,7 +101,12 @@ export class Engine {
       const s = this.apple!;
       const bundleId = this.config.app?.apple;
       if (!bundleId) throw new Error('a simulator state copies the app\'s data: set app.apple in the config');
-      return {snap: {id: sim.udid, label: sim.name, kind: 'app-data', save: n => s.appStateSave(sim.udid, bundleId, n), load: n => s.appStateRestore(sim.udid, bundleId, n), remove: n => s.appStateDelete(sim.udid, bundleId, n)}};
+      // The copy stops the app; a running one is launched again after it, as an emulator snapshot leaves it,
+      // or the next call finds no app at all.
+      const save = async (n: string) => {
+        if ((await s.appStateSave(sim.udid, bundleId, n)).wasRunning) await this.methods.open({device: sim.udid});
+      };
+      return {snap: {id: sim.udid, label: sim.name, kind: 'app-data', save, load: n => s.appStateRestore(sim.udid, bundleId, n), remove: n => s.appStateDelete(sim.udid, bundleId, n)}};
     }
     if (!a || (!online.length && !device)) return {};
     const serial = await a.resolve(device);

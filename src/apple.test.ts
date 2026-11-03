@@ -268,6 +268,34 @@ describe('apple driver', () => {
     await expect(make(false).fold('AAA', 'open')).rejects.toThrow('stayed folded');
   }, 15_000);
 
+  it.skipIf(process.platform !== 'darwin')('copies the app data with the app stopped and says whether it was running', async () => {
+    const container = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-container-'));
+    const dataDir = path.join(container, 'Containers', 'Data', 'Application', 'X');
+    fs.mkdirSync(path.join(dataDir, 'Library'), {recursive: true});
+    fs.writeFileSync(path.join(dataDir, 'Library', 'token'), 't');
+    const calls: string[] = [];
+    // A real instance: the state directory is a private method. Its copies go under a udid no simulator has.
+    const udid = 'pitbox-test-udid';
+    const make = (running: boolean) =>
+      Object.assign(new AppleDriver(), {
+        simctl: async (args: string[]) => {
+          calls.push(args[0] === 'spawn' ? args.slice(2).join(' ') : args[0]!);
+          if (args[0] === 'get_app_container') return {stdout: `${dataDir}\n`, stderr: '', code: 0, timedOut: false, ms: 0};
+          const list = running ? '321\t0\tUIKitApplication:com.example.app[ab12]\n' : '';
+          return {stdout: args[0] === 'spawn' ? list : '', stderr: '', code: 0, timedOut: false, ms: 0};
+        },
+      });
+    try {
+      expect(await make(true).appStateSave(udid, 'com.example.app', 'signed-in')).toEqual({wasRunning: true});
+      // Asked before the stop: after it the app is never running.
+      expect(calls.slice(0, 2)).toEqual(['launchctl list', 'terminate']);
+      expect(await make(false).appStateSave(udid, 'com.example.app', 'signed-out')).toEqual({wasRunning: false});
+    } finally {
+      fs.rmSync(container, {recursive: true, force: true});
+      fs.rmSync(path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'app-states', udid), {recursive: true, force: true});
+    }
+  });
+
   it('builds a snapshot from a window without a package', () => {
     const snap = buildSnapshot([{type: 'ime', title: 'keyboard'} as never], [{p: -1, w: 0, c: 'Keyboard', b: [0, 500, 400, 800]}]);
     expect(snap.nodes).toHaveLength(1);
