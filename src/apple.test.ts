@@ -225,6 +225,9 @@ describe('apple driver', () => {
     expect(onlyClosedKeyboard(up, closed)).toBe(true);
     expect(onlyClosedKeyboard(up, greeted)).toBe(false);
     expect(onlyClosedKeyboard(closed, closed)).toBe(false);
+    // The window grows back where the keyboard was and shows more rows: still only the keyboard.
+    const grown = buildSnapshot([app], [list, {...field, f: 'e'}, greet, {p: 0, w: 0, c: 'Text', b: [16, 700, 386, 740], t: 'Row 12'}]);
+    expect(onlyClosedKeyboard(up, grown)).toBe(true);
   });
 
   it('folds a foldable only to a posture it has, and says when the screens did not change', async () => {

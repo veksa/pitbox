@@ -350,11 +350,19 @@ export const swipeArea = (snap: Snapshot | undefined, width: number, height: num
 export const onlyClosedKeyboard = (before: Snapshot, after: Snapshot): boolean => {
   const ime = (s: Snapshot) => s.windows.some(w => w.type === 'ime');
   if (!ime(before) || ime(after)) return false;
-  const rest = (s: Snapshot) =>
-    s.nodes
-      .filter(n => s.windows[n.w]?.type !== 'ime')
-      .map(n => `${n.c}|${n.id ?? ''}|${n.t ?? ''}|${n.d ?? ''}|${n.h ?? ''}|${(n.f ?? '').replace(/[FA]/g, '')}`)
-      .sort()
-      .join('\n');
-  return rest(before) === rest(after);
+  // A window the keyboard had shrunk grows back: what shows up where the keyboard was (more rows of a list) is
+  // the screen coming back, not the tap's doing.
+  const imeNodes = before.nodes.filter(n => before.windows[n.w]?.type === 'ime');
+  const imeTop = imeNodes.length ? Math.min(...imeNodes.map(n => n.b[1])) : Infinity;
+  const key = (n: UiNode) => `${n.c}|${n.id ?? ''}|${n.t ?? ''}|${n.d ?? ''}|${n.h ?? ''}|${(n.f ?? '').replace(/[FA]/g, '')}`;
+  const left = new Map<string, number>();
+  for (const n of before.nodes) if (before.windows[n.w]?.type !== 'ime') left.set(key(n), (left.get(key(n)) ?? 0) + 1);
+  for (const n of after.nodes) {
+    if (after.windows[n.w]?.type === 'ime') continue;
+    const k = key(n);
+    const count = left.get(k) ?? 0;
+    if (count > 0) left.set(k, count - 1);
+    else if (n.b[1] < imeTop) return false;
+  }
+  return [...left.values()].every(c => c === 0);
 };
