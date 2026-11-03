@@ -156,11 +156,11 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
     if (texts.length) label.set(i, texts.slice(0, 3).join(' · '));
   });
 
-  // A control whose description already says what its children say (React Native merges them): the children
-  // without ids add nothing but tokens.
+  // A node whose text or description already says what its children say (React Native gives a view the label of
+  // the text inside it: `view "Home"` over `text "Home"`): the children without ids add nothing but tokens.
   nodes.forEach((n, i) => {
-    if (hidden.has(i) || !interactive(n) || !n.d) return;
-    const d = n.d.toLowerCase();
+    if (hidden.has(i) || !(interactive(n) ? n.d : n.t ?? n.d)) return;
+    const d = `${n.t ?? ''} ${n.d ?? ''}`.toLowerCase();
     const stack = [...(kids.get(i) ?? [])];
     while (stack.length) {
       const j = stack.shift()!;
@@ -170,6 +170,19 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
       if (s && !m.id && d.includes(s)) hidden.add(j);
       stack.push(...(kids.get(j) ?? []));
     }
+  });
+
+  // A view that is only an id around one text (`view #banner-title` over `text "Welcome"`): one line,
+  // `view "Welcome" #banner-title`. Both selectors still find it.
+  nodes.forEach((n, i) => {
+    if (hidden.has(i) || !n.id || n.t || n.d || interactive(n) || label.has(i)) return;
+    const children = (kids.get(i) ?? []).filter(j => !hidden.has(j));
+    if (children.length !== 1) return;
+    const j = children[0]!;
+    const m = nodes[j]!;
+    if (m.id || interactive(m) || !m.t || (kids.get(j) ?? []).some(k => !hidden.has(k))) return;
+    label.set(i, m.t);
+    hidden.add(j);
   });
 
   const lines: string[] = [];

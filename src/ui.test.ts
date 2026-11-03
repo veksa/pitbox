@@ -20,6 +20,19 @@ const nodes: UiNode[] = [
 ];
 
 describe('snapshot', () => {
+  it('folds a text into the view that only carries an id around it, and drops a text its parent already says', () => {
+    const w: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const snap = buildSnapshot(w, [
+      {p: -1, w: 0, c: 'Other', b: [0, 0, 400, 50], id: 'banner-title'},
+      {p: 0, w: 0, c: 'StaticText', b: [0, 0, 400, 50], t: 'Welcome'},
+      {p: -1, w: 0, c: 'Other', b: [0, 700, 100, 800], id: 'footer-home', t: 'Home'},
+      {p: 2, w: 0, c: 'StaticText', b: [0, 760, 100, 800], t: 'Home'},
+    ]);
+    expect(snap.lines).toEqual(['@e1 view "Welcome" #banner-title', '@e2 view "Home" #footer-home']);
+    expect(resolveTarget(snap, 'text=Welcome').ref).toBe('@e1');
+    expect(resolveTarget(snap, 'id=banner-title').ref).toBe('@e1');
+  });
+
   it('drops the iOS scroll indicators and keeps the position of a long list on its line', () => {
     const w: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
     const snap = buildSnapshot(w, [
