@@ -111,7 +111,7 @@ can mix devices — `device web:admin` … `device Pixel_8` — to act in a pane
   reply came from; `reply text=…`, `fail status=429`, `delay ms=…` force an answer, a provider error or a slow
   answer for prompts matching `match` (or all; `once=true` for one request); `clear` drops the rules. Tests the
   paths around a model without editing fixtures.
-- `trace` — what the backend did for the last action (or `id=` from an action's answer): every action stamps
+- `trace` — what the backend did for the last action (or `id=`, an action's `trace` in its JSON answer): every action stamps
   one W3C trace id on the app's requests, and this finds it in all stand services' and actors' logs. The
   backend has to log the trace id of the `traceparent` header for it to be found.
 
