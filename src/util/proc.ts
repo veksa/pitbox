@@ -178,11 +178,20 @@ export const startService = async (command: string, opts: {cwd: string; env: Rec
     fs.closeSync(fd);
     return child as unknown as ServiceProcess;
   }
+  return startHidden(shell.file, shell.args(command), opts);
+};
+
+/**
+ * Windows: starts a program that outlives its starter in a windowless console of its own (`launchHidden` and the
+ * `svcwrap` wrapper), output into `logFile`, exit code reported. Everything it starts inherits that console, so
+ * even a library that spawns a console program without `windowsHide` (Playwright's browser) opens no window.
+ */
+export const startHidden = async (file: string, args: string[], opts: {cwd: string; env: Record<string, string>; logFile: string}): Promise<ServiceProcess> => {
   const status = `${opts.logFile}.exit`;
   fs.rmSync(status, {force: true});
   const here = fileURLToPath(import.meta.url);
   const wrapper = path.join(path.dirname(here), `svcwrap${path.extname(here)}`);
-  const spec = Buffer.from(JSON.stringify({file: shell.file, args: shell.args(command), cwd: opts.cwd, env: opts.env, log: opts.logFile, status})).toString('base64');
+  const spec = Buffer.from(JSON.stringify({file, args, cwd: opts.cwd, env: opts.env, log: opts.logFile, status})).toString('base64');
   const pid = await launchHidden(process.execPath, [wrapper, spec], opts.cwd);
   const events = new EventEmitter();
   const timer = setInterval(() => {

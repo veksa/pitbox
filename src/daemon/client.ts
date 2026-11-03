@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
-import {isAlive} from '../util/proc.ts';
+import {isAlive, startHidden} from '../util/proc.ts';
 import {daemonFile, type DaemonInfo} from './info.ts';
 
 export class DaemonClient {
@@ -96,20 +96,26 @@ export const connect = async (opts: {config?: string; cwd?: string; busyWaitMs?:
   if (existing && (await waitForBusy(existing, opts.busyWaitMs ?? 20_000))) return new DaemonClient(existing);
 
   fs.mkdirSync(stateDir, {recursive: true});
-  const log = fs.openSync(path.join(stateDir, 'daemon.log'), 'a');
-  const child = spawn(process.execPath, [daemonEntry(), '--config', file], {
-    cwd: path.dirname(file),
-    detached: true,
-    stdio: ['ignore', log, log],
-    windowsHide: true,
-  });
-  child.unref();
+  const logFile = path.join(stateDir, 'daemon.log');
+  const t0 = Date.now();
+  let exited = false;
+  if (process.platform === 'win32') {
+    // A detached daemon has no console, and every console program it starts without windowsHide — Playwright's
+    // browser does — then opens a visible window. Started hidden, it owns a windowless console its children share.
+    const child = await startHidden(process.execPath, [daemonEntry(), '--config', file], {cwd: path.dirname(file), env: {}, logFile});
+    child.on('exit', () => (exited = true));
+  } else {
+    const log = fs.openSync(logFile, 'a');
+    const child = spawn(process.execPath, [daemonEntry(), '--config', file], {cwd: path.dirname(file), detached: true, stdio: ['ignore', log, log], windowsHide: true});
+    child.unref();
+    child.on('exit', () => (exited = true));
+  }
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 150));
     const info = readInfo(stateDir);
-    if (info && info.pid === child.pid && (await ping(info))) return new DaemonClient(info);
-    if (child.exitCode !== null) break;
+    if (info && info.startedAt >= t0 - 1000 && (await ping(info))) return new DaemonClient(info);
+    if (exited) break;
   }
   const tail = fs.readFileSync(path.join(stateDir, 'daemon.log'), 'utf8').split('\n').slice(-12).join('\n');
   throw new Error(`pitbox daemon did not start:\n${tail}`);
