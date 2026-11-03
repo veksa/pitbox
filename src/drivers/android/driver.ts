@@ -414,7 +414,15 @@ export class AndroidDriver {
     if (profile === 'offline' || profile === 'online') {
       const on = profile === 'online' ? 'disable' : 'enable';
       await this.shell(serial, `cmd connectivity airplane-mode ${on}`);
-      return `airplane mode ${profile === 'offline' ? 'on' : 'off'}`;
+      if (profile === 'offline') return 'airplane mode on';
+      // The network takes a few seconds to come back after airplane mode: a request sent at once still fails.
+      const t0 = Date.now();
+      while (Date.now() - t0 < 20_000) {
+        const out = await this.shell(serial, 'dumpsys connectivity').catch(() => '');
+        if (/Active default network: \d+/.test(out)) return `airplane mode off · connected in ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+        await new Promise(r => setTimeout(r, 500));
+      }
+      return 'airplane mode off · no network after 20s';
     }
     if (!serial.startsWith('emulator-')) throw new AndroidError('network speed profiles work on emulators only', 'use offline/online on hardware');
     const delay = {full: 'none', lte: 'none', umts: 'umts', edge: 'edge', gsm: 'gsm'}[profile];

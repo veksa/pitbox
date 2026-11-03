@@ -392,3 +392,14 @@ describe('answers of the stand and the forwards', () => {
     expect(await d.logs('emulator-5554', {pkg: 'com.example.app'})).toEqual(['(com.example.app is not running)']);
   });
 });
+
+describe('network back online', () => {
+  it('waits for the device to have a network again', async () => {
+    const {AndroidDriver} = await import('./drivers/android/driver.ts');
+    const d = new AndroidDriver();
+    let polls = 0;
+    (d as unknown as {shell: (s: string, c: string) => Promise<string>}).shell = async (_s, c) => (c.startsWith('dumpsys') ? (++polls < 3 ? 'Active default network: none' : 'Active default network: 108') : '');
+    expect(await d.network('emulator-5554', 'online')).toMatch(/^airplane mode off · connected in \d/);
+    expect(polls).toBe(3);
+  }, 10_000);
+});
