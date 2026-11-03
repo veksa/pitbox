@@ -10,6 +10,7 @@ const head = (out, n = 6) => console.log(out.split('\n').slice(0, n).join('\n'))
 export const rnChecks = ({rn, device, rnDir, platform}) => {
   const checks = [];
   const on = args => rn([...args, '--device', device]);
+  const steps = text => rn(['run', '--steps', text, '--device', device]);
   const check = (name, ok) => checks.push({name, ok: !!ok});
 
   // iOS has no back key: its smoke flow closes the detail screen by pressing it.
@@ -112,5 +113,45 @@ export const rnChecks = ({rn, device, rnDir, platform}) => {
   head(hits.out, 4);
   check('logpoint sees a local', lp.code === 0 && /"Logpoint"/.test(hits.out));
   rn(['js', 'clear']);
+
+  // The trace of the last action: the app stamped its request with a traceparent, the stand logged its id.
+  steps('open!\nwait id=title 90\npress id=fetch\nwait text~="hello from the stand" 10');
+  const trace = rn(['trace']);
+  head(trace.out, 3);
+  check('the trace of an action reaches the stand log', /^trace [0-9a-f]{32}/.test(trace.out) && /GET \/hello trace=[0-9a-f]{32}/.test(trace.out));
+
+  // The dev server's own commands: its status, the connect link as a QR, a reload of the app.
+  const status = rn(['dev', 'status']);
+  head(status.out, 2);
+  const qr = rn(['qr']);
+  check('dev status and the connect QR', status.code === 0 && /devserver|metro|:8095/.test(status.out) && /qr image: .*\.png/.test(qr.out) && /8095/.test(qr.out));
+  const reload = rn(['dev', 'reload']);
+  check('a reload reaches the app', /reload sent/.test(reload.out) && on(['wait', 'id=title', '--timeout', '30']).code === 0);
+
+  // More network rules: a slow answer and no network at all, inside the app's HTTP client.
+  rn(['net', 'delay', '/hello', '--ms', '1500']);
+  const slow = steps('press id=fetch\nwait text~="hello from the stand" 10');
+  const slowLog = rn(['app-log', '-n', '3']).out;
+  rn(['net', 'clear']);
+  rn(['net', 'offline']);
+  const offline = steps('press id=fetch\nwait text~="failed" 10');
+  rn(['net', 'clear']);
+  check('net delay and offline reach the app', slow.code === 0 && /\/hello → 200 in (1[5-9]\d\d|[2-9]\d{3}) ms/.test(slowLog) && offline.code === 0, slowLog.split('\n').slice(-1)[0]);
   return checks;
+};
+
+/**
+ * A build with the bundle inside (`dev embed`), installed and run with no dev server in the loop. Android only:
+ * the example's embed command is its Gradle build.
+ */
+export const rnEmbedChecks = ({rn, device, apk, install}) => {
+  const embed = rn(['dev', 'embed'], {timeout: 1_200_000});
+  console.log(embed.out.split('\n').slice(0, 3).join('\n'));
+  const built = /✓ android: \w+ \d+ KB/.test(embed.out) && /✓ build in/.test(embed.out);
+  install(apk);
+  rn(['down', 'devserver']);
+  const run = rn(['run', '--steps', 'open!\nwait id=title 60\npress id=greet\nexpect text="Hello, stranger"', '--device', device]);
+  console.log(run.out.split('\n').slice(0, 2).join('\n'));
+  rn(['up', 'devserver'], {timeout: 900_000});
+  return [{name: 'an embedded build runs with no dev server', ok: built && run.code === 0}];
 };

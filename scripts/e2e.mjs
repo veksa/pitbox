@@ -15,7 +15,7 @@ import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {rnChecks} from './e2e-rn.mjs';
+import {rnChecks, rnEmbedChecks} from './e2e-rn.mjs';
 import {featureChecks} from './e2e-features.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -156,6 +156,7 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
   await runKind('react-native', 'phone', pitbox, must, async (avd, checks) => {
     console.log(must(['install', rnApk, '--device', avd, '--replace']));
     checks.push(...rnChecks({rn: pitbox, device: avd, rnDir, platform: 'android'}));
+    checks.push(...rnEmbedChecks({rn: pitbox, device: avd, apk: rnApk, install: apk => console.log(must(['install', apk, '--device', avd, '--replace']))}));
   });
   pitbox(['down']);
   pitbox(['daemon', 'stop']);
