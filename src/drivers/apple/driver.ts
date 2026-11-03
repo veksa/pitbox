@@ -3,6 +3,7 @@
 // reported as unsupported, never emulated silently.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
@@ -239,6 +240,50 @@ export class AppleDriver {
       fs.rmSync(path.join(dir, entry), {recursive: true, force: true});
     }
     for (const sub of ['Documents', 'Library', 'tmp']) fs.mkdirSync(path.join(dir, sub), {recursive: true});
+  }
+
+  /** Where a named copy of an app's data lives on this Mac: next to pitbox's other caches, per simulator. */
+  #appStateDir(udid: string, bundleId: string, name: string) {
+    return path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'app-states', udid, bundleId, name);
+  }
+
+  async #container(udid: string, bundleId: string) {
+    const dir = (await this.#ok(['get_app_container', udid, bundleId, 'data'], 'get_app_container')).trim();
+    if (!dir || !fs.existsSync(dir) || !dir.includes('/Containers/Data/Application/')) throw new AppleError(`no data container for ${bundleId}`);
+    return dir;
+  }
+
+  /**
+   * A simulator's side of a named state: a copy of the app's data container (simctl has no snapshot of a whole
+   * simulator). The app is stopped first, so nothing is half written.
+   */
+  async appStateSave(udid: string, bundleId: string, name: string) {
+    await this.stop(udid, bundleId);
+    const dir = await this.#container(udid, bundleId);
+    const dest = this.#appStateDir(udid, bundleId, name);
+    fs.rmSync(dest, {recursive: true, force: true});
+    fs.mkdirSync(path.dirname(dest), {recursive: true});
+    fs.cpSync(dir, dest, {recursive: true});
+  }
+
+  /** Brings the app's data back as it was saved, with the app stopped; the next launch starts from it. */
+  async appStateRestore(udid: string, bundleId: string, name: string) {
+    const src = this.#appStateDir(udid, bundleId, name);
+    if (!fs.existsSync(src)) throw new AppleError(`no saved app data "${name}" for ${bundleId} on this simulator`);
+    await this.stop(udid, bundleId);
+    const dir = await this.#container(udid, bundleId);
+    for (const entry of fs.readdirSync(dir)) {
+      if (entry.startsWith('.com.apple.mobile_container_manager')) continue;
+      fs.rmSync(path.join(dir, entry), {recursive: true, force: true});
+    }
+    for (const entry of fs.readdirSync(src)) {
+      if (entry.startsWith('.com.apple.mobile_container_manager')) continue;
+      fs.cpSync(path.join(src, entry), path.join(dir, entry), {recursive: true});
+    }
+  }
+
+  async appStateDelete(udid: string, bundleId: string, name: string) {
+    fs.rmSync(this.#appStateDir(udid, bundleId, name), {recursive: true, force: true});
   }
 
   /**

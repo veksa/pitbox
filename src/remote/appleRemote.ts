@@ -13,7 +13,7 @@ import type {CrashSource, UiRunner} from '../ui/device.ts';
 /** What the engine uses of an Apple driver; the local driver and the remote one both provide it. */
 export type AppleDevices = Pick<
   AppleDriver,
-  'simulators' | 'booted' | 'resolve' | 'boot' | 'shutdown' | 'install' | 'open' | 'stop' | 'clear' | 'uninstall' | 'packages' | 'logs' | 'settings' | 'screenshot' | 'info' | 'perf' | 'setDefaults' | 'fold' | 'turn'
+  'simulators' | 'booted' | 'resolve' | 'boot' | 'shutdown' | 'install' | 'open' | 'stop' | 'clear' | 'uninstall' | 'packages' | 'logs' | 'settings' | 'screenshot' | 'info' | 'perf' | 'setDefaults' | 'fold' | 'turn' | 'appStateSave' | 'appStateRestore' | 'appStateDelete'
 >;
 
 export class RemoteApple implements AppleDevices {
@@ -69,6 +69,9 @@ export class RemoteApple implements AppleDevices {
   open = (udid: string, target: string, opts: {relaunch?: boolean; bundleId?: string; args?: string[]} = {}) => this.call<{totalMs?: number; pid?: number}>('open', {udid, target, opts});
   stop = async (udid: string, bundleId: string) => void (await this.call('stop', {udid, bundleId}));
   clear = async (udid: string, bundleId: string) => void (await this.call('clear', {udid, bundleId}));
+  appStateSave = async (udid: string, bundleId: string, name: string) => void (await this.call('appStateSave', {udid, bundleId, name}, 120_000));
+  appStateRestore = async (udid: string, bundleId: string, name: string) => void (await this.call('appStateRestore', {udid, bundleId, name}, 120_000));
+  appStateDelete = async (udid: string, bundleId: string, name: string) => void (await this.call('appStateDelete', {udid, bundleId, name}));
   uninstall = async (udid: string, bundleId: string) => void (await this.call('uninstall', {udid, bundleId}));
   packages = (udid: string, filter?: string) => this.call<string[]>('packages', {udid, filter});
   logs = (udid: string, opts: Parameters<AppleDriver['logs']>[1] = {}) => this.call<string[]>('logs', {udid, opts});

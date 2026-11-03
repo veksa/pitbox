@@ -1,5 +1,6 @@
 // Named stand states: a device snapshot (the app and its data included) plus the project's own backend dump,
 // saved together and restored together — "signed in, three items in the cart" in seconds instead of steps.
+// The device side is an emulator snapshot on Android and a copy of the app's data on an Apple simulator.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +10,10 @@ import {renderTemplate} from '../util/text.ts';
 import type {StandContext} from './services.ts';
 
 export type StatesConfig = {save?: string; restore?: string};
-export type StateInfo = {name: string; savedAt: number; device?: string; avd?: string; backend: boolean};
+export type StateInfo = {name: string; savedAt: number; device?: string; avd?: string; backend: boolean; kind?: 'emulator' | 'app-data'};
+
+/** A device's side of a state, kept by its driver under the state's name. */
+export type DeviceSnapshot = {id: string; label?: string; kind: 'emulator' | 'app-data'; save(name: string): Promise<void>; load(name: string): Promise<void>; remove(name: string): Promise<void>};
 
 const snapshotName = (name: string) => `pitbox-${name}`;
 
@@ -23,6 +27,45 @@ export const snapshotFailure = async (android: Pick<AndroidDriver, 'devices'>, s
   if (!online) return `${said ? `${said} — ` : ''}the emulator ${serial} is gone (it exited during the snapshot, which writes the whole RAM to disk: short of memory or disk space); boot it again`;
   if (r.timedOut) return 'the emulator did not answer in time';
   return said || `adb exited with ${r.code ?? 'no code'} and said nothing`;
+};
+
+/**
+ * A loaded snapshot is a restore only once adb reaches the device again. The emulator says OK as soon as the RAM is
+ * back, and adb can hold the device offline for good after it (its adb port stops answering); that is reported here,
+ * not left for the next command to trip over.
+ */
+const backOnline = async (android: Pick<AndroidDriver, 'devices' | 'adb'>, serial: string, timeoutMs: number) => {
+  const end = Date.now() + timeoutMs;
+  let reconnected = false;
+  for (;;) {
+    const d = (await android.devices().catch(() => [])).find(x => x.serial === serial);
+    if (d?.state === 'device') return;
+    if (Date.now() > end) throw new Error(`the snapshot loaded, but ${serial} stayed ${d?.state ?? 'missing'} in adb for ${Math.round(timeoutMs / 1000)}s — boot it again (a cold boot) and save the state anew`);
+    if (!reconnected && d?.state === 'offline' && Date.now() > end - timeoutMs / 2) {
+      reconnected = true;
+      await android.adb(['reconnect', 'offline'], undefined, {timeoutMs: 10_000}).catch(() => undefined);
+    }
+    await new Promise(r => setTimeout(r, Math.min(1000, timeoutMs / 10)));
+  }
+};
+
+/** An emulator's side of a state: its own snapshot, by `adb emu avd snapshot`. */
+export const emulatorSnapshot = (android: Pick<AndroidDriver, 'devices' | 'adb'>, serial: string, label?: string, onlineTimeoutMs = 60_000): DeviceSnapshot => {
+  const emu = async (op: 'save' | 'load', n: string) => {
+    const r = await android.adb(['emu', 'avd', 'snapshot', op, n], serial, {timeoutMs: 180_000});
+    if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot ${op === 'save' ? 'failed' : 'load failed'}: ${await snapshotFailure(android, serial, r)}`);
+  };
+  return {
+    id: serial,
+    label,
+    kind: 'emulator',
+    save: n => emu('save', n),
+    load: async n => {
+      await emu('load', n);
+      await backOnline(android, serial, onlineTimeoutMs);
+    },
+    remove: async n => void (await android.adb(['emu', 'avd', 'snapshot', 'delete', n], serial, {timeoutMs: 60_000})),
+  };
 };
 
 export const validStateName = (name: string) => {
@@ -68,21 +111,17 @@ export class StateStore {
     return true;
   }
 
-  async save(name: string, android: AndroidDriver | undefined, serial: string | undefined, avd: string | undefined): Promise<StateInfo> {
+  async save(name: string, device: DeviceSnapshot | undefined): Promise<StateInfo> {
     validStateName(name);
     fs.mkdirSync(this.#dir, {recursive: true});
-    if (serial) {
-      if (!serial.startsWith('emulator-')) throw new Error('device snapshots need an emulator');
-      const r = await android!.adb(['emu', 'avd', 'snapshot', 'save', snapshotName(name)], serial, {timeoutMs: 180_000});
-      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot failed: ${await snapshotFailure(android!, serial, r)}`);
-    }
+    await device?.save(snapshotName(name));
     const backend = await this.#hook('save', name);
-    const info: StateInfo = {name, savedAt: Date.now(), device: serial, avd, backend};
+    const info: StateInfo = {name, savedAt: Date.now(), device: device?.id, avd: device?.label, backend, ...(device ? {kind: device.kind} : {})};
     fs.writeFileSync(this.#meta(name), JSON.stringify(info, null, 2));
     return info;
   }
 
-  async restore(name: string, android: AndroidDriver | undefined, serial: string | undefined): Promise<StateInfo & {ms: number}> {
+  async restore(name: string, device: DeviceSnapshot | undefined): Promise<StateInfo & {ms: number}> {
     validStateName(name);
     const t0 = Date.now();
     if (!fs.existsSync(this.#meta(name))) throw new Error(`no state "${name}" (saved: ${this.list().map(s => s.name).join(', ') || 'none'})`);
@@ -90,42 +129,15 @@ export class StateStore {
     // Backend first: the app restored from the snapshot reconnects to data that already matches it.
     if (info.backend) await this.#hook('restore', name);
     if (info.device) {
-      if (!serial) throw new Error(`state "${name}" has a device snapshot (${info.avd ?? info.device}); boot that emulator first`);
-      const r = await android!.adb(['emu', 'avd', 'snapshot', 'load', snapshotName(name)], serial, {timeoutMs: 180_000});
-      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot load failed: ${await snapshotFailure(android!, serial, r)}`);
-      await this.#online(android!, serial);
+      if (!device || (info.kind === 'app-data' && device.id !== info.device)) throw new Error(`state "${name}" has a device side (${info.avd ?? info.device}); boot that ${info.kind === 'app-data' ? 'simulator' : 'emulator'} first`);
+      await device.load(snapshotName(name));
     }
     return {...info, ms: Date.now() - t0};
   }
 
-  /**
-   * A loaded snapshot is a restore only once adb reaches the device again. The emulator says OK as soon as the RAM
-   * is back, and adb can hold the device offline for good after it (its adb port stops answering); that is reported
-   * here, not left for the next command to trip over.
-   */
-  async #online(android: Pick<AndroidDriver, 'devices' | 'adb'>, serial: string, timeoutMs = this.onlineTimeoutMs) {
-    const end = Date.now() + timeoutMs;
-    let reconnected = false;
-    for (;;) {
-      const d = (await android.devices().catch(() => [])).find(x => x.serial === serial);
-      if (d?.state === 'device') return;
-      if (Date.now() > end) {
-        throw new Error(`the snapshot loaded, but ${serial} stayed ${d?.state ?? 'missing'} in adb for ${Math.round(timeoutMs / 1000)}s — boot it again (a cold boot) and save the state anew`);
-      }
-      if (!reconnected && d?.state === 'offline' && Date.now() > end - timeoutMs / 2) {
-        reconnected = true;
-        await android.adb(['reconnect', 'offline'], undefined, {timeoutMs: 10_000}).catch(() => undefined);
-      }
-      await new Promise(r => setTimeout(r, Math.min(1000, timeoutMs / 10)));
-    }
-  }
-
-  /** How long a restored emulator gets to come back online in adb. */
-  onlineTimeoutMs = 60_000;
-
-  async remove(name: string, android: AndroidDriver | undefined, serial: string | undefined) {
+  async remove(name: string, device: DeviceSnapshot | undefined) {
     validStateName(name);
-    if (serial) await android?.adb(['emu', 'avd', 'snapshot', 'delete', snapshotName(name)], serial, {timeoutMs: 60_000});
+    await device?.remove(snapshotName(name)).catch(() => undefined);
     fs.rmSync(this.#meta(name), {force: true});
     fs.rmSync(this.#file(name), {force: true});
   }

@@ -170,7 +170,6 @@ describe('a restored emulator', () => {
     const s = new StateStore({root: dir, stateDir: dir});
     fs.mkdirSync(path.join(dir, 'states'), {recursive: true});
     fs.writeFileSync(path.join(dir, 'states', 's1.json'), JSON.stringify({name: 's1', savedAt: 0, device: 'emulator-5554', avd: 'Pixel', backend: false}));
-    s.onlineTimeoutMs = 300;
     return s;
   };
 
@@ -186,9 +185,36 @@ describe('a restored emulator', () => {
       devices: async () => [{serial: 'emulator-5554', state}],
     };
     const s = await store(dir);
-    await expect(s.restore('s1', android as never, 'emulator-5554')).rejects.toThrow(/stayed offline in adb .* boot it again/);
+    const {emulatorSnapshot} = await import('./stand/states.ts');
+    const emulator = emulatorSnapshot(android as never, 'emulator-5554', 'Pixel', 300);
+    await expect(s.restore('s1', emulator)).rejects.toThrow(/stayed offline in adb .* boot it again/);
     expect(calls).toContain('reconnect offline');
     state = 'device';
-    await expect(s.restore('s1', android as never, 'emulator-5554')).resolves.toMatchObject({name: 's1'});
+    await expect(s.restore('s1', emulator)).resolves.toMatchObject({name: 's1'});
+describe('named states', () => {
+  it("save and bring back the backend and the device's side, backend first", async () => {
+    const {StateStore} = await import('./stand/states.ts');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-states-'));
+    const order: string[] = [];
+    const store = new StateStore(
+      {root, stateDir: path.join(root, '.pitbox')},
+      {save: `node -e "require('fs').writeFileSync('{file}', '7')"`, restore: `node -e "require('fs').writeFileSync('restored', require('fs').readFileSync('{file}'))"`},
+    );
+    const device = {
+      id: 'AAA',
+      label: 'iPhone',
+      kind: 'app-data' as const,
+      save: async (n: string) => void order.push(`save ${n}`),
+      load: async (n: string) => void order.push(`load ${n}`),
+      remove: async (n: string) => void order.push(`remove ${n}`),
+    };
+    const info = await store.save('signed-in', device);
+    expect(info).toMatchObject({name: 'signed-in', device: 'AAA', avd: 'iPhone', backend: true, kind: 'app-data'});
+    await store.restore('signed-in', device);
+    expect(fs.readFileSync(path.join(root, 'restored'), 'utf8')).toBe('7');
+    await expect(store.restore('signed-in', {...device, id: 'BBB'})).rejects.toThrow(/boot that simulator first/);
+    await store.remove('signed-in', device);
+    expect(order).toEqual(['save pitbox-signed-in', 'load pitbox-signed-in', 'remove pitbox-signed-in']);
+    expect(store.list()).toEqual([]);
   });
 });
