@@ -188,20 +188,56 @@ export const xrView = async (serial: string, op: string, value?: string): Promis
   const port = Number(/^emulator-(\d+)$/.exec(serial)?.[1]);
   const ep = port ? findEndpoint(port) : undefined;
   if (!ep) throw new AndroidError(`${serial} has no emulator control channel`, 'look, move and recenter work on an XR emulator');
-  const nums = (value ?? '').split(/[\s,]+/).filter(Boolean).map(Number);
+  const nums = op === 'env' ? [] : (value ?? '').split(/[\s,]+/).filter(Boolean).map(Number);
   if (nums.some(n => !Number.isFinite(n))) throw new AndroidError(`xr ${op}: numbers, comma-separated`);
   const [a = 0, b = 0, c = 0] = nums;
   const rad = (d: number) => (d * Math.PI) / 180;
+  // The surroundings: a living room by day or by night, and how much of it shows through (passthrough).
+  if (op === 'env' || op === 'passthrough' || op === 'options') {
+    const {decodeXrOptions} = await import('./emulatorGrpc.ts');
+    const now = decodeXrOptions(await call(ep, 'getXrOptions', [Buffer.alloc(0)]));
+    if (op === 'options') return {op, value: fmtXrOptions(now)};
+    const next = {...now};
+    if (op === 'env') {
+      const env = XR_ENV[(value ?? '').trim()];
+      if (env === undefined) throw new AndroidError('xr env day|night');
+      next.environment = env;
+    } else {
+      if (!(nums.length === 1 && a >= 0 && a <= 1)) throw new AndroidError('xr passthrough 0…1', '0 hides the surroundings, 1 shows them fully');
+      next.passthrough = a;
+    }
+    await call(ep, 'setXrOptions', [encode.xrOptions(next)]);
+    await new Promise(r => setTimeout(r, 600));
+    return {op, value: fmtXrOptions(decodeXrOptions(await call(ep, 'getXrOptions', [Buffer.alloc(0)])))};
+  }
+  // A head in motion: an angular velocity (degrees a second) or a velocity (metres a second) held for `ms`, then
+  // stopped — what a turn or a step looks like to the app while it happens.
+  if (op === 'spin' || op === 'drift') {
+    const ms = nums[3] ?? 1000;
+    if (!(ms > 0 && ms <= 10_000)) throw new AndroidError(`xr ${op}: the duration is 1…10000 ms`);
+    const field = op === 'spin' ? 12 : 13;
+    const v = op === 'spin' ? encode.vec3(rad(b), rad(a), rad(c)) : encode.vec3(a, b, c);
+    await call(ep, 'streamInputEvent', [encode.input(field, v)]);
+    await new Promise(r => setTimeout(r, ms));
+    await call(ep, 'streamInputEvent', [encode.input(field, encode.vec3(0, 0, 0))]);
+    await new Promise(r => setTimeout(r, 600));
+    return {op, value};
+  }
   let event: Buffer;
   if (op === 'recenter') event = encode.input(9, Buffer.alloc(0));
   // Yaw turns around the vertical axis (y), pitch around x, roll around z; positive yaw looks left.
   else if (op === 'look') event = encode.input(10, encode.vec3(rad(b), rad(a), rad(c)));
   else if (op === 'move') event = encode.input(11, encode.vec3(a, b, c));
-  else throw new AndroidError('xr look yaw[,pitch[,roll]] | move dx,dy,dz | recenter | panel …');
+  else throw new AndroidError('xr look yaw[,pitch[,roll]] | move dx,dy,dz | spin yaw,pitch,roll[,ms] | drift dx,dy,dz[,ms] | recenter | env day|night | passthrough 0…1 | options | panel …');
   await call(ep, 'streamInputEvent', [event]);
   await new Promise(r => setTimeout(r, 600));
   return {op, value};
 };
+
+const XR_ENV: Record<string, number> = {day: 0, night: 1};
+
+const fmtXrOptions = (o: {environment: number; passthrough: number; dimming: number}) =>
+  `environment ${Object.keys(XR_ENV).find(k => XR_ENV[k] === o.environment) ?? o.environment} · passthrough ${Math.round(o.passthrough * 100) / 100} · dimming ${Math.round(o.dimming * 100) / 100}`;
 
 /** The shell's controls of an app's panel on XR, by the ids of its caption and caption menu. */
 export const XR_PANEL: Record<string, {id: string; menu?: boolean}> = {

@@ -362,3 +362,14 @@ describe('android perf', () => {
     expect(text).not.toContain('4950');
   });
 });
+
+describe('xr emulator surroundings', () => {
+  it('reads back the options it writes', async () => {
+    const {decodeXrOptions, encode} = await import('./drivers/android/emulatorGrpc.ts');
+    expect(decodeXrOptions(Buffer.alloc(0))).toEqual({environment: 0, passthrough: 0, dimming: 0});
+    const o = decodeXrOptions(encode.xrOptions({environment: 1, passthrough: 1, dimming: 0.5}));
+    expect(o).toEqual({environment: 1, passthrough: 1, dimming: 0.5});
+    // What the emulator answered for night with full passthrough.
+    expect(decodeXrOptions(Buffer.from('0801150000803f', 'hex'))).toEqual({environment: 1, passthrough: 1, dimming: 0});
+  });
+});

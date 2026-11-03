@@ -63,11 +63,47 @@ const fieldFloat = (field: number, f: number) => {
 const fieldMessage = (field: number, body: Buffer) => Buffer.concat([varint((field << 3) | 2), varint(body.length), body]);
 
 export const encode = {
-  xrOptions: (environment: number, passthrough: number) => Buffer.concat([fieldVarint(1, environment), fieldFloat(2, passthrough)]),
+  xrOptions: (o: XrOptions) => Buffer.concat([fieldVarint(1, o.environment), fieldFloat(2, o.passthrough), fieldFloat(4, o.dimming)]),
   mouse: (x: number, y: number, buttons: number) => Buffer.concat([fieldVarint(1, x), fieldVarint(2, y), fieldVarint(3, buttons)]),
   vec3: (x: number, y: number, z: number) => Buffer.concat([fieldFloat(1, x), fieldFloat(2, y), fieldFloat(3, z)]),
-  /** InputEvent with one of its fields: 7 hand, 8 eye, 9 command, 10 head rotation, 11 head movement. */
+  /** InputEvent with one of its fields: 7 hand, 8 eye, 9 command, 10 head rotation, 11 head movement, 12 head angular velocity, 13 head velocity. */
   input: (field: number, body: Buffer) => fieldMessage(field, body),
+};
+
+/** An XR emulator's surroundings: environment 0 a living room by day, 1 by night; passthrough and dimming 0…1. */
+export type XrOptions = {environment: number; passthrough: number; dimming: number};
+
+/** Reads an XrOptions message: field 1 a varint, fields 2 and 4 floats; absent fields are 0. */
+export const decodeXrOptions = (b: Buffer): XrOptions => {
+  const o: XrOptions = {environment: 0, passthrough: 0, dimming: 0};
+  let i = 0;
+  const readVarint = () => {
+    let v = 0;
+    let shift = 0;
+    for (;;) {
+      const byte = b[i++]!;
+      v |= (byte & 0x7f) << shift;
+      if (!(byte & 0x80)) return v >>> 0;
+      shift += 7;
+    }
+  };
+  while (i < b.length) {
+    const key = readVarint();
+    const field = key >>> 3;
+    const wire = key & 7;
+    if (wire === 0) {
+      const v = readVarint();
+      if (field === 1) o.environment = v;
+    } else if (wire === 5) {
+      const f = b.readFloatLE(i);
+      i += 4;
+      if (field === 2) o.passthrough = f;
+      if (field === 4) o.dimming = f;
+    } else if (wire === 1) i += 8;
+    else if (wire === 2) i += readVarint();
+    else break;
+  }
+  return o;
 };
 
 const frame = (msg: Buffer) => {

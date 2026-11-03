@@ -52,7 +52,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   window freeform [x,y,w,h] | fullscreen | resize x,y,w,h    the app as a desktop-style window (relaunches it)
   wear tile add|show|remove <component> | face <package|component> | ambient on|off | home    watches
   car day|night|auto | drive [m/s] | park | rotary cw|ccw [n]    cars (driving blocks apps not made for it)
-  xr look yaw[,pitch[,roll]] | move dx,dy,dz | recenter | panel minimize|close|menu|info|spatial-audio|tidy|close-app    XR headsets
+  xr look yaw[,pitch[,roll]] | move dx,dy,dz | spin yaw,pitch,roll[,ms] | drift dx,dy,dz[,ms] | recenter | env day|night | passthrough 0…1 | options | panel minimize|close|menu|info|spatial-audio|tidy|close-app    XR headsets
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
   focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
