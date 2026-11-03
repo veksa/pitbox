@@ -23,8 +23,11 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   and answers with one verdict. On failure: the line, the error, crashes or ANRs, a screenshot path and the
   screen as text — enough to act without another snapshot.
 - **New screen → `snapshot` once; after that, actions answer with the diff.** Every action waits for the UI to
-  settle (and for the app's network, when the dev server injects the in-app channel).
-- **Selectors:** `@e12` from the last snapshot, `id=…` (testID), `text=…`, `label=…`, plain words, or `x,y`.
+  settle (and for the app's network, when the dev server injects the in-app channel). A press whose target has
+  something painted over its centre (a floating button, an overlay) taps an uncovered part of it and says so in a
+  `note`; a permission request over the app is named in the error of a selector that finds nothing.
+- **Selectors:** `@e12` from the last snapshot, `id=…` (testID), `text=…` (the string a line quotes), `label=…`,
+  plain words, or `x,y`.
   Prefer ids: they survive copy changes and locales.
 - **Jump, do not walk:** `goto route=…` opens a screen by deep link; `as user=…` signs in;
   `state action=restore name=…` brings back a saved device + backend state in seconds.
@@ -85,7 +88,7 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.
 - `js action=eval expr=…` — read the app's state from inside (a store, a module's export, a feature flag);
-  promises are awaited. `js action=log at=src/Home.tsx:42 exprs=["user.id","items.length"]` → interact →
+  promises are awaited, and `await` works at the top. `js action=log at=src/Home.tsx:42 exprs=["user.id","items.length"]` → interact →
   `js action=hits` — what the line saw each time it ran, without editing code or a rebuild; one failing
   expression does not hide the others. `js action=clear` when done. The first logpoint reloads an app that runs
   bytecode (the runtime needs source to read locals), so set it before reaching the screen you care about.
