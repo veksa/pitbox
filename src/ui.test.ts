@@ -391,6 +391,38 @@ describe('a keyboard over the target', () => {
   });
 });
 
+describe('a keyboard that comes up by itself', () => {
+  it('is waited for when the target is missing, then hidden', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let trees = 0;
+    let keyboard = false;
+    let hidden = false;
+    const calls: string[] = [];
+    const greet: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 100, 400, 150], id: 'greet', t: 'Greet', f: 'c'};
+    const face: UiNode = {p: -1, w: 0, c: 'View', b: [0, 0, 400, 400], id: 'watchface'};
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key' || cmd === 'tap') calls.push(cmd);
+        if (cmd === 'key' && args.code === 4) {
+          keyboard = false;
+          hidden = true;
+        }
+        if (cmd === 'tree') {
+          // A fullscreen keyboard on its way: first the app is gone from the list, then the keyboard is there.
+          if (++trees === 2 && !hidden) keyboard = true;
+          if (hidden) return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}], nodes: [greet]};
+          return keyboard ? {windows: [{type: 'ime', title: 'Keyboard', pkg: 'com.example.ime'}], nodes: []} : {windows: [{type: 'app', title: '', pkg: 'com.example.face'}], nodes: [face]};
+        }
+        if (cmd === 'info') return {width: 400, height: 400};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('dev', runner as never).press('id=greet');
+    expect(calls).toEqual(['key', 'tap']);
+  });
+});
+
 describe('a tap that only closed the keyboard', () => {
   it('is pressed again, so the control gets it', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

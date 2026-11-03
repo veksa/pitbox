@@ -154,14 +154,26 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     // exposes only its root).
     // The window list holds only windows on screen, so an input method window means a keyboard is up — whether
     // or not it exposes any views (a car's keyboard sometimes shows none at all).
-    const imeShown = snap.windows.some(w => w.type === 'ime');
-    const top = ref || !imeShown ? undefined : (keyboardTop(snap, (await this.size()).height) ?? 0);
+    let imeShown = snap.windows.some(w => w.type === 'ime');
     let target: ReturnType<typeof resolveTarget> | undefined;
     try {
       target = resolveTarget(snap, selector);
     } catch (e) {
-      if (top === undefined) throw e;
+      // A field that takes focus on launch brings up a keyboard by itself, a fullscreen one on a watch, which
+      // hides the app a moment after it looked ready: a miss waits a second for one before it fails.
+      if (ref || imeShown) {
+        if (!imeShown) throw e;
+      } else {
+        const end = Date.now() + 1000;
+        while (!imeShown && Date.now() < end) {
+          await new Promise(r => setTimeout(r, 200));
+          snap = await this.snapshot();
+          imeShown = snap.windows.some(w => w.type === 'ime');
+        }
+        if (!imeShown) throw e;
+      }
     }
+    const top = ref || !imeShown ? undefined : (keyboardTop(snap, (await this.size()).height) ?? 0);
     const covered = top !== undefined && (!target || (target.node && snap.windows[target.node.w]?.type !== 'ime' && target.y >= top));
     if (covered || !target) {
       snap = await this.#hideKeyboard(selector);
@@ -175,12 +187,19 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
    * keyboard (landscape on a small screen) hides the app's window from the list until a moment after it goes.
    */
   async #hideKeyboard(selector?: string): Promise<Snapshot> {
+    // A keyboard that is still coming up does not take back yet: the app does, and closes. Back goes once the
+    // screen is quiet and the keyboard is still there.
+    await this.runner.call('idle', {quiet: 300, timeout: 1500}, 6000);
+    const now = await this.snapshot();
+    if (!now.windows.some(w => w.type === 'ime')) return now;
     await this.runner.call('key', {code: 4});
     await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
     const end = Date.now() + 2500;
     for (;;) {
       const snap = await this.snapshot();
-      if (!snap.windows.some(w => w.type === 'ime') || (selector && matches(snap, selector)) || Date.now() > end) return snap;
+      // Done when the keyboard is gone and the target is back: a fullscreen keyboard keeps the app's window
+      // listed behind it while it closes, and hides it from the list for a moment after.
+      if ((!snap.windows.some(w => w.type === 'ime') && (!selector || matches(snap, selector))) || Date.now() > end) return snap;
       await new Promise(r => setTimeout(r, 200));
     }
   }
