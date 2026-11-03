@@ -163,3 +163,32 @@ describe('a failed emulator snapshot', () => {
     expect(await snapshotFailure(there as never, 'emulator-5554', {stdout: 'KO: no space', stderr: ''})).toBe('KO: no space');
   });
 });
+
+describe('a restored emulator', () => {
+  const store = async (dir: string) => {
+    const {StateStore} = await import('./stand/states.ts');
+    const s = new StateStore({root: dir, stateDir: dir});
+    fs.mkdirSync(path.join(dir, 'states'), {recursive: true});
+    fs.writeFileSync(path.join(dir, 'states', 's1.json'), JSON.stringify({name: 's1', savedAt: 0, device: 'emulator-5554', avd: 'Pixel', backend: false}));
+    s.onlineTimeoutMs = 300;
+    return s;
+  };
+
+  it('is a restore only once adb reaches it again, and an offline one is reported', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-state-'));
+    const calls: string[] = [];
+    let state = 'offline';
+    const android = {
+      adb: async (args: string[]) => {
+        calls.push(args.join(' '));
+        return {stdout: args[0] === 'emu' ? 'OK' : '', stderr: '', code: 0};
+      },
+      devices: async () => [{serial: 'emulator-5554', state}],
+    };
+    const s = await store(dir);
+    await expect(s.restore('s1', android as never, 'emulator-5554')).rejects.toThrow(/stayed offline in adb .* boot it again/);
+    expect(calls).toContain('reconnect offline');
+    state = 'device';
+    await expect(s.restore('s1', android as never, 'emulator-5554')).resolves.toMatchObject({name: 's1'});
+  });
+});

@@ -93,9 +93,35 @@ export class StateStore {
       if (!serial) throw new Error(`state "${name}" has a device snapshot (${info.avd ?? info.device}); boot that emulator first`);
       const r = await android!.adb(['emu', 'avd', 'snapshot', 'load', snapshotName(name)], serial, {timeoutMs: 180_000});
       if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot load failed: ${await snapshotFailure(android!, serial, r)}`);
+      await this.#online(android!, serial);
     }
     return {...info, ms: Date.now() - t0};
   }
+
+  /**
+   * A loaded snapshot is a restore only once adb reaches the device again. The emulator says OK as soon as the RAM
+   * is back, and adb can hold the device offline for good after it (its adb port stops answering); that is reported
+   * here, not left for the next command to trip over.
+   */
+  async #online(android: Pick<AndroidDriver, 'devices' | 'adb'>, serial: string, timeoutMs = this.onlineTimeoutMs) {
+    const end = Date.now() + timeoutMs;
+    let reconnected = false;
+    for (;;) {
+      const d = (await android.devices().catch(() => [])).find(x => x.serial === serial);
+      if (d?.state === 'device') return;
+      if (Date.now() > end) {
+        throw new Error(`the snapshot loaded, but ${serial} stayed ${d?.state ?? 'missing'} in adb for ${Math.round(timeoutMs / 1000)}s — boot it again (a cold boot) and save the state anew`);
+      }
+      if (!reconnected && d?.state === 'offline' && Date.now() > end - timeoutMs / 2) {
+        reconnected = true;
+        await android.adb(['reconnect', 'offline'], undefined, {timeoutMs: 10_000}).catch(() => undefined);
+      }
+      await new Promise(r => setTimeout(r, Math.min(1000, timeoutMs / 10)));
+    }
+  }
+
+  /** How long a restored emulator gets to come back online in adb. */
+  onlineTimeoutMs = 60_000;
 
   async remove(name: string, android: AndroidDriver | undefined, serial: string | undefined) {
     validStateName(name);
