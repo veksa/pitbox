@@ -268,6 +268,23 @@ describe('apple driver', () => {
     await expect(make(false).fold('AAA', 'open')).rejects.toThrow('stayed folded');
   }, 15_000);
 
+  it('keeps the simulator list for a moment and drops it when one boots or shuts down', async () => {
+    let lists = 0;
+    const d = Object.assign(Object.create(AppleDriver.prototype) as AppleDriver, {
+      simctl: async (args: string[]) => {
+        if (args[0] === 'list') lists++;
+        return {stdout: JSON.stringify({devices: {'com.apple.CoreSimulator.SimRuntime.iOS-27-2': [{udid: 'AAA', name: 'Phone', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro'}]}}), stderr: '', code: 0, timedOut: false, ms: 0};
+      },
+    });
+    expect(await d.resolve()).toBe('AAA');
+    await d.booted();
+    await d.simulators();
+    expect(lists).toBe(1);
+    await d.shutdown('AAA');
+    await d.simulators();
+    expect(lists).toBe(2);
+  });
+
   it.skipIf(process.platform !== 'darwin')('copies the app data with the app stopped and says whether it was running', async () => {
     const container = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-container-'));
     const dataDir = path.join(container, 'Containers', 'Data', 'Application', 'X');

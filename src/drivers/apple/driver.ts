@@ -133,10 +133,28 @@ export class AppleDriver {
     return r.stdout;
   }
 
+  /**
+   * The list `simctl list` gives, kept for a moment: it costs ~150 ms, and one command resolves its device two or
+   * three times (the target, its UI session, the web check). Booting and shutting down here drop it; a simulator
+   * booted elsewhere shows up within the moment.
+   */
+  private kept?: {at: number; sims: Promise<Simulator[]>};
+
   async simulators(): Promise<Simulator[]> {
-    const r = await this.simctl(['list', 'devices', '-j'], {timeoutMs: 15_000});
-    if (r.code !== 0) throw new AppleError(`simctl list failed: ${r.stderr.trim()}`, 'is Xcode installed and its license accepted (`sudo xcodebuild -license accept`)?');
-    return parseSimulators(r.stdout).filter(s => s.available);
+    if (this.kept && Date.now() - this.kept.at < 1500) return this.kept.sims;
+    const sims = (async () => {
+      const r = await this.simctl(['list', 'devices', '-j'], {timeoutMs: 15_000});
+      if (r.code !== 0) throw new AppleError(`simctl list failed: ${r.stderr.trim()}`, 'is Xcode installed and its license accepted (`sudo xcodebuild -license accept`)?');
+      return parseSimulators(r.stdout).filter(s => s.available);
+    })();
+    this.kept = {at: Date.now(), sims};
+    sims.catch(() => (this.kept = undefined));
+    return sims;
+  }
+
+  /** Forgets the kept list: the set of booted simulators is about to change. */
+  forgetList() {
+    this.kept = undefined;
   }
 
   async booted(): Promise<Simulator[]> {
@@ -157,6 +175,7 @@ export class AppleDriver {
   }
 
   async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number} = {}): Promise<{udid: string; name: string; ms: number; already: boolean; note?: string}> {
+    this.forgetList();
     const t0 = Date.now();
     const sims = await this.simulators();
     const sim = pickSimulator(sims, selector);
@@ -174,6 +193,7 @@ export class AppleDriver {
     const timeoutMs = opts.timeoutMs ?? 240_000;
     const status = await this.simctl(['bootstatus', sim.udid, '-b'], {timeoutMs});
     if (status.timedOut) throw new AppleError(`${sim.name} did not finish booting in ${Math.round(timeoutMs / 1000)}s`, 'try `boot --wipe`');
+    this.forgetList();
     const note = opts.headless ? undefined : await this.#showWindow(sim.udid);
     return {udid: sim.udid, name: sim.name, ms: Date.now() - t0, already: false, ...(note ? {note} : {})};
   }
@@ -191,9 +211,11 @@ export class AppleDriver {
   }
 
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {
+    this.forgetList();
     const t0 = Date.now();
     const r = await this.simctl(['shutdown', udid], {timeoutMs: 60_000});
     if (r.code !== 0 && !/current state: Shutdown/i.test(r.stderr)) throw new AppleError(`shutdown failed: ${r.stderr.trim()}`);
+    this.forgetList();
     return {ms: Date.now() - t0, gone: true};
   }
 

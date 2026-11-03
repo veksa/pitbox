@@ -1057,7 +1057,8 @@ export class Engine {
         // A link waits behind the shell's "Open in …?" question until someone answers it.
         let confirmed = false;
         if (target.includes('://')) {
-          const u = await this.ui(str(p, 'device'));
+          // The simulator just resolved, not the selector again.
+          const u = await this.ui(t.id);
           // A link of this app (its scheme, its connect link) into the app already in front comes with no question:
           // the runner stops waiting once it sees the app there. A link of another app is waited for in full.
           const scheme = target.slice(0, target.indexOf('://')).toLowerCase();
