@@ -293,6 +293,47 @@ describe('a target with something drawn over its centre', () => {
   });
 });
 
+describe("iOS's offer to save a password", () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const sheet: UiNode[] = [
+    {p: -1, w: 0, c: 'Other', b: [0, 1400, 1179, 2556], t: 'Save Password?'},
+    {p: 0, w: 0, c: 'Button', b: [80, 2300, 560, 2420], t: 'Not Now', f: 'c'},
+    {p: 0, w: 0, c: 'Button', b: [620, 2300, 1100, 2420], t: 'Save', f: 'c'},
+  ];
+  const home: UiNode[] = [{p: -1, w: 0, c: 'Other', b: [0, 0, 1179, 200], id: 'user-avatar'}];
+
+  it('is declined with Not Now, so a wait sees the app behind it, and the next press says so', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const taps: string[] = [];
+    let shown = true;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(`${args.x},${args.y}`);
+          shown = false;
+        }
+        if (cmd === 'tree') return {windows: app, nodes: shown ? sheet : home};
+        if (cmd === 'info') return {width: 1179, height: 2556};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('sim', runner as never);
+    await ui.wait('id=user-avatar', {timeoutMs: 2000});
+    expect(taps).toEqual(['320,2360']);
+    shown = true;
+    const r = await ui.press('id=user-avatar');
+    expect(r.note).toMatch(/declined "Save Password\?"/);
+  }, 15_000);
+
+  it('is left alone without its Not Now, and nothing else counts as it', async () => {
+    const {passwordOffer} = await import('./ui/snapshot.ts');
+    expect(passwordOffer(buildSnapshot(app, sheet.slice(0, 1)))).toBeUndefined();
+    expect(passwordOffer(buildSnapshot(app, [{...sheet[0]!, t: 'Save your progress?'}, sheet[1]!]))).toBeUndefined();
+    expect(passwordOffer(buildSnapshot(app, sheet))?.title).toBe('Save Password?');
+  });
+});
+
 describe('a keyboard over the target', () => {
   it('is waited out when it was fullscreen and the app comes back a moment later', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

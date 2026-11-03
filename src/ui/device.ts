@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -84,9 +84,27 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.recording?.push(line);
   }
 
+  /** System offers declined on the way (iOS "Save Password?"), told in the next press's note. */
+  declined: string[] = [];
+
   async snapshot(opts: {system?: boolean; bounds?: boolean} = {}): Promise<Snapshot> {
-    const [tree, size] = await Promise.all([this.runner.call<{windows: UiWindow[]; nodes: UiNode[]}>('tree'), this.size()]);
-    this.last = buildSnapshot(tree.windows, tree.nodes, {system: opts.system, bounds: opts.bounds, height: size.height});
+    const read = async () => {
+      const [tree, size] = await Promise.all([this.runner.call<{windows: UiWindow[]; nodes: UiNode[]}>('tree'), this.size()]);
+      return buildSnapshot(tree.windows, tree.nodes, {system: opts.system, bounds: opts.bounds, height: size.height});
+    };
+    let snap = await read();
+    // iOS's "Save Password?" after a sign-in hides the app until it is answered: declined as a person would, so a
+    // wait, a press or a flow sees the app behind it instead of timing out on a sheet no check is about.
+    for (let i = 0; i < 2; i++) {
+      const offer = passwordOffer(snap);
+      if (!offer) break;
+      const [x1, y1, x2, y2] = offer.decline.b;
+      await this.runner.call('tap', {x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2)});
+      this.declined.push(`declined "${offer.title}"`);
+      await new Promise(r => setTimeout(r, 600));
+      snap = await read();
+    }
+    this.last = snap;
     return this.last;
   }
 
@@ -261,6 +279,9 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         note = 'the first tap only closed the keyboard or took the focus off the field: pressed again';
       } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
     }
+    // A system offer declined while the press settled (the sign-in it answered brought it up).
+    const declined = this.declined.splice(0);
+    if (declined.length) note = [note, ...declined].filter(Boolean).join('; ');
     return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...(note ? {note} : {}), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
   }
 

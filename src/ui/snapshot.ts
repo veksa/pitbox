@@ -36,6 +36,19 @@ export const permissionPrompt = (snap: Pick<Snapshot, 'windows' | 'nodes'>): str
   return (nodes.find(n => n.id === 'permission_message') ?? nodes.find(n => n.t && /\?\s*$/.test(n.t)))?.t ?? 'a permission request';
 };
 
+/**
+ * iOS's offer to keep a password the app just signed in with ("Save Password?", "Update Password?"). It covers the
+ * app — what is under it is not in the tree — and the system shows it after any sign-in with a password field,
+ * so no check is ever about it. Returns the button that declines it.
+ */
+export const passwordOffer = (snap: Pick<Snapshot, 'nodes'>): {title: string; decline: UiNode} | undefined => {
+  const text = (n: UiNode) => (n.t ?? n.d ?? '').trim();
+  const title = snap.nodes.map(text).find(t => /^(save|update) password\?$/i.test(t));
+  if (!title) return undefined;
+  const decline = snap.nodes.find(n => /^not now$/i.test(text(n)));
+  return decline ? {title, decline} : undefined;
+};
+
 export type Snapshot = {
   windows: UiWindow[];
   nodes: UiNode[];
