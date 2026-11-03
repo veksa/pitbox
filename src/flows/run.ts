@@ -102,6 +102,20 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
         if (r?.note) notes.push(`line ${s.line} (${s.text}): ${r.note}`);
       }
       return;
+    case 'press?': {
+      // A sheet that may or may not come (a permission prompt, a one-time tip): pressed when it shows within the seconds given (default 3), skipped otherwise.
+      const last = a[a.length - 1];
+      const hasTimeout = a.length > 1 && /^\d+(\.\d+)?$/.test(last ?? '');
+      const selector = (hasTimeout ? a.slice(0, -1) : a).join(' ');
+      const ui = await host.ui();
+      try {
+        await ui.wait(selector, {timeoutMs: seconds(hasTimeout ? last : undefined, 3)});
+      } catch {
+        return;
+      }
+      await ui.press(selector, 'tap');
+      return;
+    }
     case 'fill':
       await (await host.ui()).fill(a.slice(0, -1).join(' '), unquote(a[a.length - 1]!));
       return;

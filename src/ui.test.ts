@@ -158,6 +158,13 @@ describe('flows', () => {
     expect(r.notes.slice(1)).toEqual(['! JS error: boom (fatal)', '    onPress  src/a.ts:3:4']);
   });
 
+  it('presses an optional target when it shows and goes on when it does not', async () => {
+    const {host, calls} = fakeHost([['Save Password?', 'Not Now'], ['Home']]);
+    const r = await runFlow(host, 'press? text="Not Now" 1\npress? text=Later\nexpect text=Home');
+    expect(r).toMatchObject({ok: true, steps: 3});
+    expect(calls).toEqual(['press text="Not Now"']);
+  });
+
   it('folds, rotates and re-windows the device as flow steps', async () => {
     const {host, calls} = fakeHost([['Home']]);
     const r = await runFlow(host, 'posture half\nrotate 90\nwindow freeform 0,0,800,600\nposture reset');
