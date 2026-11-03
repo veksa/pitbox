@@ -306,6 +306,19 @@ export class Engine {
     return this.#android ?? undefined;
   }
 
+  /**
+   * A device as the JS debugger names its app: the model an Android app reports, the simulator's name. A serial
+   * or udid is not in a debugger page's name, so with apps on two devices it would match neither.
+   */
+  async #jsDevice(device?: string): Promise<string | undefined> {
+    if (!device) return undefined;
+    const android = await this.android?.devices().catch(() => []);
+    const a = android?.find(d => d.serial === device || d.avd === device || d.model === device);
+    if (a) return a.model ?? device;
+    const sims = await this.apple?.simulators().catch(() => []);
+    return sims?.find(s => s.udid === device || s.name === device)?.name ?? device;
+  }
+
   /** The local simulators, or a remote Mac's when `apple.remote` names one. */
   get apple(): AppleDevices | undefined {
     const remote = this.config.apple?.remote;
@@ -749,13 +762,13 @@ export class Engine {
 
     jsEval: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
-      return this.#dev.js.evaluate(req(p, 'expr'), str(p, 'device'), (num(p, 'timeout') ?? 10) * 1000);
+      return this.#dev.js.evaluate(req(p, 'expr'), await this.#jsDevice(str(p, 'device')), (num(p, 'timeout') ?? 10) * 1000);
     },
 
     jsLog: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
       const exprs = Array.isArray(p.exprs) ? p.exprs.map(String) : typeof p.exprs === 'string' ? [p.exprs] : [];
-      return this.#dev.js.log(req(p, 'at'), exprs, str(p, 'device'));
+      return this.#dev.js.log(req(p, 'at'), exprs, await this.#jsDevice(str(p, 'device')));
     },
 
     jsHits: async (p: Params) => {
@@ -1288,10 +1301,15 @@ export class Engine {
       } else if (reset && bool(p, 'trace')) device.tracing = 'no platform trace on Apple simulators';
       const dev = this.#dev;
       if (!dev) return device;
-      // React commits come from the in-app script of each connected app; the first answer is shown.
-      const renders = async (q: Record<string, unknown>) => (dev.proxy.listening ? (await dev.proxy.query<Record<string, unknown>>('renders', q, 2000))[0]?.data : undefined);
+      // React commits come from the in-app script of the target's app: with apps on two platforms, its own.
+      const platform = t.platform === 'apple' ? 'ios' : 'android';
+      const renders = async (q: Record<string, unknown>) => {
+        if (!dev.proxy.listening) return undefined;
+        const answers = await dev.proxy.query<Record<string, unknown>>('renders', q, 2000);
+        return (answers.find(a => a.app.hello?.platform === platform) ?? answers[0])?.data;
+      };
       if (reset) {
-        const [jsProfiling, react] = await Promise.all([dev.js.profileStart(str(p, 'device')).catch(() => false), renders({start: true}).catch(() => undefined)]);
+        const [jsProfiling, react] = await Promise.all([dev.js.profileStart(await this.#jsDevice(str(p, 'device'))).catch(() => false), renders({start: true}).catch(() => undefined)]);
         return {...device, jsProfiling, reactRecording: !!react?.started && react.react !== false};
       }
       const [js, react] = await Promise.all([

@@ -319,7 +319,7 @@ export const formatResult = (method: string, r: unknown): string => {
     }
     case 'jsEval': {
       const e = x as unknown as EvalResult;
-      const where = e.apps > 1 ? `  (in ${e.app}; ${e.apps} apps are debuggable — pick one with device)` : '';
+      const where = e.apps > 1 ? `  (in ${e.app}${e.picked ? '' : `; ${e.apps} apps are debuggable — pick one with device`})` : '';
       return `${e.error !== undefined ? `! ${e.error}` : `= ${e.value}`}${where}`;
     }
     case 'jsLog': {

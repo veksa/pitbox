@@ -133,7 +133,7 @@ export const mergeByFunction = (list: {at: string; ms: number}[]): {at: string; 
   return [...by.values()].sort((a, b) => b.ms - a.ms).map(({at, ms}) => ({at, ms}));
 };
 
-export type EvalResult = {value?: string; error?: string; app: string; apps: number; ms: number};
+export type EvalResult = {value?: string; error?: string; app: string; apps: number; picked?: boolean; ms: number};
 
 const KEEP_HITS = 50;
 
@@ -197,7 +197,9 @@ export class JsDebugger {
 
   async #open(device?: string, waitMs = 10_000): Promise<CdpSession> {
     const cur = this.#session;
-    if (cur && !cur.closed && (!device || pickPage([cur.page], device))) return cur;
+    // The open session serves a named device only when it is that device's: with one page in the list `pickPage`
+    // takes it whatever the name, and another device's app would answer.
+    if (cur && !cur.closed && (!device || `${cur.page.deviceName ?? ''} ${cur.page.title}`.toLowerCase().includes(device.toLowerCase()))) return cur;
     // An app that was just opened lists its runtime a few seconds later, once its JS has started.
     let pages = await listPages(this.#port);
     for (const end = Date.now() + waitMs; !pages.length && Date.now() < end; ) {
@@ -290,11 +292,11 @@ export class JsDebugger {
       r = {...r, error: `${r.error} — Git Bash turned a /path/ in the argument into a drive path; run with MSYS_NO_PATHCONV=1`};
     }
     while (r?.pending !== undefined) {
-      if (Date.now() - t0 > timeoutMs) return {error: `the promise did not settle in ${Math.round(timeoutMs / 1000)}s`, app, apps, ms: Date.now() - t0};
+      if (Date.now() - t0 > timeoutMs) return {error: `the promise did not settle in ${Math.round(timeoutMs / 1000)}s`, app, apps, picked: !!device, ms: Date.now() - t0};
       await new Promise(res => setTimeout(res, 100));
       r = await this.#value(s, `${HELPER}.take(${r.pending})`);
     }
-    return {value: r?.value, error: r?.error, app, apps, ms: Date.now() - t0};
+    return {value: r?.value, error: r?.error, app, apps, picked: !!device, ms: Date.now() - t0};
   }
 
   async #enableDebugger(s: CdpSession) {

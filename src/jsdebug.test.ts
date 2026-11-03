@@ -371,3 +371,12 @@ describe('the app runtime', () => {
     expect(vm.runInContext('globalThis.__pitboxJs.hits', ctx)).toEqual([['lp9', 0]]);
   });
 });
+
+describe('eval answers', () => {
+  it('name the app when several are debuggable, and ask for a device only when none was named', async () => {
+    const {formatResult} = await import('./format.ts');
+    expect(formatResult('jsEval', {value: '42', app: 'iPhone 18 Pro', apps: 2, ms: 3})).toBe('= 42  (in iPhone 18 Pro; 2 apps are debuggable — pick one with device)');
+    expect(formatResult('jsEval', {value: '42', app: 'iPhone 18 Pro', apps: 2, picked: true, ms: 3})).toBe('= 42  (in iPhone 18 Pro)');
+    expect(formatResult('jsEval', {value: '42', app: 'Pixel', apps: 1, ms: 3})).toBe('= 42');
+  });
+});
