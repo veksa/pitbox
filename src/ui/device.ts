@@ -204,7 +204,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   }
 
   /**
-   * Hides the on-screen keyboard (back) and returns the screen once the app is there again: a fullscreen
+   * Hides the on-screen keyboard (back, or return where there is no back) and returns the screen once the app is there again: a fullscreen
    * keyboard (landscape on a small screen) hides the app's window from the list until a moment after it goes.
    */
   async #hideKeyboard(selector?: string): Promise<Snapshot> {
@@ -213,7 +213,12 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     await this.runner.call('idle', {quiet: 300, timeout: 1500}, 6000);
     const now = await this.snapshot();
     if (!now.windows.some(w => w.type === 'ime')) return now;
-    await this.runner.call('key', {code: 4});
+    // Back on Android. iOS has no back: return ends the editing there, as a person does (a single-line field gives
+    // up focus on submit), and the keyboard goes with it.
+    await this.runner.call('key', {code: 4}).catch(async (e: Error) => {
+      if (!/no equivalent/.test(e.message)) throw e;
+      await this.runner.call('key', {code: 66});
+    });
     await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
     const end = Date.now() + 2500;
     for (;;) {

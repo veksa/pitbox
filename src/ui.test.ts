@@ -360,6 +360,30 @@ describe('a keyboard over the target', () => {
     expect(calls).toEqual(['key {"code":4}', 'tap {"x":200,"y":425}']);
   });
 
+  it('is closed with return where the device has no back (iOS), and the target pressed after', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = true;
+    const calls: string[] = [];
+    const submit: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 400, 400, 450], id: 'submit', t: 'Sign in', f: 'c'};
+    const keys: UiNode = {p: -1, w: 1, c: 'Keyboard', b: [0, 300, 400, 500]};
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(cmd === 'tap' ? {x: args.x, y: args.y} : args)}`);
+        if (cmd === 'key' && args.code === 4) throw new Error('key code 4 has no equivalent on this device (home, enter and del do)');
+        if (cmd === 'key' && args.code === 66) keyboard = false;
+        if (cmd === 'tree') {
+          const app = {type: 'app', title: '', pkg: 'com.example.app'};
+          return keyboard ? {windows: [app, {type: 'ime', title: 'Keyboard', pkg: 'com.apple.keyboard'}], nodes: [submit, keys]} : {windows: [app], nodes: [submit]};
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('sim', runner as never).press('id=submit');
+    expect(calls).toEqual(['key {"code":4}', 'key {"code":66}', 'tap {"x":200,"y":425}']);
+  });
+
   it('is hidden when a fullscreen one comes up on the tap of a fill, and the text goes in after', async () => {
     const {DeviceUi} = await import('./ui/device.ts');
     let keyboard = false;
