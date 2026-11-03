@@ -1,0 +1,14 @@
+# The XR surroundings: a living room by night with the room fully showing through, then day and back to the
+# app's own space; the app keeps working through each change.
+open!
+wait id=title 30
+xr env night
+xr passthrough 1
+press id=greet
+expect text="Hello, stranger"
+screenshot xr-night
+xr env day
+xr passthrough 0.5
+expect id=title
+xr passthrough 0
+expect id=title

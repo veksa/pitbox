@@ -1,0 +1,21 @@
+# Every control of an XR app's panel: spatial audio off, the app's info and back, tidy up, close the panel and
+# open again, close the app from the caption menu and open it once more.
+open!
+wait id=title 30
+xr panel spatial-audio
+expect id=title
+xr panel info
+wait text="App info" 10
+key back
+wait gone text="App info" 10
+expect id=title
+xr panel tidy
+expect id=title
+xr panel close
+wait gone id=title 10
+open
+wait id=title 20
+xr panel close-app
+wait gone id=title 10
+open!
+wait id=title 20

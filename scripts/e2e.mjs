@@ -30,7 +30,7 @@ const PLAN = {
   foldable: {flows: ['smoke', 'fold', 'mouse', 'window'], fails: []},
   tablet: {flows: ['smoke', 'rotate', 'mouse', 'window'], fails: []},
   desktop: {flows: ['smoke', 'mouse', 'window'], fails: []},
-  xr: {flows: ['smoke', 'mouse', 'xr'], fails: []},
+  xr: {flows: ['smoke', 'mouse', 'xr', 'xr-poses', 'xr-panel', 'xr-world'], fails: []},
   tv: {flows: ['tv'], fails: [], focusMap: true},
   wear: {flows: ['wear', 'watch'], fails: [], apks: ['wear', 'wearface']},
   glasses: {flows: ['smoke', 'glasses'], fails: []},

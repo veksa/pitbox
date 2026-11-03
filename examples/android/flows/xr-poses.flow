@@ -1,0 +1,25 @@
+# An XR headset seen from every side: the app still takes taps, hover and text with the head turned away, tilted,
+# upside down or walked off — input goes to the panel, not along the gaze.
+open!
+wait id=title 30
+xr recenter
+xr look 180
+press id=greet
+expect text="Hello, stranger"
+xr look -90,60
+mouse hover id=hover_target
+expect text="hovered"
+xr look 0,-60,180
+fill id=name "Ada"
+press id=greet
+expect text="Hello, Ada"
+xr recenter
+xr move 3,2,-4
+mouse right id=menu_target
+press text="Copy"
+expect text="copied"
+xr spin 90,30,-45,1500
+xr drift -1,0,2,1000
+mouse wheel down 15
+expect gone id=title
+xr recenter
