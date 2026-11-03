@@ -253,9 +253,18 @@ export class WebRunner {
     return m ? {width: Number(m[1]), height: Number(m[2])} : {width: 1440, height: 900};
   }
 
-  async page(): Promise<Pw> {
+  /**
+   * The app's page, started on first use. A device runs its app: a browser that has just started opens the app's
+   * URL, so a snapshot or a tap before any `open` sees the app, not a blank page (`goto` asks for no landing).
+   */
+  async page(land = true): Promise<Pw> {
     if (this.#page && !this.#page.isClosed()) return this.#page;
-    this.#starting ??= this.#start().finally(() => (this.#starting = undefined));
+    this.#starting ??= this.#start()
+      .then(async p => {
+        if (land) await p.goto(this.cfg.url, {waitUntil: 'domcontentloaded', timeout: 60_000});
+        return p;
+      })
+      .finally(() => (this.#starting = undefined));
     return this.#starting;
   }
 
@@ -301,7 +310,7 @@ export class WebRunner {
       this.#page = undefined;
       this.#context = undefined;
     }
-    const page = await this.page();
+    const page = await this.page(false);
     const url = !target ? this.cfg.url : /^[a-z][\w+.-]*:/i.test(target) ? target : new URL(target, this.cfg.url).href;
     await page.goto(url, {waitUntil: 'domcontentloaded', timeout: 60_000});
     return {url: page.url()};

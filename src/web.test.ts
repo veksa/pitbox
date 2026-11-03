@@ -127,6 +127,10 @@ describe('a web flow', () => {
     try {
       const ok = (await e.methods.run({flow: 'sign-in', params: {user: 'bo@example.test'}, device: 'web:demo'})) as {ok: boolean; steps: number};
       expect(ok).toMatchObject({ok: true});
+      // A flow that moves to the web app itself, and a fresh browser that lands on the app before any open.
+      await e.stopAll();
+      const moved = (await e.methods.run({steps: 'device web:demo\nexpect id=email'})) as {ok: boolean};
+      expect(moved).toMatchObject({ok: true});
       const failed = (await e.methods.run({steps: 'open\nexpect id=nowhere', device: 'web:demo'})) as {ok: boolean; failed?: {line: number; screen?: string[]}};
       expect(failed).toMatchObject({ok: false, failed: {line: 2}});
       expect(failed.failed?.screen?.some(l => /#email/.test(l))).toBe(true);

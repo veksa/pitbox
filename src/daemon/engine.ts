@@ -259,7 +259,7 @@ export class Engine {
       reshape: (op, value) => this.methods[op]({device, value}),
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
-        await this.#target(name);
+        if (!(await this.#webTarget(name))) await this.#target(name);
         device = name;
       },
       ui: () => this.ui(device),
