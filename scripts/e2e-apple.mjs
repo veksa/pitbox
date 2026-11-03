@@ -31,7 +31,7 @@ const PLAN = {
   tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'pointer'], fails: []},
   tv: {platform: 'tvOS Simulator', scheme: 'PitboxExample', app: 'Debug-appletvsimulator/PitboxExample.app', flows: ['tv'], fails: [], focusMap: true},
   watch: {platform: 'watchOS Simulator', scheme: 'PitboxExampleWatch', app: 'Debug-watchsimulator/PitboxExampleWatch.app', flows: ['watch', 'crown'], fails: ['crash']},
-  xr: {platform: 'visionOS Simulator', scheme: 'PitboxExample', app: 'Debug-xrsimulator/PitboxExample.app', flows: ['smoke'], fails: ['crash']},
+  xr: {platform: 'visionOS Simulator', scheme: 'PitboxExample', app: 'Debug-xrsimulator/PitboxExample.app', flows: ['smoke', 'vision'], fails: ['crash'], windowShot: true},
 };
 
 const pitbox = (args, opts = {}) => {
@@ -112,6 +112,12 @@ for (const kind of examples.includes('apple') ? wanted : []) {
       checks.push({name: 'folded on the cover screen', ok: /fold: folded: cover screen/.test(info.out)});
       const shot = pitbox(['screenshot', '--device', sim.udid]);
       checks.push({name: 'screenshot of the lit screen', ok: shot.code === 0 && /\.png \(\d+ KB\)/.test(shot.out)});
+    }
+    if (plan.windowShot) {
+      // visionOS's screen shot is 1×1: images come from the app's window, or visual checks would always match.
+      const shot = pitbox(['shot', 'window', '--device', sim.udid]);
+      const size = /\((\d+)×(\d+),/.exec(shot.out);
+      checks.push({name: 'shot of the window, not an empty screen', ok: !!size && Number(size[1]) > 100 && Number(size[2]) > 100});
     }
     if (plan.focusMap) {
       const r = pitbox(['focusmap', '--device', sim.udid]);

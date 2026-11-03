@@ -1,0 +1,25 @@
+# What a headset app has beyond its window: a second window, an ornament on the window's edge, a context menu
+# by a long press, and a space around the user with 3D content that names itself for accessibility (XCUITest
+# sees it but cannot press it: it has no activation point).
+open!
+wait id=title 30
+press id=open_window
+wait id=second_window 10
+press id=greet
+expect text="Hello, stranger"
+press id=ornament_button
+expect text="ornament pressed"
+longpress id=menu_target
+press text="Copy"
+expect text="copied"
+press id=enter_space
+wait text="in space" 15
+wait text="space box" 10
+press id=leave_space
+wait text="no space" 10
+wait gone text="space box" 10
+press id=close_window
+wait gone id=second_window 10
+key home
+open
+wait id=title 20

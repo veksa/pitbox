@@ -2,12 +2,15 @@
 // list, a request to the stand, a crash — and a deep link target. Ids match the Android example's.
 
 import SwiftUI
+#if os(visionOS)
+import RealityKit
+#endif
 
 @main
 struct ExampleApp: App {
   @State private var detail: String?
 
-  var body: some Scene {
+  var body: some SwiftUI.Scene {
     WindowGroup {
       Group {
         if let detail {
@@ -21,6 +24,25 @@ struct ExampleApp: App {
         if url.host == "detail" { detail = url.lastPathComponent }
       }
     }
+    #if os(visionOS)
+    // A second window and a space around the user: what a headset app has beyond its main window.
+    WindowGroup(id: "second") {
+      Text("Second window").font(.largeTitle).accessibilityIdentifier("second_window").padding(40)
+    }
+    .defaultSize(width: 500, height: 300)
+    ImmersiveSpace(id: "space") {
+      RealityView { content in
+        // A box in front of the user, named for accessibility as any 3D content should be.
+        let box = ModelEntity(mesh: .generateBox(size: 0.3), materials: [SimpleMaterial(color: .orange, isMetallic: false)])
+        box.position = [0, 1.4, -1.5]
+        var ax = AccessibilityComponent()
+        ax.isAccessibilityElement = true
+        ax.label = "space box"
+        box.components.set(ax)
+        content.add(box)
+      }
+    }
+    #endif
   }
 }
 
@@ -46,6 +68,9 @@ struct MainView: View {
         #endif
         #if !os(tvOS)
         Text(copied ? "copied" : "menu here").accessibilityIdentifier("menu_target").contextMenu { Button("Copy") { copied = true } }
+        #endif
+        #if os(visionOS)
+        VisionControls()
         #endif
         TextField("Your name", text: $name).accessibilityIdentifier("name")
         Button("Greet") { greeting = "Hello, \(name.isEmpty ? "stranger" : name)" }.accessibilityIdentifier("greet")
@@ -77,6 +102,39 @@ struct MainView: View {
     }
   }
 }
+
+#if os(visionOS)
+/// A headset's own surfaces: another window, a space with 3D content, and an ornament on the main window's edge.
+struct VisionControls: View {
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.dismissWindow) private var dismissWindow
+  @Environment(\.openImmersiveSpace) private var openSpace
+  @Environment(\.dismissImmersiveSpace) private var dismissSpace
+  @State private var space = "no space"
+  @State private var ornament = "ornament not pressed"
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Button("Open window") { openWindow(id: "second") }.accessibilityIdentifier("open_window")
+      Button("Close window") { dismissWindow(id: "second") }.accessibilityIdentifier("close_window")
+      Button("Enter space") {
+        Task {
+          switch await openSpace(id: "space") {
+          case .opened: space = "in space"
+          default: space = "space refused"
+          }
+        }
+      }.accessibilityIdentifier("enter_space")
+      Button("Leave space") { Task { await dismissSpace(); space = "no space" } }.accessibilityIdentifier("leave_space")
+      Text(space).accessibilityIdentifier("space_state")
+      Text(ornament).accessibilityIdentifier("ornament_result")
+    }
+    .ornament(attachmentAnchor: .scene(.bottom)) {
+      Button("Ornament") { ornament = "ornament pressed" }.accessibilityIdentifier("ornament_button").padding().glassBackgroundEffect()
+    }
+  }
+}
+#endif
 
 /// Crashes on purpose: the crash report must come back with the step that pressed the button.
 func crash() {
