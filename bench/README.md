@@ -10,6 +10,7 @@ type stripping), with no dependencies.
 | `cpuprofile.ts` | summarizes a V8 `.cpuprofile` by package and function |
 | `sessions.ts` | token baseline from Claude Code transcripts: context re-read per turn, device calls, images |
 | `editloop.mjs` | edit → relaunch → time to running JS on an Android device, checking the new code ran |
+| `agents.mjs` | the calls of a device pass against another tool on the same app, device and backend: time and tokens per call |
 
 ## Results
 
@@ -149,6 +150,63 @@ connection. Same app, same emulator.
 Done by hand by an agent, the same 14 steps are 14+ turns, each re-reading the whole context (~400K tokens
 on average in the baseline below); in a flow they are one turn. A failing step comes back with its line, the
 error, a screenshot path and the screen as text, so the next turn can act without another snapshot.
+
+### pitbox against agent-device on an iOS simulator
+
+`agents.mjs`, one scenario, two setups on the same debug build of the app, the same simulator and the same local
+backend; only the device tool and the dev server change:
+
+- **agent-device** 0.21.8 (its CLI) on stock Metro (`expo start`, source bundles);
+- **pitbox** on its own dev server (proxy, prewarm, host-compiled Hermes bytecode).
+
+Host: Mac, Apple silicon (18 cores), Xcode 27.2, iPhone 18 Pro simulator on iOS 27.2. App: a large React
+Native app (Expo SDK 57, RN 0.86, Hermes), ~3,800 modules, 16 MB dev bundle. Every call is timed from the shell
+(spawn to exit) and its output counted in tokens (`@anthropic-ai/tokenizer`) — what the agent waits for and reads.
+Each pass starts from a fresh install (uninstalled, keychain reset, installed); medians of 5 passes after a warm-up,
+the spread within 1% except where noted.
+
+| Call | agent-device | pitbox |
+|---|---|---|
+| cold start → home screen usable ¹ | 8.0 s · 886 tokens | **6.6 s** · 626 tokens |
+| sign-in, call by call ² | 24.6 s · 30,324 tokens · 8 calls | **12.5 s** · **967 tokens** · 6 calls |
+| sign-in as one flow call | — | **12.1 s · 33 tokens** |
+| one press (a navigation) ³ | 2.7 s · 5,439 tokens | **1.2 s** · **393 tokens** |
+| snapshot of the home screen | 155 ms · 607 tokens (`-i`) | 152 ms · **558 tokens** (whole screen) |
+| deep link → player on screen | 1.2 s (0.85–1.2) | 1.0 s |
+
+¹ including the notification permission prompt a fresh install shows, answered as an extra timed step by both.
+² the same six steps (two presses, two fills, submit, wait); agent-device needed three more, each counted: the
+iOS keyboard stays over the submit button (`keyboard enter` closes it; it has no dismiss key), the system "Save
+Password?" sheet after the sign-in (`press role=button text="Not Now"`), and the app's screens refused by
+selector — an invisible overlay counts every element as covered, so each press and fill falls back to its own
+hint: a `snapshot -i --json` for the rectangle, then a tap at its centre. pitbox closes the keyboard, declines
+the password sheet and taps the visible part of a target itself.
+³ the first step of the sign-in. agent-device's figure includes the fallback above, which is what an agent on it
+has to do on these screens.
+
+The dev server, same host, warm caches (`devserver.ts` for Metro; `up devserver` and the device's own request for
+pitbox):
+
+| | Stock Metro | pitbox |
+|---|---|---|
+| ready | 0.7–0.8 s | 0.9 s, then prewarm (bytecode already cached: 0 s) |
+| main bundle on the device's request | 0.8 s, 15.6 MB of source (2.7 MB gzip) | **9–10 ms** from cache, 13.5 MB of bytecode (4.4 MB gzip) |
+| repeat request | 30 ms | 10 ms |
+
+On macOS Metro's native watcher already makes it start fast; the difference is on the device, which runs
+bytecode instead of compiling 16 MB of source at every start.
+
+Found on the way and fixed in pitbox, each with a test: closing the keyboard used Android's back key (no
+equivalent on iOS); a button of a system alert was tapped as a point, which XCTest answers by clearing the alert
+itself and putting the tap on the app underneath; a link into the app already in front waited the full 3 s for
+an "Open in …?" question iOS does not ask; every command listed the simulators two or three times (~150 ms each);
+snapshots carried iOS's scroll indicators (two lines per list) and printed React Native's text twice (the view
+and the text beside it, in the same rectangle). Together: `open <link>` 4.4 → 1.0 s, a press 2.9 → 1.2 s (the permission alert no longer left over the app),
+snapshot of the home screen 604 → 557 tokens, press answer 461 → 393 tokens.
+
+Not a tool difference, but a reason to run the comparison from fresh installs: on stock Metro the same debug
+build stayed on its native splash (held until its fonts load) on every launch after the first, with or without
+a device tool attached; behind pitbox's dev server it did not.
 
 ### Token baseline
 
