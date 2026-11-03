@@ -85,6 +85,16 @@ final class Commands {
         return [:]
       }
       #endif
+      // A button of the shell's alert (a permission request, "Open in …?") is pressed as the shell's element. A
+      // point is tapped through the app, and XCTest first clears an alert that blocks the app on its own (UI
+      // interruption handling) and then puts the tap on the app underneath.
+      if (req["window"] as? String) == Self.alertsId, let label = req["label"] as? String, !label.isEmpty {
+        let button = systemAlert().buttons[label]
+        if button.exists {
+          if cmd == "tap" { button.tap() } else if cmd == "doubletap" { button.doubleTap() } else { button.press(forDuration: double(req, "hold", 800) / 1000) }
+          return [:]
+        }
+      }
       let c = coordinate(req)
       if cmd == "tap" { c.tap() } else if cmd == "doubletap" { c.doubleTap() } else { c.press(forDuration: double(req, "hold", 800) / 1000) }
       return [:]

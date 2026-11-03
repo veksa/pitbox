@@ -49,7 +49,9 @@ export type CrashSource = {
 const noCrashes: CrashSource = {start: () => undefined, stop: () => undefined, since: () => []};
 
 /** What a runner needs to press the node itself rather than a point (visionOS, where windows overlap in coordinates). */
-const aim = (n?: UiNode) => (n ? {ident: n.id, label: n.t ?? n.d, bounds: n.b} : {});
+// What a runner may press instead of the point: the node itself, and whose window it is in (an Apple runner presses
+// a button of the shell's alert as the shell's element).
+const aim = (n?: UiNode, snap?: Snapshot) => (n ? {ident: n.id, label: n.t ?? n.d, bounds: n.b, window: snap?.windows[n.w]?.pkg} : {});
 
 export class DeviceUi<R extends UiRunner = UiRunner> {
   readonly serial: string;
@@ -258,7 +260,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.#front(snap);
     let t = this.#phase('target', t0);
     const at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
-    await this.runner.call(kind, {x: at.x, y: at.y, ...aim(target.node)});
+    await this.runner.call(kind, {x: at.x, y: at.y, ...aim(target.node, snap)});
     t = this.#phase('input', t);
     if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
     else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
@@ -279,7 +281,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         again = undefined;
       }
       if (again && kind === 'tap' && !/^@e\d+$/.test(selector.trim())) {
-        await this.runner.call(kind, {x: again.x, y: again.y, ...aim(again.node)});
+        await this.runner.call(kind, {x: again.x, y: again.y, ...aim(again.node, closed)});
         settled = await this.#settle(snap);
         note = 'the first tap only closed the keyboard or took the focus off the field: pressed again';
       } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
