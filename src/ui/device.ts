@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, permissionPrompt, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -493,7 +493,13 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       }
       if (Date.now() > deadline) {
         const dialog = this.systemDialog(snap);
-        throw new Error(`timed out after ${Math.round((opts.timeoutMs ?? 10_000) / 1000)}s waiting for ${opts.gone ? `"${selector}" to go` : `"${selector}"`}${dialog ? ` — a system dialog is on top: "${dialog}" (doctor fix=true dismisses it)` : ''}`);
+        const permission = permissionPrompt(snap);
+        const why = dialog
+          ? ` — a system dialog is on top: "${dialog}" (doctor fix=true dismisses it)`
+          : permission
+            ? ` — a permission request is on top: "${permission}" (press its Allow or Deny, or grant it before: settings grant=<permission>)`
+            : '';
+        throw new Error(`timed out after ${Math.round((opts.timeoutMs ?? 10_000) / 1000)}s waiting for ${opts.gone ? `"${selector}" to go` : `"${selector}"`}${why}`);
       }
       await new Promise(r => setTimeout(r, 300));
       snap = await this.snapshot();

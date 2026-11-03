@@ -22,6 +22,18 @@ export type UiNode = {
 
 export type UiWindow = {type: string; title: string; pkg: string};
 
+/** Packages of the platform's own apps: the permission controller, the package installer, the launcher. */
+const SYSTEM_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinstaller|launcher|apps\.nexuslauncher)/;
+const PERMISSION_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinstaller)$/;
+
+/** The question of a runtime permission request over the app ("Allow MyApp to send you notifications?"), if any. */
+export const permissionPrompt = (snap: Pick<Snapshot, 'windows' | 'nodes'>): string | undefined => {
+  const w = snap.windows.findIndex(x => PERMISSION_APP.test(x.pkg));
+  if (w < 0) return undefined;
+  const nodes = snap.nodes.filter(n => n.w === w);
+  return (nodes.find(n => n.id === 'permission_message') ?? nodes.find(n => n.t && /\?\s*$/.test(n.t)))?.t ?? 'a permission request';
+};
+
 export type Snapshot = {
   windows: UiWindow[];
   nodes: UiNode[];
@@ -141,7 +153,9 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
     if (n.w !== lastWindow) {
       const w = windows[n.w];
       if (w && w.type !== 'app') lines.push(`— ${w.type}${w.title ? ` "${clean(w.title, 40)}"` : ''}`);
-      else if (w && lastWindow >= 0) lines.push(`— ${w.pkg}`);
+      // The first window is the app's, unless the system's own app is in front of it (a permission request, the
+      // launcher): then say whose screen this is.
+      else if (w && (lastWindow >= 0 || SYSTEM_APP.test(w.pkg))) lines.push(`— ${w.pkg}`);
       lastWindow = n.w;
     }
     const ref = `@e${refs.size + 1}`;
@@ -219,7 +233,10 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
     match = snap.nodes.some(exact) ? exact : n => lower(n.t).includes(v) || lower(n.d).includes(v) || lower(n.id).includes(v);
   }
   const hits = snap.nodes.map((n, i) => ({n, i})).filter(({n}) => match(n));
-  if (!hits.length) throw new Error(`nothing matches "${sel}"`);
+  if (!hits.length) {
+    const prompt = permissionPrompt(snap);
+    throw new Error(`nothing matches "${sel}"${prompt ? ` — a permission request is on top: "${prompt}"` : ''}`);
+  }
   hits.sort((a, b) => Number(interactive(b.n)) - Number(interactive(a.n)));
   const best = hits[0]!;
   return {node: best.n, index: best.i, ref: snap.refOf.get(best.i), ...centre(best.n.b)};

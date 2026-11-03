@@ -196,6 +196,27 @@ describe('flows', () => {
   });
 });
 
+describe('a permission request over the app', () => {
+  const perm: UiWindow[] = [{type: 'app', title: '', pkg: 'com.google.android.permissioncontroller'}];
+  const dialog: UiNode[] = [
+    {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400]},
+    {p: 0, w: 0, c: 'TextView', b: [40, 900, 1040, 1000], t: 'Allow MyApp to send you notifications?', id: 'permission_message'},
+    {p: 0, w: 0, c: 'Button', b: [40, 1100, 1040, 1200], t: 'Allow', id: 'permission_allow_button', f: 'c'},
+  ];
+  const snap = buildSnapshot(perm, dialog);
+
+  it('names the system app whose screen it is, and the question', async () => {
+    const {permissionPrompt} = await import('./ui/snapshot.ts');
+    expect(snap.lines[0]).toBe('— com.google.android.permissioncontroller');
+    expect(permissionPrompt(snap)).toBe('Allow MyApp to send you notifications?');
+    expect(permissionPrompt(buildSnapshot(windows, nodes))).toBeUndefined();
+  });
+
+  it('says so when a selector finds nothing under it', () => {
+    expect(() => resolveTarget(snap, 'id=home')).toThrow(/nothing matches "id=home" — a permission request is on top: "Allow MyApp/);
+  });
+});
+
 describe('visual diff', () => {
   it('matches the same grid and boxes the changed area in screen pixels', async () => {
     const {compareFingerprints} = await import('./ui/visual.ts');
