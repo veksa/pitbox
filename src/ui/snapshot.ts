@@ -159,7 +159,7 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   // A node whose text or description already says what its children say (React Native gives a view the label of
   // the text inside it: `view "Home"` over `text "Home"`): the children without ids add nothing but tokens.
   nodes.forEach((n, i) => {
-    if (hidden.has(i) || !(interactive(n) ? n.d : n.t ?? n.d)) return;
+    if (hidden.has(i) || !(n.t ?? n.d)) return;
     const d = `${n.t ?? ''} ${n.d ?? ''}`.toLowerCase();
     const stack = [...(kids.get(i) ?? [])];
     while (stack.length) {
