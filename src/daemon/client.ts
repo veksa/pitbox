@@ -64,11 +64,36 @@ export const runningDaemon = async (opts: {config?: string; cwd?: string}) => {
   return info && (await ping(info)) ? new DaemonClient(info) : undefined;
 };
 
+/** Refused, not slow: nothing listens on the daemon's port, so the pid in its file is someone else's now. */
+const refused = (e: unknown) => /ECONNREFUSED/.test(String((e as {cause?: {code?: string}})?.cause?.code ?? (e as Error)?.message));
+
+/**
+ * Waits for a daemon that is alive but slow to answer (a busy moment), up to `waitMs`. A second daemon for the
+ * same project would fight the first for its ports and devices, so one that never answers is an error.
+ */
+const waitForBusy = async (info: DaemonInfo, waitMs: number): Promise<boolean> => {
+  const end = Date.now() + waitMs;
+  let first = true;
+  while (isAlive(info.pid)) {
+    try {
+      // A quick answer is the usual case; after that one ping waits for the rest of the time.
+      await new DaemonClient(info).call('ping', {}, first ? 3000 : Math.max(500, end - Date.now()));
+      return true;
+    } catch (e) {
+      if (refused(e)) return false;
+      first = false;
+      if (Date.now() > end) throw new Error(`pitbox daemon ${info.pid} is running but has not answered for ${Math.round(waitMs / 1000)}s; stop it (pitbox daemon stop, or end the process) and try again`);
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+  return false;
+};
+
 /** Connects to the project's daemon, starting it in the background when none is running. */
-export const connect = async (opts: {config?: string; cwd?: string} = {}): Promise<DaemonClient> => {
+export const connect = async (opts: {config?: string; cwd?: string; busyWaitMs?: number} = {}): Promise<DaemonClient> => {
   const {file, stateDir} = resolveProject(opts);
   const existing = readInfo(stateDir);
-  if (existing && (await ping(existing))) return new DaemonClient(existing);
+  if (existing && (await waitForBusy(existing, opts.busyWaitMs ?? 20_000))) return new DaemonClient(existing);
 
   fs.mkdirSync(stateDir, {recursive: true});
   const log = fs.openSync(path.join(stateDir, 'daemon.log'), 'a');
