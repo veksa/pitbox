@@ -2,11 +2,13 @@
 // It sees every bundle request (so it can measure them). For the app's main bundle — the request the native
 // loader makes — it can splice in pitbox's in-app script (freshness, network log and rules, trace headers)
 // and answer with Hermes bytecode compiled on the host, from a cache the daemon fills before the device asks.
-// Apps talk back over `/pitbox/app`.
+// Apps talk back over `/pitbox/app`. The bundler's hot-update channel (`/hot`) passes through pitbox too: an
+// app given bytecode runs the eager graph, so its registration is pointed at that graph (the bundler knows no
+// other one, and hot updates would stop without a word), and every update and compile error is seen on the way.
 
 import http from 'node:http';
 import net from 'node:net';
-import {WebSocketServer, type WebSocket} from 'ws';
+import {WebSocket as WsClient, WebSocketServer, type RawData, type WebSocket} from 'ws';
 import type {BytecodeCache, Compiler} from './hermes.ts';
 import {BytecodeCache as Cache} from './hermes.ts';
 import {injectInApp, inAppScript} from './inapp.ts';
@@ -49,6 +51,28 @@ export type NetRule = {
 /** A JS error that reached the app's global handler, with its stack mapped to source files. */
 export type JsError = {at: number; app: number; platform?: string; message: string; fatal: boolean; frames: string[]; code?: string; symbolicated: boolean};
 
+/** An app's hot-update connection to the bundler, as pitbox saw it pass. */
+export type HotClient = {
+  id: number;
+  platform?: string;
+  connectedAt: number;
+  registered: boolean;
+  /** Registration pointed at the eager graph the app's bytecode was built from. */
+  eager?: boolean;
+  /** Rounds that changed modules in the app. */
+  updates: number;
+  lastUpdate?: {at: number; modules: number};
+  /** When the last round that compiled ended (empty rounds count: the change did not touch the app). */
+  syncedAt?: number;
+  /** A round has started and not ended. */
+  inRound: boolean;
+  lastError?: {at: number; type: string; message: string};
+  closedAt?: number;
+};
+
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;]*m/g;
+
 export type AppHello = {bundle: string; gen: number; platform: string; startedAt: number};
 export type AppInfo = {id: number; remote: string; connectedAt: number; hello?: AppHello};
 
@@ -68,6 +92,8 @@ export class DevProxy {
   readonly stats: ProxyStats = {requests: [], compiles: 0, cacheHits: 0};
   /** Bumped by the file watcher; a cached answer from an older generation is not trusted without a check. */
   generation = 0;
+  /** When the file watcher last saw a change. */
+  lastChangeAt = 0;
   /** Last main bundle URL each platform asked for — what prewarming rebuilds. */
   readonly mainUrls = new Map<string, string>();
   /** Host header of the last main bundle request per platform — the address devices use, which prewarming must match. */
@@ -88,6 +114,9 @@ export class DevProxy {
   readonly #served = new Map<string, {generation: number; key: string; bundle: string}>();
   readonly #compiling = new Map<string, Promise<Buffer>>();
   readonly #wss = new WebSocketServer({noServer: true});
+  readonly #hotWss = new WebSocketServer({noServer: true});
+  readonly hot = new Map<number, HotClient & {close: () => void}>();
+  #hotSeq = 0;
   readonly #apps = new Map<number, AppSession>();
   #appSeq = 0;
   #reqSeq = 0;
@@ -123,6 +152,8 @@ export class DevProxy {
     this.#server = undefined;
     for (const a of this.#apps.values()) a.ws.terminate();
     this.#apps.clear();
+    for (const h of this.hot.values()) h.close();
+    this.hot.clear();
     if (!server) return;
     for (const s of this.#sockets) s.destroy();
     this.#sockets.clear();
@@ -389,9 +420,106 @@ export class DevProxy {
     req.pipe(upstream);
   }
 
+  /** Hot-update clients, newest first; closed ones are kept a while for what they last saw. */
+  hotClients(): HotClient[] {
+    return [...this.hot.values()].map(({close: _c, ...h}) => h).sort((a, b) => b.connectedAt - a.connectedAt);
+  }
+
+  #onHot(app: WebSocket, req: http.IncomingMessage) {
+    const h: HotClient & {close: () => void} = {id: ++this.#hotSeq, connectedAt: Date.now(), registered: false, updates: 0, inRound: false, close: () => undefined};
+    this.hot.set(h.id, h);
+    // Closed clients older than the newest ten are forgotten.
+    const closed = [...this.hot.values()].filter(x => x.closedAt).sort((a, b) => b.connectedAt - a.connectedAt);
+    for (const old of closed.slice(10)) this.hot.delete(old.id);
+    const headers = {...req.headers};
+    for (const k of ['connection', 'upgrade', 'sec-websocket-key', 'sec-websocket-version', 'sec-websocket-extensions']) delete headers[k];
+    const up = new WsClient(`ws://127.0.0.1:${this.opts.upstreamPort}${req.url ?? '/hot'}`, {headers: headers as Record<string, string>});
+    const queue: string[] = [];
+    let initial = false;
+    let modules = 0;
+    let failed = false;
+    const root = (this.opts.root ?? '').replace(/[\/]+$/, '');
+    const done = () => {
+      if (h.closedAt) return;
+      h.closedAt = Date.now();
+      if (app.readyState === app.OPEN) app.close();
+      if (up.readyState === up.OPEN || up.readyState === up.CONNECTING) up.terminate();
+    };
+    h.close = () => {
+      done();
+      app.terminate();
+    };
+    const toUp = (text: string) => (up.readyState === up.OPEN ? up.send(text) : queue.push(text));
+    up.on('open', () => {
+      for (const t of queue.splice(0)) up.send(t);
+    });
+    app.on('message', (raw: RawData) => {
+      const text = String(raw);
+      let msg: {type?: string; entryPoints?: string[]};
+      try {
+        msg = JSON.parse(text);
+      } catch {
+        return toUp(text);
+      }
+      if (msg.type === 'register-entrypoints' && Array.isArray(msg.entryPoints)) {
+        msg.entryPoints = msg.entryPoints.map(u => {
+          const platform = platformOf(u);
+          h.platform ??= platform;
+          if (this.servedKind.get(platform) !== 'bytecode') return u;
+          h.eager = true;
+          return eagerUrl(u);
+        });
+        return toUp(JSON.stringify(msg));
+      }
+      toUp(text);
+    });
+    up.on('message', (raw: RawData) => {
+      const text = String(raw);
+      try {
+        const msg = JSON.parse(text) as {type?: string; body?: {isInitialUpdate?: boolean; added?: unknown[]; modified?: unknown[]; deleted?: unknown[]; type?: string; message?: string}};
+        if (msg.type === 'bundle-registered') h.registered = true;
+        else if (msg.type === 'update-start') {
+          initial = !!msg.body?.isInitialUpdate;
+          modules = 0;
+          failed = false;
+          h.inRound = true;
+        } else if (msg.type === 'update') {
+          modules += (msg.body?.added?.length ?? 0) + (msg.body?.modified?.length ?? 0) + (msg.body?.deleted?.length ?? 0);
+        } else if (msg.type === 'update-done') {
+          // The bundler ends a round with update-done whether or not it compiled.
+          h.inRound = false;
+          if (!failed) {
+            h.syncedAt = Date.now();
+            h.lastError = undefined;
+            if (!initial && modules) {
+              h.updates++;
+              h.lastUpdate = {at: Date.now(), modules};
+            }
+          }
+        } else if (msg.type === 'error') {
+          failed = true;
+          let message = String(msg.body?.message ?? '').replace(ANSI, '');
+          if (root) message = message.split(`${root}\\`).join('').split(`${root}/`).join('');
+          h.lastError = {at: Date.now(), type: String(msg.body?.type ?? 'Error'), message: message.slice(0, 1500)};
+        }
+      } catch {
+        // not JSON: pass it on as it is
+      }
+      if (app.readyState === app.OPEN) app.send(text);
+    });
+    app.on('close', done);
+    app.on('error', done);
+    up.on('close', done);
+    up.on('error', done);
+  }
+
   #upgrade(req: http.IncomingMessage, socket: net.Socket, head: Buffer) {
     if ((req.url ?? '').startsWith('/pitbox/app')) {
       this.#wss.handleUpgrade(req, socket, head, ws => this.#onApp(ws, socket.remoteAddress ?? ''));
+      return;
+    }
+    if ((req.url ?? '').startsWith('/hot')) {
+      this.#hotWss.handleUpgrade(req, socket, head, ws => this.#onHot(ws, req));
       return;
     }
     this.#sockets.add(socket);
