@@ -9,6 +9,7 @@ import {tailLines} from '../../util/text.ts';
 import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
 import {car, physicalDisplays, pngFrom, posture, rotate, wear, windowMode} from './formfactor.ts';
 import {summarizeAtrace, type TraceSummary} from './atrace.ts';
+import {connected, paired, parseMdnsServices, type MdnsService} from './wifi.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
@@ -477,6 +478,37 @@ export class AndroidDriver {
       p99: num(/99th percentile:\s*(\d+)ms/),
       memoryMb: pss ? Math.round(Number(pss) / 1024) : undefined,
     };
+  }
+
+  /** Phones advertising wireless debugging on this network (adb's own mDNS discovery). */
+  async mdnsServices(): Promise<MdnsService[]> {
+    const r = await this.adb(['mdns', 'services'], undefined, {timeoutMs: 10_000});
+    return parseMdnsServices(r.stdout);
+  }
+
+  async pair(host: string, port: number, code: string): Promise<void> {
+    const r = await this.adb(['pair', `${host}:${port}`, code], undefined, {timeoutMs: 30_000});
+    const out = `${r.stdout}\n${r.stderr}`.trim();
+    if (!paired(out)) throw new AndroidError(`pairing with ${host}:${port} failed: ${out.split('\n').pop()}`, 'the code is valid while the phone shows it; pair again');
+  }
+
+  /**
+   * Connects to a paired phone: adb may have connected on its own (it watches mDNS); otherwise the phone's
+   * connect service on the same address is used. Answers the serial adb lists.
+   */
+  async connectPaired(host: string, timeoutMs = 30_000): Promise<string> {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      const online = (await this.devices()).find(d => d.state === 'device' && d.serial.includes(host));
+      if (online) return online.serial;
+      const svc = (await this.mdnsServices()).find(s => s.type === 'connect' && s.host === host);
+      if (svc) {
+        const r = await this.adb(['connect', `${svc.host}:${svc.port}`], undefined, {timeoutMs: 20_000});
+        if (connected(`${r.stdout}\n${r.stderr}`)) return `${svc.host}:${svc.port}`;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    throw new AndroidError(`paired with ${host}, but it does not offer a connection`, 'keep Wireless debugging on, on the same network, and try pair again');
   }
 
   /**

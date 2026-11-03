@@ -11,6 +11,7 @@ import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
+import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
 import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
@@ -66,6 +67,8 @@ export class Engine {
   #lastForwardCheck = 0;
   #dev?: DevServer;
   readonly #uis = new Map<string, DeviceUi>();
+  /** A QR pairing in progress: the phone is found, paired and connected in the background. */
+  #pairing?: {name: string; file: string; startedAt: number; result?: {serial?: string; error?: string}; done: Promise<void>};
   /** The trace id stamped on the requests of the last action (W3C `traceparent`). */
   #lastTrace?: {id: string; at: number};
   /** Devices with a platform trace running for the current perf window. */
@@ -810,6 +813,41 @@ export class Engine {
     actorStart: async (p: Params) => this.actors.start(req(p, 'type'), req(p, 'name'), num(p, 'port')),
     actorStop: async (p: Params) => this.actors.stop(req(p, 'name')),
     actorCall: async (p: Params) => this.actors.call(req(p, 'name'), p.body),
+
+    // Wireless debugging: a QR the phone scans (then `wait`), or the ip:port and code its screen shows.
+    pair: async (p: Params) => {
+      const a = this.#needAndroid();
+      const value = str(p, 'value')?.trim();
+      if (value && value !== 'wait') {
+        const {host, port, code} = parseCodePairing(value);
+        await a.pair(host, port, code);
+        const serial = await a.connectPaired(host);
+        await this.ensureForwards(true).catch(() => undefined);
+        return {serial};
+      }
+      if (value === 'wait') {
+        const pairing = this.#pairing;
+        if (!pairing) throw new Error('no pairing in progress: device action=pair shows a QR first');
+        const timeoutMs = (num(p, 'timeout') ?? 120) * 1000;
+        await Promise.race([pairing.done, new Promise(r => setTimeout(r, timeoutMs))]);
+        if (!pairing.result) return {waiting: true, name: pairing.name, file: pairing.file};
+        if (pairing.result.error) throw new Error(pairing.result.error);
+        return {serial: pairing.result.serial};
+      }
+      const code = pairingCode();
+      const file = path.join(this.#loaded.stateDir, 'pair-qr.png');
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      await QRCode.toFile(file, code.qr, {margin: 2, width: 360});
+      const terminal = bool(p, 'terminal') ? await QRCode.toString(code.qr, {type: 'terminal', small: true}) : undefined;
+      const pairing: {name: string; file: string; startedAt: number; result?: {serial?: string; error?: string}; done: Promise<void>} = {name: code.name, file, startedAt: Date.now(), done: Promise.resolve()};
+      // Current before the wait starts: the wait ends when another pairing replaces it.
+      this.#pairing = pairing;
+      pairing.done = pairByQr(a, code, {stop: () => this.#pairing !== pairing}).then(async r => {
+        pairing.result = r;
+        if (r.serial) await this.ensureForwards(true).catch(() => undefined);
+      });
+      return {file, terminal, name: code.name};
+    },
 
     devices: async () => {
       const a = this.android;

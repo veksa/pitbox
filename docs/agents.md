@@ -11,7 +11,10 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 2. `doctor` (`fix: true` applies remedies) — a wedged adb, forwards that carry no data, a system dialog over
    the screen, a release build where a debug one is expected, settings left by an interrupted run. Run it
    before debugging anything odd.
-3. `stand action=up`, then `device action=boot avd=…` if no device is online. The daemon applies and repairs
+3. `stand action=up`, then `device action=boot avd=…` if no device is online. A phone on Wi-Fi (Android 11+):
+   `device action=pair` answers a QR (an image path) for the person to scan in Developer options → Wireless
+   debugging → Pair device with QR code, then `device action=pair value=wait` connects it; or
+   `value="<ip:port> <code>"` from its Pair device with pairing code screen. The daemon applies and repairs
    forwards on its own.
 
 ## Driving the app

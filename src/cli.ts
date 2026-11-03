@@ -36,6 +36,7 @@ android
   network full|lte|umts|edge|gsm|offline|online
   screenshot [file]
   reverse                       forward every exposed port to every device now
+  pair [wait | <ip:port> <code>]   a phone on Wi-Fi: a QR for Wireless debugging (then pair wait), or its pairing code
   info
   perf [reset [trace]]          since reset: frames, memory, the JS thread, React commits, the JS heap; trace adds the platform's trace (Android)
 
@@ -268,6 +269,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       if (action === 'delay') return {method: 'llm', params: {...common, ms: arg ? Number(arg) : undefined}};
       return {method: 'llm', params: common};
     }
+    case 'pair':
+      return {method: 'pair', params: {value: rest.join(' ') || undefined, terminal: true, timeout: flags.timeout}};
     case 'trace':
       return {method: 'trace', params: {id: rest[0], lines: flags.lines}};
     case 'app-console':

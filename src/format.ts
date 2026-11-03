@@ -281,6 +281,16 @@ export const formatResult = (method: string, r: unknown): string => {
         })
         .join('\n');
     }
+    case 'pair':
+      if (x.serial) return `connected ${x.serial} over Wi-Fi`;
+      if (x.waiting) return `still waiting for a phone to scan the QR (${x.file})`;
+      return [
+        x.terminal as string | undefined,
+        `QR: ${x.file}`,
+        'on the phone: Developer options → Wireless debugging → Pair device with QR code, on the same network; then pair wait',
+      ]
+        .filter(Boolean)
+        .join('\n');
     case 'llm': {
       type Rule = {id: string; action: string; match?: string; text?: string; status?: number; ms?: number; once?: boolean};
       type Req = {at: number; model: string; stream: boolean; prompt: string; source: string; status: number; reply?: string};
