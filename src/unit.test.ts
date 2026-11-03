@@ -403,3 +403,22 @@ describe('network back online', () => {
     expect(polls).toBe(3);
   }, 10_000);
 });
+
+describe('a cold start', () => {
+  it("waits for the stopped app's window to go before it launches again", async () => {
+    const {AndroidDriver} = await import('./drivers/android/driver.ts');
+    const d = new AndroidDriver();
+    const calls: string[] = [];
+    let left = 2;
+    (d as unknown as {shell: (s: string, c: string) => Promise<string>}).shell = async (_s, c) => {
+      calls.push(c.split(' ').slice(0, 3).join(' '));
+      if (c.startsWith('dumpsys window')) return String(left-- > 0 ? 1 : 0);
+      if (c.startsWith('am start')) return 'TotalTime: 300';
+      return '';
+    };
+    (d as unknown as {launcherActivity: () => Promise<string>}).launcherActivity = async () => 'com.example.app/.Main';
+    expect(await d.open('emulator-5554', 'com.example.app', {relaunch: true})).toMatchObject({totalMs: 300});
+    expect(calls.filter(c => c.startsWith('dumpsys window'))).toHaveLength(3);
+    expect(calls.indexOf('am start -W')).toBeGreaterThan(calls.lastIndexOf('dumpsys window windows'));
+  });
+});

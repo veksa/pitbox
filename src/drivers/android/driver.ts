@@ -311,7 +311,18 @@ export class AndroidDriver {
     const pkg = isUrl ? opts.pkg : target;
     // A screen that went dark and its swipe-away lock screen hide whatever is opened; a PIN lock is not touched.
     await this.shell(serial, 'input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard').catch(() => '');
-    if (opts.relaunch && pkg) await this.shell(serial, `am force-stop ${pkg}`);
+    if (opts.relaunch && pkg) {
+      await this.shell(serial, `am force-stop ${pkg}`);
+      // The stopped app's window plays its exit for a moment and stays in the accessibility tree meanwhile: a wait
+      // could find the old screen there and a tap land on it. The relaunch waits for it to go (a theme change
+      // makes the exit longer).
+      const end = Date.now() + 3000;
+      while (Date.now() < end) {
+        const n = Number((await this.shell(serial, `dumpsys window windows | grep -c 'u0 ${pkg}/'`).catch(() => '0')).trim());
+        if (!n) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
     let cmd: string;
     let component: string | undefined;
     if (isUrl) {
