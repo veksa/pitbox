@@ -28,15 +28,15 @@ function Main({onFetch, response}: {onFetch: () => void; response: string}) {
     setGreeting(`Hello, ${name.trim() || 'stranger'}`);
   };
   return (
-    <View>
+    <View style={styles.form}>
       <Text testID="title" style={styles.title}>
         pitbox example
       </Text>
       <TextInput testID="name" placeholder="Your name" value={name} onChangeText={setName} style={styles.input} />
       <Button testID="greet" title="Greet" onPress={() => greet()} />
-      <Text testID="greeting">{greeting}</Text>
+      {greeting ? <Text testID="greeting">{greeting}</Text> : null}
       <Button testID="fetch" title="Ask the stand" onPress={onFetch} />
-      <Text testID="response">{response}</Text>
+      {response ? <Text testID="response">{response}</Text> : null}
       <Button testID="js-error" title="Throw a JS error" onPress={failOnPurpose} />
       <Button testID="busy" title="Work hard" onPress={() => workHard()} />
     </View>
@@ -98,7 +98,9 @@ export default function App() {
 
 const styles = StyleSheet.create({
   screen: {flex: 1, padding: 16},
-  title: {fontSize: 24, marginBottom: 8},
-  input: {borderBottomWidth: 1, marginBottom: 8, paddingVertical: 4},
+  // One gap between every item of the form; empty texts are left out, or they would widen it.
+  form: {gap: 8, marginBottom: 8},
+  title: {fontSize: 24},
+  input: {borderBottomWidth: 1, paddingVertical: 4},
   row: {fontSize: 18, paddingVertical: 12},
 });
