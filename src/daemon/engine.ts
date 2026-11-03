@@ -22,7 +22,7 @@ import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
 import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
-import {StateStore} from '../stand/states.ts';
+import {type DeviceSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import type {PerfData} from '../flows/budget.ts';
 import {formatResult} from '../format.ts';
@@ -90,13 +90,26 @@ export class Engine {
   }
 
   /** An emulator to snapshot, or none when only the backend is saved. */
-  async #stateDevice(device?: string) {
+  /** The device side of a named state: an emulator snapshot, or a copy of the app's data on a simulator. */
+  async #stateDevice(device?: string): Promise<{snap?: DeviceSnapshot; serial?: string}> {
     const a = this.android;
-    if (!a) return {serial: undefined, avd: undefined};
-    const online = (await a.devices().catch(() => [])).filter(d => d.state === 'device');
-    if (!online.length && !device) return {serial: undefined, avd: undefined};
+    const online = a ? (await a.devices().catch(() => [])).filter(d => d.state === 'device') : [];
+    const sims = this.apple ? await this.apple.booted().catch(() => []) : [];
+    const sim = device ? sims.find(s => s.udid === device || s.name === device) : !online.length && sims.length === 1 ? sims[0] : undefined;
+    if (sim) {
+      const s = this.apple!;
+      const bundleId = this.config.app?.apple;
+      if (!bundleId) throw new Error('a simulator state copies the app\'s data: set app.apple in the config');
+      return {snap: {id: sim.udid, label: sim.name, kind: 'app-data', save: n => s.appStateSave(sim.udid, bundleId, n), load: n => s.appStateRestore(sim.udid, bundleId, n), remove: n => s.appStateDelete(sim.udid, bundleId, n)}};
+    }
+    if (!a || (!online.length && !device)) return {};
     const serial = await a.resolve(device);
-    return {serial, avd: online.find(d => d.serial === serial)?.avd};
+    if (!serial.startsWith('emulator-')) throw new Error('device snapshots need an emulator');
+    const emu = async (op: string, n: string, timeoutMs = 180_000) => {
+      const r = await a.adb(['emu', 'avd', 'snapshot', op, n], serial, {timeoutMs});
+      if (op !== 'delete' && !/OK/.test(r.stdout)) throw new Error(`emulator snapshot ${op} failed: ${(r.stdout + r.stderr).trim()}`);
+    };
+    return {serial, snap: {id: serial, label: online.find(d => d.serial === serial)?.avd, kind: 'emulator', save: n => emu('save', n), load: n => emu('load', n), remove: n => emu('delete', n, 60_000)}};
   }
 
   /** After a snapshot load the device's runner and forwards belong to a past moment: start them again. */
@@ -1225,25 +1238,30 @@ export class Engine {
       ).filter((d): d is [string, unknown[]] => !!d[1]?.length);
       let combos: Record<string, unknown>[] = [{}];
       for (const [k, values] of dims) combos = combos.flatMap(c => values.map(v => ({...c, [k]: v})));
-      const a = this.#needAndroid();
       const pkg = this.config.app?.android;
       const results: {variant: string; ok: boolean; ms: number; failed?: string}[] = [];
+      // Each variant's settings through the device's own driver: an emulator or a simulator.
+      const apply = async (device: string | undefined, v: {fontScale?: number; dark?: boolean; locale?: string}, reset = false) => {
+        const t = await this.#target(device);
+        if (t.platform === 'apple') {
+          // A simulator's language has no "app default" to go back to: the matrix leaves the last one set.
+          await t.s.settings(t.id, {fontScale: v.fontScale, dark: v.dark, locale: reset ? undefined : v.locale});
+          return t.id;
+        }
+        await t.a.settings(t.id, {fontScale: v.fontScale, dark: v.dark, locale: v.locale !== undefined && pkg ? {pkg, locales: v.locale} : undefined});
+        return t.id;
+      };
       for (const combo of combos) {
         const variant = Object.entries(combo).map(([k, v]) => (k === 'device' ? String(v) : `${k}-${v}`)).join('_') || 'default';
-        const device = combo.device as string | undefined;
-        const serial = await a.resolve(device);
-        await a.settings(serial, {
-          fontScale: combo.fontScale as number | undefined,
-          dark: combo.dark as boolean | undefined,
-          locale: combo.locale && pkg ? {pkg, locales: combo.locale as string} : undefined,
-        });
-        const r = await runFlow(this.#flowHost(device, variant), source, params);
+        // The config's devices, else the one asked for, else the only one online.
+        const device = (combo.device as string | undefined) ?? str(p, 'device');
+        const id = await apply(device, {fontScale: combo.fontScale as number | undefined, dark: combo.dark as boolean | undefined, locale: combo.locale as string | undefined});
+        const r = await runFlow(this.#flowHost(device ?? id, variant), source, params);
         results.push({variant, ok: r.ok, ms: r.ms, failed: r.failed ? `line ${r.failed.line}: ${r.failed.error.split('\n')[0]}` : undefined});
       }
       // Back to defaults on every device the matrix touched.
-      for (const d of new Set(combos.map(c => c.device as string | undefined))) {
-        const serial = await a.resolve(d);
-        await a.settings(serial, {fontScale: m.fontScale ? 1 : undefined, dark: m.dark ? false : undefined, locale: m.locale && pkg ? {pkg, locales: '""'} : undefined}).catch(() => undefined);
+      for (const d of new Set(combos.map(c => (c.device as string | undefined) ?? str(p, 'device')))) {
+        await apply(d, {fontScale: m.fontScale ? 1 : undefined, dark: m.dark ? false : undefined, locale: m.locale ? '""' : undefined}, true).catch(() => undefined);
       }
       return {results, shots: path.join(this.#loaded.stateDir, 'shots')};
     },
@@ -1258,20 +1276,20 @@ export class Engine {
     stateList: async () => ({states: this.#states().list()}),
 
     stateSave: async (p: Params) => {
-      const {serial, avd} = await this.#stateDevice(str(p, 'device'));
-      return this.#states().save(req(p, 'name'), this.android, serial, avd);
+      const {snap} = await this.#stateDevice(str(p, 'device'));
+      return this.#states().save(req(p, 'name'), snap);
     },
 
     stateRestore: async (p: Params) => {
-      const {serial} = await this.#stateDevice(str(p, 'device'));
-      const r = await this.#states().restore(req(p, 'name'), this.android, serial);
+      const {snap, serial} = await this.#stateDevice(str(p, 'device'));
+      const r = await this.#states().restore(req(p, 'name'), snap);
       if (serial && r.device) await this.#afterRestore(serial);
       return r;
     },
 
     stateDelete: async (p: Params) => {
-      const {serial} = await this.#stateDevice(str(p, 'device'));
-      await this.#states().remove(req(p, 'name'), this.android, serial);
+      const {snap} = await this.#stateDevice(str(p, 'device'));
+      await this.#states().remove(req(p, 'name'), snap);
       return {deleted: req(p, 'name')};
     },
 

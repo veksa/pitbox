@@ -223,7 +223,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'run':
       return {method: 'run', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
     case 'matrix':
-      return {method: 'matrix', params: {flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
+      return {method: 'matrix', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
     case 'goto':
       return {method: 'goto', params: {device, route: rest[0], params: kv(rest.slice(1))}};
     case 'as':
