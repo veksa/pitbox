@@ -91,6 +91,10 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   open).
 - Project tools from the config appear as `tool_<name>` (an SQL query, a protocol call, a seed script).
 - `stand action=logs name=<service>` — the tail of a stand service's log, with `grep`.
+- `llm` (with `mocks.llm` in the config) — the LLM mock: `action=log` shows each request's prompt and where its
+  reply came from; `reply text=…`, `fail status=429`, `delay ms=…` force an answer, a provider error or a slow
+  answer for prompts matching `match` (or all; `once=true` for one request); `clear` drops the rules. Tests the
+  paths around a model without editing fixtures.
 - `trace` — what the backend did for the last action (or `id=` from an action's answer): every action stamps
   one W3C trace id on the app's requests, and this finds it in all stand services' and actors' logs. The
   backend has to log the trace id of the `traceparent` header for it to be found.

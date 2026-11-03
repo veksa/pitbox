@@ -17,6 +17,7 @@ stand
   restart <service…>
   status                        services, actors, mock, devices, forwarded ports
   logs <service|actor> [-n 40] [--grep re]
+  llm [log [-n 10]] | llm reply <text> [--match re] [--once] | llm fail [status] | llm delay <ms> | llm clear | llm reload   the LLM mock
   trace [id] [-n 20]            what the services and actors logged for an action (its trace id; the last action by default)
   tools                         project tools from the config
   tool <name> [param=value…]    run a project tool
@@ -259,6 +260,14 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'appTree', params: {limit: flags.lines}};
     case 'app-errors':
       return {method: 'appErrors', params: {limit: flags.lines}};
+    case 'llm': {
+      const [action = 'log', arg] = rest;
+      const common = {action, match: flags.match, once: flags.once, limit: flags.lines};
+      if (action === 'reply') return {method: 'llm', params: {...common, text: rest.slice(1).join(' ')}};
+      if (action === 'fail') return {method: 'llm', params: {...common, status: arg ? Number(arg) : undefined, text: flags.text}};
+      if (action === 'delay') return {method: 'llm', params: {...common, ms: arg ? Number(arg) : undefined}};
+      return {method: 'llm', params: common};
+    }
     case 'trace':
       return {method: 'trace', params: {id: rest[0], lines: flags.lines}};
     case 'app-console':

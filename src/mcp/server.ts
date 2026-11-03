@@ -57,6 +57,15 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   if (config.actors && Object.keys(config.actors).length) {
     tool('actor', 'Extra app users: start <type> <name>, stop <name>, call <name> with a JSON body.', {action: z.enum(['start', 'stop', 'call']), type: opt.str(), name: z.string(), port: opt.num(), body: z.record(z.string(), z.unknown()).optional()}, a => ({start: 'actorStart', stop: 'actorStop', call: 'actorCall'})[a.action as string]!);
   }
+  if (config.mocks?.llm) {
+    // Typical answer: a line per rule and per logged request.
+    tool(
+      'llm',
+      'The LLM mock: log (requests: prompt, which reply), reply text=… (forced answer), fail status=500|429, delay ms=…, each for prompts matching `match` (regex) or all, once=true for one request; clear (rules), reload (fixtures).',
+      {action: z.enum(['log', 'reply', 'fail', 'delay', 'clear', 'reload']), match: opt.str(), text: opt.str(), status: opt.num(), ms: opt.num(), once: opt.bool(), limit: opt.num()},
+      'llm',
+    );
+  }
   // Typical answer: the matching log lines per service, up to 20 each.
   tool('trace', "What the stand's services and actors logged for an action: its trace id (from the action's answer, or the last action) searched in their logs.", {id: opt.str(), lines: opt.num()}, 'trace');
   for (const [name, t] of Object.entries(config.tools ?? {})) {

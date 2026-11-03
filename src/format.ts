@@ -281,6 +281,15 @@ export const formatResult = (method: string, r: unknown): string => {
         })
         .join('\n');
     }
+    case 'llm': {
+      type Rule = {id: string; action: string; match?: string; text?: string; status?: number; ms?: number; once?: boolean};
+      type Req = {at: number; model: string; stream: boolean; prompt: string; source: string; status: number; reply?: string};
+      const rules = (x.rules as Rule[]).map(r => `${r.id}: ${r.action}${r.action === 'fail' ? ` ${r.status}` : r.action === 'delay' ? ` ${r.ms} ms` : ` ${JSON.stringify((r.text ?? '').slice(0, 80))}`}${r.match ? ` for /${r.match}/` : ' for every prompt'}${r.once ? ' (once)' : ''}`);
+      const head = `LLM mock :${x.port} · ${x.requests} request${x.requests === 1 ? '' : 's'} · ${x.fixtures} fixture${x.fixtures === 1 ? '' : 's'}`;
+      const now = Date.now();
+      const log = ((x.log as Req[] | undefined) ?? []).map(r => `  ${seconds(now - r.at)} ago  ${r.status}  ${JSON.stringify(r.prompt.slice(0, 80))} → ${r.source}${r.reply !== undefined ? `: ${JSON.stringify(r.reply.slice(0, 60))}` : ''}`);
+      return [head, ...(rules.length ? rules : ['no rules: replies come from the fixtures']), ...(x.log ? (log.length ? ['requests:', ...log] : ['no requests yet']) : [])].join('\n');
+    }
     case 'trace': {
       const found = x.found as {name: string; lines: string[]}[];
       const when = x.at ? ` (the last action, ${seconds(Date.now() - (x.at as number))} ago)` : '';

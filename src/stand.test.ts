@@ -116,4 +116,39 @@ describe('llm mock', () => {
     expect(streamed.trim().endsWith('data: [DONE]')).toBe(true);
     await mock.stop();
   });
+
+  it('forces replies, errors and delays by rule, uses up a once rule, and logs every request', async () => {
+    const port = await freePort();
+    const fixtures = path.join(dir, 'fixtures-rules.json');
+    fs.writeFileSync(fixtures, JSON.stringify([{match: 'summar', reply: 'a summary'}]));
+    const mock = new LlmMock(port, fixtures);
+    await mock.start();
+    const ask = async (content: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {method: 'POST', body: JSON.stringify({model: 'm', messages: [{role: 'user', content}]})});
+      return {status: res.status, body: (await res.json()) as {choices?: {message: {content: string}}[]; error?: {type: string}}};
+    };
+    mock.addRule({action: 'fail', match: 'translate', status: 429, once: true});
+    mock.addRule({action: 'reply', match: 'summar', text: 'forced'});
+    mock.addRule({action: 'delay', ms: 150});
+    expect((await ask('translate this')).body.error?.type).toBe('rate_limit_exceeded');
+    expect((await ask('translate this')).body.choices?.[0]?.message.content).toBe('mock reply to: translate this');
+    const t0 = Date.now();
+    expect((await ask('summarize it')).body.choices?.[0]?.message.content).toBe('forced');
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(140);
+    mock.clearRules();
+    expect((await ask('summarize it')).body.choices?.[0]?.message.content).toBe('a summary');
+    expect(mock.log.map(r => [r.status, r.source])).toEqual([
+      [429, 'rule m1'],
+      [200, 'default, delayed 150 ms'],
+      [200, 'rule m2, delayed 150 ms'],
+      [200, 'fixture /summar/'],
+    ]);
+    // The newest of a forced error and a forced reply decides.
+    mock.addRule({action: 'fail', status: 503});
+    mock.addRule({action: 'reply', match: 'hello', text: 'newer'});
+    expect((await ask('hello')).body.choices?.[0]?.message.content).toBe('newer');
+    expect((await ask('other')).status).toBe(503);
+    expect(() => mock.addRule({action: 'reply', match: '(', text: 'x'})).toThrow();
+    await mock.stop();
+  });
 });

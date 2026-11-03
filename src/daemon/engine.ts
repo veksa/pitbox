@@ -756,6 +756,23 @@ export class Engine {
       return {reloaded: true};
     },
 
+    // The LLM mock while it runs: its request log, and rules that force a reply, an error or a delay.
+    llm: async (p: Params) => {
+      if (!this.config.mocks?.llm) throw new Error('no LLM mock in the config (mocks.llm)');
+      const m = this.#mock;
+      if (!m?.running) throw new Error('the LLM mock is not running: stand up starts it');
+      const action = str(p, 'action') ?? 'log';
+      const once = bool(p, 'once');
+      const match = str(p, 'match');
+      if (action === 'reply') m.addRule({action: 'reply', match, text: req(p, 'text'), once});
+      else if (action === 'fail') m.addRule({action: 'fail', match, status: num(p, 'status') ?? 500, text: str(p, 'text'), once});
+      else if (action === 'delay') m.addRule({action: 'delay', match, ms: num(p, 'ms') ?? 5000, once});
+      else if (action === 'clear') m.clearRules();
+      else if (action === 'reload') m.reload();
+      else if (action !== 'log') throw new Error('llm action: log | reply | fail | delay | clear | reload');
+      return {action, port: m.port, requests: m.requests, fixtures: m.fixtures, rules: m.rules, log: action === 'log' ? m.log.slice(-(num(p, 'limit') ?? 10)) : undefined};
+    },
+
     // What the backend logged for one agent action: its trace id, searched in every stand service's and actor's log.
     trace: async (p: Params) => {
       const given = str(p, 'id');
