@@ -180,6 +180,12 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     const budgets = pitbox(['run', 'perf', '--device', avd]);
     head(budgets.out, 3);
     checks.push({name: 'perf budgets in a flow', ok: budgets.code === 0 && /perf: js \d+ms ✓/.test(budgets.out)});
+    // The platform trace over a scroll: the app's main thread and its render thread are in it.
+    pitbox(['perf', 'reset', 'trace', '--device', avd]);
+    pitbox(['swipe', 'up', '--device', avd]);
+    const traced = pitbox(['perf', '--device', avd]);
+    head(traced.out.split('\n').filter(l => l.startsWith('platform trace')).join('\n'), 1);
+    checks.push({name: 'platform trace of the app', ok: /platform trace [\d.]+s: .*\bmain \d+ ms/.test(traced.out) && /RenderThread \d+ ms/.test(traced.out)});
     // An edit reaches the app as a hot update (the app runs bytecode), and a broken edit comes back as text.
     const appFile = path.join(rnDir, 'App.tsx');
     const appSource = fs.readFileSync(appFile, 'utf8');
