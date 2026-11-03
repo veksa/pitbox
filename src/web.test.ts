@@ -102,6 +102,14 @@ describe('a web app as a device', () => {
     expect(shot.width).toBe(320);
   });
 
+  it('evaluates in the page for js eval: values, statements, promises, a top-level await, errors', {timeout: 30_000}, async () => {
+    expect(await runner.evaluate('document.title')).toEqual({value: '"Example"'});
+    expect(await runner.evaluate('const n = document.querySelectorAll(".row").length; n * 2')).toEqual({value: '40'});
+    expect(await runner.evaluate('fetch("/hello?name=a").then(r => r.text())')).toEqual({value: '"Signed in as a"'});
+    expect(await runner.evaluate('(await fetch("/hello?name=b")).status')).toEqual({value: '200'});
+    expect((await runner.evaluate('nope.x')).error).toMatch(/^ReferenceError: nope is not defined/);
+  });
+
   it('follows a link, goes back with the back key, and reports a page error with the action', {timeout: 30_000}, async () => {
     await runner.goto('/second');
     const r = await ui.press('text=Break');

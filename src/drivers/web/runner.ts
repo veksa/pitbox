@@ -9,6 +9,7 @@
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {pitboxFmt} from '../../devserver/valuefmt.ts';
 import type {UiNode, UiWindow} from '../../ui/snapshot.ts';
 import type {AppEvent} from '../android/events.ts';
 import {KEYS} from '../android/driver.ts';
@@ -267,6 +268,27 @@ export class WebRunner {
       })
       .finally(() => (this.#starting = undefined));
     return this.#starting;
+  }
+
+  /**
+   * `js eval` on a web app: the expression runs in the page, its value formatted as an app's is. Statements and
+   * promises are fine; a top-level `await` is retried inside an async function, as in the app.
+   */
+  async evaluate(expr: string, timeoutMs = 10_000): Promise<{value?: string; error?: string}> {
+    const page = await this.page();
+    const run = (src: string) =>
+      `(async () => { const fmt = ${pitboxFmt.toString()}; let v; try { v = await (0, eval)(${JSON.stringify(src)}); } catch (e) { return {error: e && e.name ? e.name + ': ' + e.message : String(e)}; } const s = fmt(v, 0, []); return {value: s.length > 4000 ? s.slice(0, 4000) + '… (' + s.length + ' chars)' : s}; })()`;
+    const once = (src: string) =>
+      Promise.race([
+        page.evaluate(run(src)) as Promise<{value?: string; error?: string}>,
+        new Promise<{error: string}>(resolve => setTimeout(() => resolve({error: `the promise did not settle in ${Math.round(timeoutMs / 1000)}s`}), timeoutMs)),
+      ]);
+    let r = await once(expr);
+    if (r.error?.startsWith('SyntaxError') && /\bawait\b/.test(expr)) {
+      const wrapped = await once(`(async () => (${expr}))()`);
+      r = wrapped.error?.startsWith('SyntaxError') ? await once(`(async () => {${expr}\n})()`) : wrapped;
+    }
+    return r;
   }
 
   async #start(): Promise<Pw> {

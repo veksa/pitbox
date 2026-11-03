@@ -829,6 +829,13 @@ export class Engine {
     },
 
     jsEval: async (p: Params) => {
+      // A web app: the expression runs in its page, not in a phone's runtime.
+      const web = await this.#webTarget(str(p, 'device'));
+      if (web) {
+        const t0 = Date.now();
+        const r = await this.#webRunner(web).evaluate(req(p, 'expr'), (num(p, 'timeout') ?? 10) * 1000);
+        return {...r, app: `web:${web}`, apps: 1, picked: true, ms: Date.now() - t0};
+      }
       if (!this.#dev) throw new Error('no devserver in the config');
       return this.#dev.js.evaluate(req(p, 'expr'), await this.#jsDevice(str(p, 'device')), (num(p, 'timeout') ?? 10) * 1000);
     },
