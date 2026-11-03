@@ -1149,12 +1149,16 @@ export class Engine {
         if (!control) throw new Error(`xr panel ${Object.keys(XR_PANEL).join('|')}`);
         const ui = await this.ui(str(p, 'device'));
         const noCaption = 'no app panel caption on screen\nhint: xr panel works on an XR headset with an app open';
-        if (control.menu && !(await ui.clickSystem(control.id))) {
+        let clicked = control.menu ? await ui.clickSystem(control.id) : undefined;
+        if (control.menu && !clicked) {
           // A menu item: open the caption's menu first.
           if (!(await ui.clickSystem(XR_PANEL.menu!.id))) throw new Error(noCaption);
-          if (!(await ui.clickSystem(control.id))) throw new Error(`the panel menu has no ${what} item`);
-        } else if (!control.menu && !(await ui.clickSystem(control.id))) throw new Error(noCaption);
-        return {serial: ui.serial, op: `panel ${what}`};
+          clicked = await ui.clickSystem(control.id);
+          if (!clicked) throw new Error(`the panel menu has no ${what} item`);
+        } else if (!control.menu && !(clicked = await ui.clickSystem(control.id))) throw new Error(noCaption);
+        // A toggle says which way it went.
+        const turned = clicked?.startsWith('disable_') ? 'off' : clicked?.startsWith('enable_') ? 'on' : undefined;
+        return {serial: ui.serial, op: `panel ${what}`, ...(turned ? {value: turned} : {})};
       }
       return this.#reshape(str(p, 'device'), async (_a, serial) => xrView(serial, op!, rest.join(',')));
     },

@@ -371,14 +371,16 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
    * caption have coordinates of their own, so a tap at a caption's bounds would land in the app. False when no
    * such node is on screen.
    */
-  async clickSystem(id: string): Promise<boolean> {
+  /** Clicks a system control by its id, or the first of several (a toggle has one id per state): the id clicked. */
+  async clickSystem(id: string | string[]): Promise<string | undefined> {
+    const ids = Array.isArray(id) ? id : [id];
     const tree = await this.runner.call<{windows: UiWindow[]; nodes: UiNode[]}>('tree', {all: true}, 30_000);
-    const n = tree.nodes.find(x => x.id === id && tree.windows[x.w]?.pkg !== undefined);
-    if (!n) return false;
+    const n = ids.map(i => tree.nodes.find(x => x.id === i && tree.windows[x.w]?.pkg !== undefined)).find(Boolean);
+    if (!n) return undefined;
     const r = await this.runner.call<{done: boolean}>('node-action', {window: n.w, bounds: n.b, action: 16}, 15_000);
     this.last = undefined;
     await new Promise(res => setTimeout(res, 800));
-    return r.done;
+    return r.done ? n.id : undefined;
   }
 
   /**

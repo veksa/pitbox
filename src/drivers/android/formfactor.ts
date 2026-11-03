@@ -240,12 +240,13 @@ const fmtXrOptions = (o: {environment: number; passthrough: number; dimming: num
   `environment ${Object.keys(XR_ENV).find(k => XR_ENV[k] === o.environment) ?? o.environment} · passthrough ${Math.round(o.passthrough * 100) / 100} · dimming ${Math.round(o.dimming * 100) / 100}`;
 
 /** The shell's controls of an app's panel on XR, by the ids of its caption and caption menu. */
-export const XR_PANEL: Record<string, {id: string; menu?: boolean}> = {
+export const XR_PANEL: Record<string, {id: string | string[]; menu?: boolean}> = {
   minimize: {id: 'minimize_window'},
   close: {id: 'close_window'},
   menu: {id: 'caption_application_icon'},
   info: {id: 'app_info_button', menu: true},
-  'spatial-audio': {id: 'disable_spatial_audio_button', menu: true},
+  // A toggle: the item names what it would do now.
+  'spatial-audio': {id: ['disable_spatial_audio_button', 'enable_spatial_audio_button'], menu: true},
   tidy: {id: 'tidy_up_button', menu: true},
   'close-app': {id: 'close_button', menu: true},
 };
