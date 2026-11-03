@@ -15,6 +15,19 @@ import {renderTemplate, tailLines, templateParams} from './util/text.ts';
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-test-'));
 
 describe('config', () => {
+  it('loads a TypeScript config from a package without "type": "module" with nothing on stderr', async () => {
+    const {spawnSync} = await import('node:child_process');
+    const {pathToFileURL} = await import('node:url');
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name": "app"}');
+    fs.writeFileSync(path.join(dir, 'pitbox.config.ts'), `export default {app: {android: 'com.example.app'}};`);
+    const loader = pathToFileURL(path.resolve('src/config/load.ts')).href;
+    const script = `const {loadConfig} = await import(${JSON.stringify(loader)}); const c = await loadConfig({cwd: ${JSON.stringify(dir)}}); console.log(c.config.app.android);`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8'});
+    expect(r.stdout.trim()).toBe('com.example.app');
+    expect(r.stderr).not.toMatch(/MODULE_TYPELESS_PACKAGE_JSON|Reparsing as ES module/);
+  });
+
   it('loads a TypeScript config and resolves the state dir next to it', async () => {
     const dir = tmp();
     fs.writeFileSync(path.join(dir, 'pitbox.config.ts'), `export default {app: {android: 'com.example.app'}, services: {api: {start: 'node api.js', health: 'tcp:3000', expose: 3000}}};`);

@@ -3,6 +3,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
+
+let quieted = false;
+/**
+ * A `pitbox.config.ts` in a project whose package.json has no `"type": "module"` (most React Native apps) loads
+ * fine, but Node warns about it on every load, into the daemon's and the MCP server's stderr. That one warning is
+ * dropped; every other warning still reaches Node's own handler.
+ */
+const quietTypelessConfig = () => {
+  if (quieted) return;
+  quieted = true;
+  const handlers = process.listeners('warning');
+  process.removeAllListeners('warning');
+  process.on('warning', w => {
+    if ((w as Error & {code?: string}).code === 'MODULE_TYPELESS_PACKAGE_JSON' && /pitbox\.config\./.test(w.message)) return;
+    for (const h of handlers) h(w);
+  });
+};
 import {configSchema, type PitboxConfig} from './schema.ts';
 
 export const CONFIG_NAMES = ['pitbox.config.ts', 'pitbox.config.mts', 'pitbox.config.mjs', 'pitbox.config.js', 'pitbox.config.json'];
@@ -42,6 +59,7 @@ export const loadConfig = async (opts: {file?: string; cwd?: string} = {}): Prom
   if (file.endsWith('.json')) {
     raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } else {
+    quietTypelessConfig();
     // Cache-busting query so a long-lived daemon picks up edits on reload.
     const mod = await import(`${pathToFileURL(file).href}?t=${fs.statSync(file).mtimeMs}`);
     raw = mod.default ?? mod.config;
