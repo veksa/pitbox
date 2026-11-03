@@ -15,8 +15,11 @@ const q = (s: string) => `'${s.replace(/\\/g, '/').replace(/'/g, "\\'")}'`;
 /** The config text: detected values filled in, the rest as commented examples to adapt. */
 export const configText = (p: Project | undefined, cwd: string, avd?: string): string => {
   const rel = p ? path.relative(cwd, p.appRoot).replace(/\\/g, '/') : '';
+  // An Apple-only project gets no Android placeholder; anything else does, to be filled in.
+  const appleOnly = !!p?.bundleId && !p.androidDir;
   const app = [
-    p?.applicationId ? `android: ${q(p.applicationId)}` : `android: 'com.example.app'`,
+    ...(appleOnly ? [] : [p?.applicationId ? `android: ${q(p.applicationId)}` : `android: 'com.example.app'`]),
+    ...(p?.bundleId ? [`apple: ${q(p.bundleId)}`] : []),
     ...(p?.scheme ? [`scheme: ${q(p.scheme)}`] : []),
   ].join(', ');
   const devserver = p?.adapter
@@ -44,8 +47,10 @@ export const init = (opts: InitOptions): InitReport => {
   const existing = CONFIG_NAMES.map(n => path.join(opts.cwd, n)).find(f => fs.existsSync(f));
   const p = detectProject(opts.cwd);
   if (p) {
-    const what = [p.framework === 'native' ? 'native Android app' : p.framework === 'unknown' ? 'app' : `${p.framework === 'expo' ? 'Expo' : 'React Native'} app (${p.adapter})`];
-    lines.push(`found: ${what} in ${path.relative(opts.cwd, p.appRoot) || '.'}${p.applicationId ? `, ${p.applicationId}` : ''}${p.scheme ? `, scheme ${p.scheme}` : ''}`);
+    const platforms = [p.androidDir && 'Android', p.xcodeProject && 'Apple'].filter(Boolean).join(' and ');
+    const what = [p.framework === 'native' ? `native ${platforms} app` : p.framework === 'unknown' ? 'app' : `${p.framework === 'expo' ? 'Expo' : 'React Native'} app (${p.adapter})`];
+    const ids = [...new Set([p.applicationId, p.bundleId].filter(Boolean))].join(', ');
+    lines.push(`found: ${what} in ${path.relative(opts.cwd, p.appRoot) || '.'}${ids ? `, ${ids}` : ''}${p.scheme ? `, scheme ${p.scheme}` : ''}`);
   } else {
     lines.push('found: no app here or one level down — the config gets placeholders');
   }

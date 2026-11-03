@@ -1,5 +1,5 @@
-// What a project is, read from its files: where the app and its Android project live, the application id, the
-// framework and the bundler. Used by `pitbox init` to write a first config and by doctor to check the Android
+// What a project is, read from its files: where the app and its Android and Xcode projects live, the application
+// and bundle ids, the framework and the bundler. Used by `pitbox init` to write a first config and by doctor to check the Android
 // debug build can reach the stand over plain HTTP.
 
 import fs from 'node:fs';
@@ -13,6 +13,10 @@ export type Project = {
   /** The application module (`app/`), when found. */
   appModule?: string;
   applicationId?: string;
+  /** The Xcode project (`*.xcodeproj`), at the app's root or in `ios/`, when there is one. */
+  xcodeProject?: string;
+  /** The app's bundle id from the Xcode project. */
+  bundleId?: string;
   framework: 'expo' | 'react-native' | 'native' | 'unknown';
   adapter?: 'metro' | 'rspack';
   scheme?: string;
@@ -49,9 +53,23 @@ const deps = (pkg: Record<string, unknown> | undefined): Record<string, string> 
 
 const isGradleRoot = (dir: string) => !!firstExisting(path.join(dir, 'settings.gradle'), path.join(dir, 'settings.gradle.kts'));
 
+/** The Xcode project in `dir`, the first by name. */
+const xcodeProjectIn = (dir: string): string | undefined => {
+  try {
+    const p = fs.readdirSync(dir).filter(f => f.endsWith('.xcodeproj')).sort()[0];
+    return p ? path.join(dir, p) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The app's bundle id in a project.pbxproj: the first that is not a test target's and has no build variable. */
+export const bundleIdOf = (pbxproj: string): string | undefined =>
+  [...pbxproj.matchAll(/PRODUCT_BUNDLE_IDENTIFIER = "?([\w.-]+)"?;/g)].map(m => m[1]!).find(id => !/tests?$|uitests|runner/i.test(id));
+
 const looksLikeApp = (dir: string) => {
   const d = deps(json(path.join(dir, 'package.json')));
-  return !!(d['react-native'] || d.expo) || isGradleRoot(path.join(dir, 'android')) || isGradleRoot(dir);
+  return !!(d['react-native'] || d.expo) || isGradleRoot(path.join(dir, 'android')) || isGradleRoot(dir) || !!xcodeProjectIn(dir) || !!xcodeProjectIn(path.join(dir, 'ios'));
 };
 
 /** The app directory: `dir` itself, or a direct child such as `mobile/` or `app/`. */
@@ -87,7 +105,9 @@ export const detectProject = (dir: string): Project | undefined => {
   if (!appRoot) return undefined;
   const pkg = json(path.join(appRoot, 'package.json'));
   const d = deps(pkg);
-  const framework: Project['framework'] = d.expo ? 'expo' : d['react-native'] ? 'react-native' : isGradleRoot(appRoot) || isGradleRoot(path.join(appRoot, 'android')) ? 'native' : 'unknown';
+  const xcodeProject = xcodeProjectIn(appRoot) ?? xcodeProjectIn(path.join(appRoot, 'ios'));
+  const pbxproj = xcodeProject ? read(path.join(xcodeProject, 'project.pbxproj')) : undefined;
+  const framework: Project['framework'] = d.expo ? 'expo' : d['react-native'] ? 'react-native' : isGradleRoot(appRoot) || isGradleRoot(path.join(appRoot, 'android')) || xcodeProject ? 'native' : 'unknown';
   const androidDir = isGradleRoot(path.join(appRoot, 'android')) ? path.join(appRoot, 'android') : isGradleRoot(appRoot) ? appRoot : undefined;
   const appModule = androidDir && fs.existsSync(path.join(androidDir, 'app')) ? path.join(androidDir, 'app') : undefined;
   const gradle = appModule ? read(firstExisting(path.join(appModule, 'build.gradle'), path.join(appModule, 'build.gradle.kts')) ?? '') : undefined;
@@ -100,6 +120,8 @@ export const detectProject = (dir: string): Project | undefined => {
     androidDir,
     appModule,
     applicationId: gradle ? applicationIdOf(gradle) : undefined,
+    xcodeProject,
+    bundleId: pbxproj ? bundleIdOf(pbxproj) : undefined,
     framework,
     adapter: rn ? (d['@callstack/repack'] ? 'rspack' : 'metro') : undefined,
     scheme: typeof expoScheme === 'string' ? expoScheme : configScheme,

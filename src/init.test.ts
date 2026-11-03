@@ -35,6 +35,18 @@ describe('project detection', () => {
     const dir = tree({'settings.gradle.kts': '', 'app/build.gradle.kts': 'android { namespace = "com.example.native" }'});
     expect(detectProject(dir)).toMatchObject({framework: 'native', applicationId: 'com.example.native', androidDir: dir});
   });
+
+  it("reads an Xcode project's bundle id, here and in ios/, and leaves test targets out", async () => {
+    const {bundleIdOf} = await import('./init/project.ts');
+    expect(bundleIdOf('PRODUCT_BUNDLE_IDENTIFIER = com.example.MyAppTests;\nPRODUCT_BUNDLE_IDENTIFIER = "com.example.myapp";')).toBe('com.example.myapp');
+    expect(bundleIdOf('PRODUCT_BUNDLE_IDENTIFIER = "$(PRODUCT_NAME)";')).toBeUndefined();
+    const apple = tree({'MyApp.xcodeproj/project.pbxproj': 'PRODUCT_BUNDLE_IDENTIFIER = com.example.myapp;'});
+    expect(detectProject(apple)).toMatchObject({framework: 'native', bundleId: 'com.example.myapp', androidDir: undefined});
+    const {configText} = await import('./init/init.ts');
+    expect(configText(detectProject(apple), apple)).toContain("app: {apple: 'com.example.myapp'}");
+    const rn = tree({'package.json': '{"dependencies": {"react-native": "0.80.0"}}', 'ios/MyApp.xcodeproj/project.pbxproj': 'PRODUCT_BUNDLE_IDENTIFIER = com.example.rn;', 'android/settings.gradle': '', 'android/app/build.gradle': 'applicationId "com.example.rn"'});
+    expect(detectProject(rn)).toMatchObject({framework: 'react-native', applicationId: 'com.example.rn', bundleId: 'com.example.rn'});
+  });
 });
 
 describe('cleartext in debug builds', () => {
