@@ -209,8 +209,14 @@ final class Commands {
     var hasher = Hasher()
     let root = try a.snapshot()
     var screen = root.frame.isEmpty ? CGRect(origin: .zero, size: XCUIScreen.main.screenshot().image.size) : root.frame
-    // visionOS's shell has no frame and its screenshot is 1x1: nothing would be on screen.
+    // visionOS's shell has no frame and its screenshot is 1x1: nothing would be on screen. Its windows float apart,
+    // each in its own space, and the root's frame is whichever window was used last (an ornament after a tap
+    // on it): no frame there tells what is on screen.
+    #if os(visionOS)
+    screen = CGRect(x: -100_000, y: -100_000, width: 200_000, height: 200_000)
+    #else
     if screen.width < 10 { screen = CGRect(x: -100_000, y: -100_000, width: 200_000, height: 200_000) }
+    #endif
     windows.append(["type": "app", "title": root.label, "pkg": id])
     keyboard = nil
     walk(root, parent: -1, window: 0, screen: screen, all: all, out: &nodes, hasher: &hasher, depth: 0)
