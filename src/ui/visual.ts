@@ -8,15 +8,29 @@ export type VisualDiff = {score: number; changedShare: number; regions: Region[]
 /** A cell counts as changed past this brightness difference (0–255); compression and antialiasing stay below. */
 const CELL = 24;
 
-export const compareFingerprints = (base: Fingerprint, cur: Fingerprint): VisualDiff => {
+/**
+ * `masks` (screen pixels) are left out on both sides: the device blanks them only in the grid it takes now, so a
+ * baseline stored without them (or with others) would otherwise differ exactly where the mask is.
+ */
+export const compareFingerprints = (base: Fingerprint, cur: Fingerprint, masks: Region[] = []): VisualDiff => {
   if (base.cols !== cur.cols || base.rows !== cur.rows) {
     return {score: 255, changedShare: 1, regions: [[0, 0, cur.width, cur.height]], same: false};
   }
   const {cols, rows} = cur;
   const changed = new Uint8Array(cols * rows);
+  const mw = cur.width / cols;
+  const mh = cur.height / rows;
+  const masked = (i: number) => {
+    const x0 = (i % cols) * mw;
+    const y0 = Math.floor(i / cols) * mh;
+    return masks.some(m => x0 < m[2] && x0 + mw > m[0] && y0 < m[3] && y0 + mh > m[1]);
+  };
   let sum = 0;
   let count = 0;
+  let cells = 0;
   for (let i = 0; i < cur.grid.length; i++) {
+    if (masks.length && masked(i)) continue;
+    cells++;
     const d = Math.abs((cur.grid[i] ?? 0) - (base.grid[i] ?? 0));
     sum += d;
     if (d > CELL) {
@@ -56,7 +70,7 @@ export const compareFingerprints = (base: Fingerprint, cur: Fingerprint): Visual
     regions.push([Math.round(minX * cw), Math.round(minY * ch), Math.round((maxX + 1) * cw), Math.round((maxY + 1) * ch)]);
   }
   regions.sort((a, b) => (b[2] - b[0]) * (b[3] - b[1]) - (a[2] - a[0]) * (a[3] - a[1]));
-  const changedShare = count / changed.length;
-  const score = Math.round((sum / cur.grid.length) * 10) / 10;
+  const changedShare = count / Math.max(1, cells);
+  const score = Math.round((sum / Math.max(1, cells)) * 10) / 10;
   return {score, changedShare: Math.round(changedShare * 1000) / 1000, regions: regions.slice(0, 8), same: changedShare < 0.005};
 };

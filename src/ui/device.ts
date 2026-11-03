@@ -597,12 +597,13 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const base = path.join(dir, `${name}.json`);
     fs.mkdirSync(dir, {recursive: true});
     if (opts.update || !fs.existsSync(base)) {
-      fs.writeFileSync(base, JSON.stringify({cols: fp.cols, rows: fp.rows, width: fp.width, height: fp.height, grid: fp.grid}));
+      fs.writeFileSync(base, JSON.stringify({cols: fp.cols, rows: fp.rows, width: fp.width, height: fp.height, grid: fp.grid, masks}));
       await this.screenshot(path.join(dir, `${name}.jpg`), 0.5, 75);
       this.record(`visual ${name}${(opts.masks ?? []).map(m => ` mask ${m}`).join('')}`);
       return {name, status: 'saved', baseline: base};
     }
-    const diff = compareFingerprints(JSON.parse(fs.readFileSync(base, 'utf8')) as Fingerprint, fp);
+    const stored = JSON.parse(fs.readFileSync(base, 'utf8')) as Fingerprint & {masks?: Region[]};
+    const diff = compareFingerprints(stored, fp, [...masks, ...(stored.masks ?? [])]);
     this.record(`visual ${name}${(opts.masks ?? []).map(m => ` mask ${m}`).join('')}`);
     if (diff.same) return {name, status: 'match', score: diff.score, changedShare: diff.changedShare, baseline: base};
     const current = path.join(dir, `${name}.current.jpg`);

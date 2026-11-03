@@ -208,6 +208,17 @@ describe('visual diff', () => {
     expect(d.same).toBe(false);
     expect(d.regions).toEqual([[300, 300, 500, 500]]);
   });
+
+  it('leaves a masked area out on both sides, so a baseline taken without the mask still matches', async () => {
+    const {compareFingerprints} = await import('./ui/visual.ts');
+    const grid = Array.from({length: 10 * 20}, () => 100);
+    const base = {cols: 10, rows: 20, width: 1000, height: 2000, grid};
+    // The device blanks the mask in the grid it takes now; the baseline still has the content there.
+    const blanked = [...grid];
+    for (const i of [33, 34, 43, 44]) blanked[i] = 0;
+    expect(compareFingerprints(base, {...base, grid: blanked}).same).toBe(false);
+    expect(compareFingerprints(base, {...base, grid: blanked}, [[300, 300, 500, 500]])).toMatchObject({same: true, score: 0, regions: []});
+  });
 });
 
 describe('a keyboard over the target', () => {
