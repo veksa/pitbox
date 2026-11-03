@@ -177,6 +177,9 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     head(perf.out.split('\n').filter(l => /JS thread|workHard|React:|Main —/.test(l)).join('\n'), 5);
     checks.push({name: 'js profile names the slow app function', ok: /app code, with what it called:\n\s+\d+ ms {2}workHard {2}App\.tsx:\d+/.test(perf.out)});
     checks.push({name: 'react commits name a component and why it rendered', ok: /React: \d+ commits?/.test(perf.out) && /\d+× +[\d.]+ ms {2}Main — state/.test(perf.out)});
+    const budgets = pitbox(['run', 'perf', '--device', avd]);
+    head(budgets.out, 3);
+    checks.push({name: 'perf budgets in a flow', ok: budgets.code === 0 && /perf: js \d+ms ✓/.test(budgets.out)});
     // An edit reaches the app as a hot update (the app runs bytecode), and a broken edit comes back as text.
     const appFile = path.join(rnDir, 'App.tsx');
     const appSource = fs.readFileSync(appFile, 'utf8');

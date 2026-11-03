@@ -1,0 +1,8 @@
+# Budgets for typing a name and pressing Work hard: the slow function is allowed its time, the form its renders
+# (iOS types the name a key at a time, a render or so each).
+open!
+wait id=busy 90
+perf
+fill id=name "Budget"
+press id=busy
+expect perf js<3s commits<=10 renders:Main<=8 heap<20
