@@ -373,3 +373,22 @@ describe('xr emulator surroundings', () => {
     expect(decodeXrOptions(Buffer.from('0801150000803f', 'hex'))).toEqual({environment: 1, passthrough: 1, dimming: 0});
   });
 });
+
+describe('answers of the stand and the forwards', () => {
+  it('say which actor stopped and where the ports were forwarded', async () => {
+    const {formatResult} = await import('./format.ts');
+    expect(formatResult('actorStop', {name: 'p1', type: 'peer', port: 5, pid: 9})).toBe('stopped actor p1 (peer)');
+    expect(formatResult('reverse', {applied: [{serial: 'emulator-5554', ports: [4100]}], ports: [4100]})).toBe('forwarded to devices: 4100 · set up on emulator-5554');
+    expect(formatResult('reverse', {applied: [], ports: [4100], devices: 1})).toBe('forwarded to devices: 4100 · already in place');
+    expect(formatResult('reverse', {applied: [], ports: [4100], devices: 0})).toBe('forwarded to devices: 4100 · no Android device online');
+  });
+
+  it('report an app that is not running instead of failing on pidof', async () => {
+    const {AndroidDriver} = await import('./drivers/android/driver.ts');
+    const d = new AndroidDriver();
+    (d as unknown as {shell: () => Promise<string>}).shell = async () => {
+      throw new Error('adb shell failed: pidof com.example.app');
+    };
+    expect(await d.logs('emulator-5554', {pkg: 'com.example.app'})).toEqual(['(com.example.app is not running)']);
+  });
+});

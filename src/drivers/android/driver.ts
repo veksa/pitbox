@@ -353,7 +353,8 @@ export class AndroidDriver {
   async logs(serial: string, opts: {pkg?: string; lines?: number; grep?: string; level?: string} = {}): Promise<string[]> {
     const args = ['logcat', '-d', '-v', 'time'];
     if (opts.pkg) {
-      const pid = (await this.shell(serial, `pidof ${opts.pkg}`)).trim().split(/\s+/)[0];
+      // pidof exits 1 when nothing runs, which the shell reports as a failure.
+      const pid = (await this.shell(serial, `pidof ${opts.pkg}`).catch(() => '')).trim().split(/\s+/)[0];
       if (pid) args.push(`--pid=${pid}`);
       else if (!opts.grep) return [`(${opts.pkg} is not running)`];
     }
@@ -526,7 +527,7 @@ export class AndroidDriver {
   /** Stops the trace and sums it up for the app's process. */
   async traceStop(serial: string, pkg: string): Promise<TraceSummary & {pid?: number}> {
     const r = await this.adb(['exec-out', 'atrace', '--async_stop', '-a', pkg], serial, {timeoutMs: 60_000});
-    const pid = Number((await this.shell(serial, `pidof ${pkg}`)).trim().split(/\s+/)[0]);
+    const pid = Number((await this.shell(serial, `pidof ${pkg}`).catch(() => '')).trim().split(/\s+/)[0]);
     if (!pid) return {ms: 0, threads: [], long: [], longMs: 16};
     // Thread names from the process itself: the trace has `<...>` for some of them.
     const list = await this.shell(serial, `for t in /proc/${pid}/task/*; do echo \${t##*/} $(cat $t/comm); done`).catch(() => '');

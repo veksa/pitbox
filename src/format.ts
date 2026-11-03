@@ -421,6 +421,13 @@ export const formatResult = (method: string, r: unknown): string => {
       return fmtActors(r as ActorState[]).join('\n') || 'no actors running';
     case 'actorStart':
       return fmtActors([r as ActorState]).join('\n');
+    case 'actorStop':
+      return `stopped actor ${x.name} (${x.type})`;
+    case 'reverse': {
+      const applied = (x.applied as {serial: string; ports: number[]}[] | undefined) ?? [];
+      const where = applied.length ? ` · set up on ${applied.map(a => a.serial).join(', ')}` : x.devices ? ' · already in place' : ' · no Android device online';
+      return `forwarded to devices: ${((x.ports as number[]) ?? []).join(', ') || 'no exposed ports'}${where}`;
+    }
     case 'actorCall':
       return `HTTP ${x.status}\n${String(x.body).slice(0, 6000)}`;
     case 'tools':

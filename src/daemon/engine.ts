@@ -1293,7 +1293,11 @@ export class Engine {
       return {file, lines};
     },
 
-    reverse: async () => ({applied: await this.ensureForwards(true), ports: exposedPorts(this.config)}),
+    reverse: async () => {
+      const applied = await this.ensureForwards(true);
+      const devices = ((await this.android?.devices().catch(() => [])) ?? []).filter(d => d.state === 'device').length;
+      return {applied, ports: exposedPorts(this.config), devices};
+    },
 
     // Frames and memory from the device; with a dev server, the JS thread's profile over the same window.
     perf: async (p: Params) => {
