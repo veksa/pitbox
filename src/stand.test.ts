@@ -107,6 +107,14 @@ describe('actors', () => {
 });
 
 describe('tools', () => {
+  it('keeps the head and the tail of a long output, where the verdict is', async () => {
+    const r = await runTool(ctx, 'long', {run: `${node} -e "console.log('start'); for (let i = 0; i < 2000; i++) console.log('line ' + i); console.log('verdict: done')"`}, {}, 600);
+    expect(r.output.startsWith('start')).toBe(true);
+    expect(r.output).toContain('chars dropped');
+    expect(r.output.endsWith('verdict: done')).toBe(true);
+    expect(r.output.length).toBeLessThan(700);
+  });
+
   it('quotes parameters and keeps output short', async () => {
     const r = await runTool(ctx, 'echo', {run: `${node} -e "console.log(process.argv[1])" {text}`}, {text: `it's a "test"`}, 200);
     expect(r.code).toBe(0);

@@ -21,6 +21,17 @@ export const tailLines = (text: string, n: number, grep?: string): string[] => {
 export const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n… ${text.length - max} more chars`;
 
+/**
+ * Cuts a command's output to `max` characters by dropping its middle: the head says what started, the
+ * tail holds the verdict, the error and the exit — a long seed script's head alone hid all three.
+ */
+export const clipMiddle = (text: string, max: number): string => {
+  if (text.length <= max) return text;
+  const head = Math.floor(max / 3);
+  const tail = max - head;
+  return `${text.slice(0, head)}\n… ${text.length - max} chars dropped …\n${text.slice(-tail)}`;
+};
+
 /** Cuts every line to `width` characters. */
 export const clipLines = (lines: string[], width = 240): string[] => lines.map(l => (l.length > width ? `${l.slice(0, width)}…` : l));
 
