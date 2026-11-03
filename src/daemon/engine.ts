@@ -1,6 +1,7 @@
 // The engine the daemon serves: config, stand, Android driver, doctor and docs behind one method table.
 // The CLI and the MCP server call these methods over the daemon's RPC.
 
+import {WebRunner} from '../drivers/web/runner.ts';
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
@@ -184,8 +185,10 @@ export class Engine {
 
   /** The UI session of a device (one runner per device, kept between calls). */
   async ui(device?: string): Promise<DeviceUi> {
-    const t = await this.#target(device);
-    let ui = this.#uis.get(t.id);
+    const web = await this.#webTarget(device);
+    const t = web ? undefined : await this.#target(device);
+    const id = web ? `web:${web}` : t!.id;
+    let ui = this.#uis.get(id);
     if (ui) return ui;
     const hooks: UiHooks = {
       beforeAction: () => {
@@ -208,13 +211,14 @@ export class Engine {
         }
       },
     };
-    ui =
-      t.platform === 'apple'
-        ? t.s instanceof RemoteApple
-          ? new DeviceUi(t.id, new RemoteAppleRunner(t.s, t.id, this.config.app?.apple), hooks, new RemoteAppleCrashes(t.s, t.id, this.config.app?.apple))
-          : new DeviceUi(t.id, new AppleRunner(t.s as AppleDriver, t.id, this.config.app?.apple), hooks, new AppleCrashWatcher(t.s as AppleDriver, t.id, this.config.app?.apple))
-        : new DeviceUi(t.id, new AndroidRunner(t.a, t.id), hooks, new CrashWatcher(t.a.adbPath, t.id, this.config.app?.android));
-    this.#uis.set(t.id, ui);
+    ui = web
+      ? new DeviceUi(id, this.#webRunner(web), hooks, this.#webCrashes(web))
+      : t!.platform === 'apple'
+        ? t!.s instanceof RemoteApple
+          ? new DeviceUi(t!.id, new RemoteAppleRunner(t!.s, t!.id, this.config.app?.apple), hooks, new RemoteAppleCrashes(t!.s, t!.id, this.config.app?.apple))
+          : new DeviceUi(t!.id, new AppleRunner(t!.s as AppleDriver, t!.id, this.config.app?.apple), hooks, new AppleCrashWatcher(t!.s as AppleDriver, t!.id, this.config.app?.apple))
+        : new DeviceUi(t!.id, new AndroidRunner(t!.a, t!.id), hooks, new CrashWatcher(t!.a.adbPath, t!.id, this.config.app?.android));
+    this.#uis.set(id, ui);
     return ui;
   }
 
@@ -381,7 +385,47 @@ export class Engine {
     return {serial: t.id, ...r};
   }
 
+  readonly #webRunners = new Map<string, WebRunner>();
+
+  /**
+   * The web app a call is for: `web:<name>` (or `web` with one app), or with no device named, the only web app when
+   * no phone, emulator or simulator is online. Undefined for native devices.
+   */
+  async #webTarget(device?: string): Promise<string | undefined> {
+    const apps = Object.keys(this.config.web ?? {});
+    if (device) {
+      const m = /^web(?::(.+))?$/.exec(device);
+      if (!m) return undefined;
+      if (!apps.length) throw new Error('no web apps in the config — add web: {<name>: {url: …}}');
+      const name = m[1] ?? (apps.length === 1 ? apps[0] : undefined);
+      if (!name || !apps.includes(name)) throw new Error(`no web app "${m[1] ?? ''}" (known: ${apps.map(a => `web:${a}`).join(', ')})`);
+      return name;
+    }
+    if (!apps.length) return undefined;
+    const androids = this.android ? (await this.android.devices().catch(() => [])).filter(d => d.state === 'device').length : 0;
+    const sims = this.apple ? (await this.apple.booted().catch(() => [])).length : 0;
+    if (androids + sims) return undefined;
+    if (apps.length === 1) return apps[0];
+    throw new Error(`several web apps and no device online\nhint: pass a device: ${apps.map(a => `web:${a}`).join(', ')}`);
+  }
+
+  #webRunner(name: string): WebRunner {
+    let r = this.#webRunners.get(name);
+    if (!r) {
+      r = new WebRunner(name, this.config.web![name]!, this.#loaded.root);
+      this.#webRunners.set(name, r);
+    }
+    return r;
+  }
+
+  /** Uncaught page errors and console errors as the actions' crash reports. */
+  #webCrashes(name: string) {
+    const r = this.#webRunner(name);
+    return {start: () => undefined, stop: () => undefined, since: (t: number) => r.events.filter(e => e.at >= t)};
+  }
+
   async #target(device?: string): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices}> {
+    if (device && /^web(:|$)/.test(device)) throw new Error(`${device} is a web app: this needs a phone, an emulator or a simulator`);
     const s = this.apple;
     const booted = s ? await s.booted().catch(() => []) : [];
     if (s && booted.length) {
@@ -911,7 +955,7 @@ export class Engine {
     devices: async () => {
       const a = this.android;
       const s = this.apple;
-      if (!a && !s) this.#needAndroid();
+      if (!a && !s && !this.config.web) this.#needAndroid();
       // A simulator list that cannot be read (a remote Mac that refuses the token, Xcode gone) says why instead of
       // looking like a Mac without simulators.
       let simError: string | undefined;
@@ -919,6 +963,7 @@ export class Engine {
       return {
         devices: a ? await a.devices() : [],
         avds: a ? a.avds() : [],
+        ...(this.config.web ? {web: Object.entries(this.config.web).map(([name, w]) => ({name: `web:${name}`, url: w.url}))} : {}),
         ...(s ? {simulators: sims.map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state}))} : {}),
         ...(simError ? {simulatorsError: simError} : {}),
       };
@@ -962,6 +1007,13 @@ export class Engine {
     },
 
     open: async (p: Params) => {
+      const web = await this.#webTarget(str(p, 'device'));
+      if (web) {
+        const t0 = Date.now();
+        const r = await this.#webRunner(web).goto(str(p, 'target'), bool(p, 'relaunch'));
+        this.#uis.get(`web:${web}`)?.screenChanged();
+        return {serial: `web:${web}`, target: r.url, totalMs: Date.now() - t0};
+      }
       const t = await this.#target(str(p, 'device'));
       // A daemon that just started brings the proxy and the forwards up on its first tick, seconds later; an app
       // launched before that asks a port nobody serves and a dev launcher shows "Connection reset".
@@ -1020,6 +1072,11 @@ export class Engine {
     },
 
     stopApp: async (p: Params) => {
+      const web = await this.#webTarget(str(p, 'device'));
+      if (web) {
+        await this.#webRunner(web).goto('about:blank');
+        return {serial: `web:${web}`};
+      }
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
         await t.s.stop(t.id, this.#bundleId(p));
@@ -1030,6 +1087,11 @@ export class Engine {
     },
 
     clearApp: async (p: Params) => {
+      const web = await this.#webTarget(str(p, 'device'));
+      if (web) {
+        await this.#webRunner(web).clear();
+        return {serial: `web:${web}`};
+      }
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
         await t.s.clear(t.id, this.#bundleId(p));
@@ -1107,14 +1169,22 @@ export class Engine {
     },
 
     screenshot: async (p: Params) => {
-      const t = await this.#target(str(p, 'device'));
       const file = str(p, 'file') ? path.resolve(this.#loaded.root, req(p, 'file')) : path.join(this.#loaded.stateDir, 'shots', `${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
+      const web = await this.#webTarget(str(p, 'device'));
+      if (web) {
+        const r = await this.#webRunner(web).call<{png: string}>('png', {full: bool(p, 'full')});
+        fs.mkdirSync(path.dirname(file), {recursive: true});
+        fs.writeFileSync(file, Buffer.from(r.png, 'base64'));
+        return {serial: `web:${web}`, file};
+      }
+      const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') return {udid: t.id, ...(await t.s.screenshot(t.id, file))};
       return {serial: t.id, ...(await t.a.screenshot(t.id, file))};
     },
 
     key: async (p: Params) => {
       const device = str(p, 'device');
+      if (await this.#webTarget(device)) return (await this.ui(device)).key(list(p, 'keys'));
       const t = await this.#target(device);
       if (t.platform === 'apple') return {udid: t.id, ...(await (await this.ui(device)).key(list(p, 'keys')))};
       const keys = list(p, 'keys');

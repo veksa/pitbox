@@ -67,7 +67,7 @@ locales.
 | `open <url\|package>` · `open! <url\|package>` | opens a deep link or another package |
 | `goto <route> key=value…` | opens a route from the config (`routes`), parameters URL-encoded: `goto item id=42` |
 | `as <user>` | runs the config's `signIn` flow with `${user}` |
-| `device <serial\|avd>` | runs the following steps on another device |
+| `device <serial\|avd\|web:app>` | runs the following steps on another device — a web app from the config included, so one flow can act in an admin panel and check the phone |
 | `state <name>` | restores a named stand state (emulator snapshot + backend dump) |
 | `run <flow> key=value…` | runs another flow file with parameters (nesting up to 5 deep) |
 | `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge. The keyguard Android puts up on the outer screen when it folds ("swipe up to continue") is dismissed, so the app stays in front. A foldable iPhone simulator takes `closed|half|open|<degrees> [fast|medium|slow]`, swinging the hinge as Xcode's device window does, and `swap`, which changes the lit screen at once and holds motion for about ten seconds |

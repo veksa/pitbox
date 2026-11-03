@@ -12,7 +12,7 @@ import {formatResult} from '../format.ts';
 
 type Shape = Record<string, z.ZodType>;
 
-const device = z.string().optional().describe('serial or AVD; default: the only online device');
+const device = z.string().optional().describe('serial, AVD, simulator, or web:<app> (a web app from the config); default: the only online device');
 
 type Caller = {call: (method: string, params: Record<string, unknown>) => Promise<unknown>};
 type ToolServer = {registerTool: (name: string, def: {description: string; inputSchema: Shape}, handler: (args: Record<string, unknown>) => Promise<{content: {type: 'text'; text: string}[]; isError?: boolean}>) => unknown};

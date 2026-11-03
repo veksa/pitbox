@@ -94,6 +94,13 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   bytecode (the runtime needs source to read locals), so set it before reaching the screen you care about.
 - Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough.
 
+## Web apps
+
+`device: "web:<name>"` (from `web` in the config) drives a web app in a browser with the same tools: `snapshot`,
+`press`, `fill`, `wait`, `swipe` (scrolls), `key` (`back` is the history), `inspect what=visual|screenshot`,
+`run` with flows. Give the page `data-testid`s the way an app gets `testID`s: they become `id=` selectors. A flow
+can mix devices — `device web:admin` … `device Pixel_8` — to act in a panel and check the phone.
+
 ## Network and backend
 
 - `net action=fail|mock|delay|freeze|offline|clear` — rules applied inside the app (a WebSocket can be frozen

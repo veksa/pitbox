@@ -155,6 +155,25 @@ export const configSchema = z.object({
     })
     .optional(),
   /**
+   * Web apps, driven in a browser through Playwright as devices named `web:<name>` (`web` alone when there is
+   * one): `{admin: {url: 'http://localhost:3200'}}`.
+   */
+  web: z
+    .record(
+      z.string().regex(/^[\w-]+$/, 'a web app name: letters, digits, - and _'),
+      z.object({
+        url: z.string().url(),
+        /** Window as `WxH` in CSS pixels; default 1440x900. */
+        viewport: z.string().regex(/^\d+x\d+$/).optional(),
+        browser: z.enum(['chromium', 'firefox', 'webkit']).optional(),
+        /** A browser the machine has instead of Playwright's: `chrome`, `msedge`. */
+        channel: z.string().optional(),
+        headed: z.boolean().optional(),
+        scale: z.number().positive().optional(),
+      }),
+    )
+    .optional(),
+  /**
    * Named states: `save` and `restore` back up and bring back the backend (`{name}`, `{file}` — a file under
    * .pitbox/states); the device side is an emulator snapshot taken by pitbox.
    */

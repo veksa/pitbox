@@ -12,6 +12,9 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
   answering its probe is adopted instead of started twice; logs go to files; services outlive agent sessions
   and daemon restarts, and only `down` stops them. Actors (extra users of the app), project tools (a protocol
   call, an SQL query) and an OpenAI-compatible LLM mock.
+- **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots, selectors,
+  actions, checks and flows as on a phone, page errors reported with the action that caused them; one flow can switch
+  between a web app and a phone.
 - **Android** — phones, foldables, tablets, desktops, TV, XR headsets, AI glasses, watches and cars, emulators
   and hardware: boot, install, open apps and deep links, logs,
   settings, network conditions, screenshots, keys. Stand ports are forwarded to every device and re-forwarded

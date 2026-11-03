@@ -119,6 +119,36 @@ here; only device operations and runner commands cross the network. `open` point
 dev server by the address the Mac sees it at, so the dev server must listen beyond loopback
 (`devserver.host: '0.0.0.0'`).
 
+## web
+
+Web apps, driven in a browser through Playwright as devices named `web:<name>` (`web` alone when there is one).
+Every UI tool and flow step works on them as on a phone: the page becomes the same lines with refs (test ids from
+`data-testid`, labels from `aria-label`, hints from `placeholder`), `press` clicks, `fill` types into a field the
+way a person's typing reaches React, `swipe` scrolls, `key back` goes back in history, `visual` and `media` read
+the page. Uncaught page errors and console errors come back with the action that caused them, as crashes do.
+
+```ts
+web: {
+  admin: {url: 'http://localhost:3200', viewport: '1440x900'},
+  shop: {url: 'https://shop.example.test', browser: 'firefox'},
+},
+routes: {order: '/orders/{id}'},   // a route that starts with / opens in the web app
+```
+
+| Field | Meaning |
+|---|---|
+| `url` | where `open` goes; a path given to `open` or a route that starts with `/` is joined to it |
+| `viewport` | window as `WxH` in CSS pixels, default `1440x900` |
+| `browser` | `chromium` (default), `firefox`, `webkit` |
+| `channel` | a browser the machine has instead of Playwright's own: `chrome`, `msedge` |
+| `headed` | show the window (default headless) |
+| `scale` | device scale factor, default 1 |
+
+Playwright is loaded only when a web app is driven: `playwright-core` (or `playwright`) from the project, else
+pitbox's own; its browsers come from `npx playwright install chromium`. `open!` (`relaunch`) starts from a clean
+profile — no cookies or storage — and `app action=clear` clears them in place. With no device named, a call goes to
+the only web app when no phone, emulator or simulator is online.
+
 ## actors
 
 Extra users of the app: instances of a project command that pitbox starts on a free port.
