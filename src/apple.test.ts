@@ -232,6 +232,9 @@ describe('apple driver', () => {
     const focused = buildSnapshot([app], [list, field, greet]);
     expect(onlyClosedKeyboard(focused, closed)).toBe(true);
     expect(onlyClosedKeyboard(focused, greeted)).toBe(false);
+    // The field lost its focus and the keyboard is still on its way down: the same.
+    const leaving = buildSnapshot([app, {type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'}], [list, {...field, f: 'e'}, greet, {p: -1, w: 1, c: 'Keyboard', b: [0, 583, 402, 874]}]);
+    expect(onlyClosedKeyboard(up, leaving)).toBe(true);
   });
 
   it('folds a foldable only to a posture it has, and says when the screens did not change', async () => {
