@@ -239,7 +239,16 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     val tool = MotionEvent.TOOL_TYPE_MOUSE
     when (action) {
       "hover" -> {
-        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_ENTER, x, y, src, tool))
+        // The pointer may still hover from an earlier call: the dispatcher drops an enter while it does, and the
+        // move after it. An exit first ends that hover; with none in progress it is dropped instead.
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_EXIT, x, y, src, tool))
+        // In from a step beside the target a frame at a time, as a real pointer arrives: an exit, an enter and a
+        // move in the same millisecond do not always reach the view under them.
+        SystemClock.sleep(50)
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_ENTER, x - 8, y, src, tool))
+        SystemClock.sleep(16)
+        inject(pointerEvent(down, MotionEvent.ACTION_HOVER_MOVE, x - 4, y, src, tool))
+        SystemClock.sleep(16)
         inject(pointerEvent(down, MotionEvent.ACTION_HOVER_MOVE, x, y, src, tool))
       }
       "right" -> {
