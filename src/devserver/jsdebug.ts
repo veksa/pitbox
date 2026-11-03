@@ -8,6 +8,7 @@
 // cannot emit it), so while logpoints exist the dev server serves source, and the first logpoint reloads an app
 // that runs bytecode.
 
+import path from 'node:path';
 import type {CdpEvent, CdpPage} from './cdp.ts';
 import {CdpSession, listPages, pickPage} from './cdp.ts';
 import type {DevProxy} from './proxy.ts';
@@ -251,6 +252,14 @@ export class JsDebugger {
     }
   }
 
+  /** A source path relative to the app root: Metro on Windows puts absolute paths into its source maps. */
+  #rel(p: string): string {
+    const root = this.#proxy.opts?.root;
+    if (!root || !path.isAbsolute(p)) return p;
+    const r = path.relative(root, p);
+    return r.startsWith('..') ? p : r.replace(/\\/g, '/');
+  }
+
   #replaceSoon() {
     clearTimeout(this.#replacing);
     this.#replacing = setTimeout(() => void this.#placeAll().catch(() => undefined), 300);
@@ -342,7 +351,7 @@ export class JsDebugger {
         condition: conditionFor(lp.id, lp.exprs),
       });
       lp.bps.push(r.breakpointId);
-      lp.source = hit.source;
+      lp.source = this.#rel(hit.source);
       lp.codeLine = hit.line;
       // The runtime may move the breakpoint to the next statement it can stop at.
       lp.at = r.actualLocation ? {line: r.actualLocation.lineNumber, column: r.actualLocation.columnNumber ?? 0} : hit.at;
@@ -518,7 +527,7 @@ export class JsDebugger {
         .then(ix => sourceOf(ix, f.line, f.column))
         .catch(() => undefined);
       // Library code is everything under node_modules; the rest of the bundle is the app's.
-      lines.set(f, src ? {line: `${f.name}  ${src.source}:${src.line}`, app: !/(^|\/)node_modules\//.test(src.source)} : {line: `${f.name}  (bundle ${f.line + 1}:${f.column})`, app: false});
+      lines.set(f, src ? {line: `${f.name}  ${this.#rel(src.source)}:${src.line}`, app: !/(^|\/)node_modules\//.test(src.source)} : {line: `${f.name}  (bundle ${f.line + 1}:${f.column})`, app: false});
     }
     const self = mergeByFunction(
       sum.self.flatMap(x => {
