@@ -139,6 +139,8 @@ if (examples.includes('android')) {
       }
     });
   }
+  // The stand goes too: one left running would answer the next run as an external service, without its logs.
+  pitbox(['down']);
   pitbox(['daemon', 'stop']);
 }
 

@@ -120,6 +120,8 @@ for (const kind of examples.includes('apple') ? wanted : []) {
     if (plan.features) checks.push(...(await featureChecks({pitbox, device: sim.udid, dir: example, platform: 'apple', bin})));
     if (plan.windowShot) {
       // visionOS's screen shot is 1×1: images come from the app's window, or visual checks would always match.
+      // The crash flow left no app running: it comes back first.
+      pitbox(['run', '--steps', 'open!\nwait id=title 30', '--device', sim.udid]);
       const shot = pitbox(['shot', 'window', '--device', sim.udid]);
       const size = /\((\d+)×(\d+),/.exec(shot.out);
       checks.push({name: 'shot of the window, not an empty screen', ok: !!size && Number(size[1]) > 100 && Number(size[2]) > 100});
