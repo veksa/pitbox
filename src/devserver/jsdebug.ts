@@ -197,11 +197,12 @@ export class JsDebugger {
 
   async #open(device?: string, waitMs = 10_000): Promise<CdpSession> {
     const cur = this.#session;
-    // The open session serves a named device only when it is that device's: with one page in the list `pickPage`
-    // takes it whatever the name, and another device's app would answer.
+    // The open session serves a named device only when it is that device's page: by its name, or as the page
+    // the device's name picks out of the list now (a serial is in no page's name; with one device it is that one).
     if (cur && !cur.closed && (!device || `${cur.page.deviceName ?? ''} ${cur.page.title}`.toLowerCase().includes(device.toLowerCase()))) return cur;
     // An app that was just opened lists its runtime a few seconds later, once its JS has started.
     let pages = await listPages(this.#port);
+    if (cur && !cur.closed && pickPage(pages, device)?.id === cur.page.id) return cur;
     for (const end = Date.now() + waitMs; !pages.length && Date.now() < end; ) {
       await new Promise(r => setTimeout(r, 300));
       pages = await listPages(this.#port);
@@ -500,7 +501,8 @@ export class JsDebugger {
   async profileStart(device?: string): Promise<boolean> {
     let s: CdpSession;
     try {
-      s = await this.#open(device, 0);
+      // Right after a cold start the app's runtime is listed a moment later: a few seconds for it.
+      s = await this.#open(device, 5000);
     } catch {
       return false;
     }
