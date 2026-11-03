@@ -163,7 +163,8 @@ describe('js profiles', () => {
 
 type Fake = {port: number; origins: string[]; app: vm.Context; reparse: () => void; breakpoints: Map<string, {line: number; column: number; condition: string}>; runLine: (locals: Record<string, unknown>) => void; close: () => Promise<void>};
 
-const fakeInspector = async (): Promise<Fake> => {
+/** `allow`: which origins the inspector takes (a refused one gets 401, as React Native's verifyClient answers). */
+const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake> => {
   const port = await freePort();
   const app = vm.createContext({console});
   const breakpoints = new Map<string, {line: number; column: number; condition: string}>();
@@ -176,7 +177,7 @@ const fakeInspector = async (): Promise<Fake> => {
       res.end(JSON.stringify(map));
     } else res.writeHead(404).end();
   });
-  const wss = new WebSocketServer({server});
+  const wss = new WebSocketServer({server, verifyClient: info => !allow || allow(info.origin)});
   let seq = 0;
   wss.on('connection', (ws, req) => {
     origins.push(String(req.headers.origin));
@@ -250,6 +251,21 @@ describe('the app runtime', () => {
     const r = await js.evaluate('var a = {n: [1, "x"], f: function go() {}, m: new Map([[1, 2]]), long: Array.from({length: 30}, (_, i) => i)}; a.self = a; a');
     expect(r.value).toBe('{n: [1, "x"], f: ƒ go, m: Map(1) {1 => 2}, long: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, … 10 more], self: [Circular]}');
     expect(await js.evaluate('nope.x')).toMatchObject({error: expect.stringMatching(/ReferenceError: nope is not defined/)});
+  });
+
+  it('presents the origins it is given in order, moving on when one is refused', async () => {
+    const strict = await fakeInspector(o => o === 'http://localhost:8081');
+    const ok = new JsDebugger(proxy, strict.port, async () => undefined, ['http://192.0.2.1:8081', 'http://localhost:8081']);
+    try {
+      expect(await ok.evaluate('2 + 2')).toMatchObject({value: '4'});
+      expect(strict.origins).toEqual(['http://localhost:8081']);
+      const refused = new JsDebugger(proxy, strict.port, async () => undefined, ['http://192.0.2.1:8081']);
+      await expect(refused.evaluate('1')).rejects.toThrow(/refused origin http:\/\/192\.0\.2\.1:8081 \(401\)/);
+      refused.stop();
+    } finally {
+      ok.stop();
+      await strict.close();
+    }
   });
 
   it('awaits a promise the expression returns', async () => {

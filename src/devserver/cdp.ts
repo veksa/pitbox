@@ -94,16 +94,29 @@ export class CdpSession {
   }
 
   /**
-   * Opens a session. The proxy only takes debugger connections from its own origin or a local one, as a browser
-   * would send; Node sends none, so it is set here.
+   * Opens a session. The bundler only takes debugger connections from an origin it trusts, as a browser would
+   * send; Node sends none, so it is set here. React Native's inspector rejects (401) an origin that is neither its
+   * own address nor a local host name; Expo's accepts and then drops any origin whose host and port differ from the
+   * address it was told it is served at (the proxy's). So the first origin is the one devices use, and a 401 tries
+   * the next.
    */
-  static open(page: CdpPage, port: number, timeoutMs = 5000): Promise<CdpSession> {
+  static async open(page: CdpPage, port: number, timeoutMs = 5000, origins = [`http://localhost:${port}`]): Promise<CdpSession> {
     const url = page.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://127.0.0.1:${port}`);
-    const ws = new WebSocket(url, {origin: `http://localhost:${port}`, handshakeTimeout: timeoutMs});
-    return new Promise((resolve, reject) => {
-      ws.once('open', () => resolve(new CdpSession(page, ws)));
-      ws.once('error', e => reject(new CdpError(`cannot open the app's debugger: ${e.message}`)));
-    });
+    let last = '';
+    for (const origin of origins) {
+      const ws = new WebSocket(url, {origin, handshakeTimeout: timeoutMs});
+      const r = await new Promise<CdpSession | string>(resolve => {
+        ws.once('open', () => resolve(new CdpSession(page, ws)));
+        ws.once('unexpected-response', (_req, res) => {
+          resolve(`the bundler refused origin ${origin} (${res.statusCode})`);
+          ws.terminate();
+        });
+        ws.once('error', e => resolve(e.message));
+      });
+      if (typeof r !== 'string') return r;
+      last = r;
+    }
+    throw new CdpError(`cannot open the app's debugger: ${last}`);
   }
 
   get closed() {

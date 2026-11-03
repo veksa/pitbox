@@ -90,7 +90,8 @@ export class DevServer {
       inApp: cfg.inApp ?? (cfg.adapter ?? 'metro') !== 'command',
       root: this.root,
     });
-    this.js = new JsDebugger(this.proxy, this.internalPort, () => this.reload());
+    // The proxy's address first: Expo trusts only the address it is served at, which pitbox sets to the proxy.
+    this.js = new JsDebugger(this.proxy, this.internalPort, () => this.reload(), [`http://${this.publicHost()}:${this.port}`, `http://localhost:${this.internalPort}`]);
     try {
       const saved = JSON.parse(fs.readFileSync(this.#stateFile, 'utf8')) as {mainUrls?: Record<string, string>};
       for (const [p, u] of Object.entries(saved.mainUrls ?? {})) this.proxy.mainUrls.set(p, u);

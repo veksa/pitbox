@@ -184,10 +184,14 @@ export class JsDebugger {
   #replacing?: NodeJS.Timeout;
   #paused = 0;
 
-  constructor(proxy: DevProxy, upstreamPort: number, reload: () => Promise<unknown>) {
+  /** Origins the debugger connection presents, in order (see `CdpSession.open`). */
+  readonly #origins?: string[];
+
+  constructor(proxy: DevProxy, upstreamPort: number, reload: () => Promise<unknown>, origins?: string[]) {
     this.#proxy = proxy;
     this.#port = upstreamPort;
     this.#reload = reload;
+    this.#origins = origins;
   }
 
   async #open(device?: string, waitMs = 10_000): Promise<CdpSession> {
@@ -208,7 +212,7 @@ export class JsDebugger {
       );
     }
     cur?.close();
-    const s = await CdpSession.open(page, this.#port);
+    const s = await CdpSession.open(page, this.#port, 5000, this.#origins);
     this.#session = s;
     this.#debuggerOn = false;
     this.#scripts.clear();
