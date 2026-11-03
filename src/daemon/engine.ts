@@ -428,7 +428,21 @@ export class Engine {
       const have = await android.reverseList(d.serial);
       const missing = ports.filter(p => !have.includes(p));
       if (missing.length) {
-        await android.reverse(d.serial, missing);
+        const now = await android.reverse(d.serial, missing);
+        const failed = missing.filter(p => !now.includes(p));
+        if (failed.length && d.emulator) {
+          // A runner relay left by an earlier daemon outlives it and holds the ports on the device, so `adb
+          // reverse` cannot bind them ("Address already in use"). Adopt the relay instead of reporting forwards
+          // that do not exist.
+          const ui = await this.ui(d.serial);
+          const r = await ui.runner.call<{relayed: number[]}>('relays');
+          if (failed.every(p => r.relayed.includes(p))) {
+            this.#relayed.add(d.serial);
+            applied.push(...(await this.ensureForwards(true)).filter(a => a.serial === d.serial));
+            continue;
+          }
+        }
+        if (failed.length) throw new Error(`adb reverse could not forward ${failed.join(', ')} to ${d.serial} — a device process may hold the port`);
         applied.push({serial: d.serial, ports: missing});
       }
       this.#forwarded.add(d.serial);
