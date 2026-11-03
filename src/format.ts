@@ -240,6 +240,24 @@ export const formatResult = (method: string, r: unknown): string => {
       const ids = x.cleared as string[];
       return `cleared ${ids.join(', ') || 'nothing'}${x.bytecodeBack ? ' · the app gets bytecode again on its next start' : ''}`;
     }
+    case 'appConsole': {
+      type Line = {l: string; at: number; m: string; from?: string};
+      const apps = x.apps as {app: number; platform?: string; total: number; matching: number; entries: Line[]}[];
+      if (!apps.length) return 'no app connected';
+      const now = Date.now();
+      const letter: Record<string, string> = {debug: 'D', log: 'L', info: 'I', warn: 'W', error: 'E'};
+      return apps
+        .map(a => {
+          const head = `app ${a.app} (${a.platform ?? '?'}) · ${a.matching === a.total ? a.total : `${a.matching} of ${a.total}`} entries${a.entries.length < a.matching ? `, the last ${a.entries.length}` : ''}`;
+          const lines = a.entries.map(e => {
+            const [first = '', ...more] = e.m.split('\n');
+            const text = first.length > 300 ? `${first.slice(0, 300)}…` : first;
+            return `  ${seconds(now - e.at)} ago  ${letter[e.l] ?? '?'}  ${text}${more.length ? ` (+${more.length} lines)` : ''}${e.from ? `  ← ${e.from}` : ''}`;
+          });
+          return [head, ...lines].join('\n');
+        })
+        .join('\n');
+    }
     case 'appErrors': {
       const errors = x.errors as JsError[];
       if (!errors.length) return 'no JS errors in the last 30 min';

@@ -60,6 +60,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - `inspect what=network`, `inspect what=tree` — the app's requests and its React tree, from inside.
 - `inspect what=errors` — recent JS errors with source stacks (`src/file.ts:31:39` and the line itself), also
   the ones thrown at startup before any action. Errors during an action or a flow come back with it anyway.
+- `inspect what=console level=warn` — the app's console since it started (the newest 300 entries), filtered
+  by level and `grep`; each warning and error points at the line that logged it (`← greet  App.tsx:20:35`).
 - `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory.
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.

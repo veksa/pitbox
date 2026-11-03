@@ -649,6 +649,27 @@ export class Engine {
       return {apps: answers.map(a => ({app: a.app.id, platform: a.app.hello?.platform, entries: a.data}))};
     },
 
+    appConsole: async (p: Params) => {
+      if (!this.#dev) throw new Error('no devserver in the config');
+      const proxy = this.#dev.proxy;
+      const rank: Record<string, number> = {debug: 0, log: 1, info: 1, warn: 2, error: 3};
+      const min = rank[str(p, 'level') ?? 'debug'] ?? 0;
+      const grep = str(p, 'grep') ? new RegExp(str(p, 'grep')!, 'i') : undefined;
+      const limit = num(p, 'limit') ?? 30;
+      type Entry = {n: number; l: string; at: number; m: string; stack?: string};
+      const answers = await proxy.query<Entry[]>('console', {}, 3000);
+      const apps = await Promise.all(
+        answers.map(async a => {
+          const all = Array.isArray(a.data) ? a.data : [];
+          const matching = all.filter(e => (rank[e.l] ?? 1) >= min && (!grep || grep.test(e.m)));
+          const shown = matching.slice(-limit);
+          const entries = await Promise.all(shown.map(async ({stack, ...e}) => ({...e, from: stack ? (await proxy.callSite(a.app, stack))[0] : undefined})));
+          return {app: a.app.id, platform: a.app.hello?.platform, total: all.length, matching: matching.length, entries};
+        }),
+      );
+      return {apps};
+    },
+
     appErrors: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
       const errors = await this.#dev.proxy.errorsSince(Date.now() - (num(p, 'minutes') ?? 30) * 60_000);

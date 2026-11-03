@@ -70,6 +70,7 @@ devserver
   app-tree                      the React tree from inside the app (testIDs, labels, text): reaches what accessibility does not
   app-log [-n 30]               the app's recent network requests and socket events
   app-errors [-n 5]             the app's recent JS errors, stacks mapped to source files
+  app-console [-n 30] [--level warn|error] [--grep re]   the app's console, warnings with their source line
   js eval <expr…>               evaluate in the app's JS runtime (statements and promises fine)
   js log <file:line> [expr…]    a logpoint: the values each time the line runs, without stopping the app
   js hits [id] [-n 20] · js clear [id]
@@ -257,6 +258,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'appTree', params: {limit: flags.lines}};
     case 'app-errors':
       return {method: 'appErrors', params: {limit: flags.lines}};
+    case 'app-console':
+      return {method: 'appConsole', params: {limit: flags.lines, level: flags.level, grep: flags.grep}};
     case 'app-log':
       return {method: 'appLog', params: {limit: flags.lines}};
     case 'js': {

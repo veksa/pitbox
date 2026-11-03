@@ -11,7 +11,7 @@ import {freePort} from './util/net.ts';
 
 const cfg = {bundle: 'abc123', gen: 4, platform: 'android', http: 'http://localhost:8081', ws: 'ws://localhost:8081/pitbox/app'};
 
-const sandbox = (opts: {errorUtils?: boolean} = {}) => {
+const sandbox = (opts: {errorUtils?: boolean; console?: Record<string, (...a: unknown[]) => void>} = {}) => {
   const sent: string[] = [];
   const sockets: FakeWs[] = [];
   class FakeXhr {
@@ -52,6 +52,7 @@ const sandbox = (opts: {errorUtils?: boolean} = {}) => {
     }
   }
   const g: Record<string, unknown> = {XMLHttpRequest: FakeXhr, WebSocket: FakeWs, setTimeout, Date, Math, JSON, Array, String, Map, Set};
+  if (opts.console) g.console = opts.console;
   if (opts.errorUtils) {
     let handler: ((e: unknown, fatal: boolean) => void) | undefined = () => undefined;
     g.ErrorUtils = {
@@ -108,6 +109,40 @@ describe('in-app script', () => {
     channel.onmessage!({data: JSON.stringify({type: 'rules', rules: []})});
     app.dispatchEvent({type: 'message', data: 'after'});
     expect(app.received).toEqual(['before', 'after']);
+  });
+});
+
+describe('the app console', () => {
+  const reply = (sent: string[]) => JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' ')).data as {l: string; m: string; stack?: string}[];
+
+  it('keeps what the app logged as text, warnings with their stack, and still prints it', () => {
+    const printed: unknown[][] = [];
+    const print = (...a: unknown[]) => void printed.push(a);
+    const {g, sent, sockets} = sandbox({console: {log: print, warn: print, error: print}});
+    const c = g.console as Record<string, (...a: unknown[]) => void>;
+    c.log!('user', {id: 7, tags: ['a']});
+    c.warn!('Deprecated %s, use %s', 'foo', 'bar');
+    c.error!('%d%% done', 42.5);
+    expect(printed).toHaveLength(3);
+    sockets.find(s => s.url === cfg.ws)!.onmessage!({data: JSON.stringify({type: 'query', what: 'console', reqId: 1})});
+    const entries = reply(sent);
+    expect(entries.map(e => [e.l, e.m])).toEqual([
+      ['log', 'user {id: 7, tags: ["a"]}'],
+      ['warn', 'Deprecated foo, use bar'],
+      ['error', '42% done'],
+    ]);
+    expect(entries[0]!.stack).toBeUndefined();
+    expect(entries[1]!.stack).toMatch(/Error/);
+  });
+
+  it('keeps the newest 300 entries', () => {
+    const {g, sent, sockets} = sandbox({console: {log: () => undefined}});
+    const c = g.console as Record<string, (...a: unknown[]) => void>;
+    for (let i = 0; i < 305; i++) c.log!(`n ${i}`);
+    sockets.find(s => s.url === cfg.ws)!.onmessage!({data: JSON.stringify({type: 'query', what: 'console', reqId: 2})});
+    const entries = reply(sent);
+    expect(entries).toHaveLength(300);
+    expect(entries[0]!.m).toBe('n 5');
   });
 });
 

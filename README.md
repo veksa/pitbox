@@ -22,7 +22,8 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **Inside the app, with no app code** (React Native dev bundles served through pitbox): `fresh` says whether
   the app runs the newest code or a stale bundle; the app's network log; network rules applied inside the app
   (fail, mock, delay, a WebSocket frozen open, offline); a `traceparent` on every request an action causes;
-  in-flight requests count toward "the UI has settled".
+  in-flight requests count toward "the UI has settled"; the app's console from its start, warnings and errors
+  with the source line that logged them.
 - **The app's JS runtime as tools** (through the bundler's debugger channel, next to a person's DevTools):
   `js eval` runs an expression in the app (statements and promises fine, values as compact text); `js log
   <file:line> [expr…]` is a logpoint — the values each time the line runs, locals included, without stopping the

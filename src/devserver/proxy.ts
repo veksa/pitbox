@@ -233,7 +233,7 @@ export class DevProxy {
   }
 
   /** Asks every connected app; resolves with the answers that arrive within `timeoutMs`. */
-  async query<T = unknown>(what: 'idle' | 'log' | 'tree', extra: Record<string, unknown> = {}, timeoutMs = 2000): Promise<{app: AppInfo; data: T}[]> {
+  async query<T = unknown>(what: 'idle' | 'log' | 'tree' | 'console', extra: Record<string, unknown> = {}, timeoutMs = 2000): Promise<{app: AppInfo; data: T}[]> {
     const asks = [...this.#apps.values()].map(
       app =>
         new Promise<{app: AppInfo; data: T} | undefined>(resolve => {
@@ -287,6 +287,14 @@ export class DevProxy {
     });
     this.#symbolicating.add(job);
     void job.finally(() => this.#symbolicating.delete(job));
+  }
+
+  /** Where a call came from: the first app frames of a stack the app sent, mapped to source files. */
+  async callSite(app: AppInfo, stack: string, limit = 1): Promise<string[]> {
+    const raw = unshift(parseStack(stack), app.hello ? this.#injections.get(app.hello.bundle) : undefined);
+    if (!raw.length) return [];
+    const r = await symbolicate(this.opts.upstreamPort, raw);
+    return formatFrames(r.frames, this.opts.root ?? process.cwd(), limit).filter(l => !l.startsWith('…'));
   }
 
   /** JS errors received since `since` (ms epoch), once their symbolication is done or `waitMs` has passed. */

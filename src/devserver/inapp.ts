@@ -4,9 +4,13 @@
 // It tells the daemon which bundle is running (freshness), logs network requests and stamps them with a W3C
 // `traceparent`, applies network rules from the daemon (fail, mock, delay; freeze or fail a WebSocket), and
 // answers how many requests are in flight (so UI settling can wait for the network too). JS errors that reach
-// the global handler go to the daemon with their raw stack, which the proxy symbolicates.
+// the global handler go to the daemon with their raw stack, which the proxy symbolicates. The app's console is
+// kept in a ring (warnings and errors with the stack of the call), so what was logged before anyone asked —
+// at startup, during a flow — is still there.
 //
 // Written as plain ES2017 inside a function that is serialised with `toString()`: Hermes runs it as is.
+
+import {pitboxFmt} from './valuefmt.ts';
 
 export type InAppConfig = {
   bundle: string;
@@ -20,11 +24,11 @@ export type InAppConfig = {
 
 // The body below runs inside the app, not in Node.
 /* eslint-disable */
-function pitboxInApp(cfg: InAppConfig) {
+function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[]) => string) {
   var g: any = globalThis as any;
   if (g.__pitbox) return;
   var scriptStart = Date.now();
-  var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false, errors: [], ch: null, fromSource: !!cfg.fromSource};
+  var state: any = {rules: [], trace: null, inflight: 0, last: Date.now(), log: [], sockets: [], frozenAll: false, errors: [], ch: null, fromSource: !!cfg.fromSource, console: [], consoleSeq: 0};
   g.__pitbox = state;
   var seq = 0;
   var hex = function (n: number) {
@@ -112,6 +116,47 @@ function pitboxInApp(cfg: InAppConfig) {
     EU.setGlobalHandler = function (h: any) {
       return setHandler.call(EU, wrap(h));
     };
+  }
+
+  // Wrapped on top of whatever the runtime installed (LogBox), so the app's own calls come here first.
+  var C = g.console;
+  var printf = function (args: any[]) {
+    var first = args[0];
+    var rest = args.slice(1);
+    var head = '';
+    if (typeof first === 'string' && /%[sdifoOjc]/.test(first) && rest.length) {
+      head = first.replace(/%([sdifoOjc%])/g, function (m: string, k: string) {
+        if (k === '%') return '%';
+        if (!rest.length) return m;
+        var a = rest.shift();
+        if (k === 'c') return '';
+        if (k === 's') return typeof a === 'string' ? a : fmt(a, 1);
+        if (k === 'd' || k === 'i') return String(parseInt(a, 10));
+        if (k === 'f') return String(parseFloat(a));
+        return fmt(a, 1);
+      });
+    } else if (args.length) {
+      head = typeof first === 'string' ? first : fmt(first, 1);
+    }
+    var parts = [head];
+    for (var i = 0; i < rest.length; i++) parts.push(typeof rest[i] === 'string' ? rest[i] : fmt(rest[i], 1));
+    return parts.join(' ');
+  };
+  if (C) {
+    ['debug', 'log', 'info', 'warn', 'error'].forEach(function (level) {
+      var orig = C[level];
+      if (typeof orig !== 'function') return;
+      C[level] = function () {
+        try {
+          var m = printf(Array.prototype.slice.call(arguments));
+          var e: any = {n: ++state.consoleSeq, l: level, at: Date.now(), m: m.length > 2000 ? m.slice(0, 2000) + '…' : m};
+          if (level === 'warn' || level === 'error') e.stack = new Error().stack;
+          state.console.push(e);
+          if (state.console.length > 300) state.console.shift();
+        } catch (x) {}
+        return orig.apply(this, arguments);
+      };
+    });
   }
 
   var W = g.WebSocket;
@@ -214,7 +259,14 @@ function pitboxInApp(cfg: InAppConfig) {
       } else if (msg.type === 'trace') {
         state.trace = msg.id || null;
       } else if (msg.type === 'query') {
-        var data: any = msg.what === 'log' ? state.log.slice(-(msg.limit || 30)) : msg.what === 'tree' ? reactTree(msg.limit || 600) : {inflight: state.inflight, quietMs: Date.now() - state.last, sockets: state.sockets.length};
+        var data: any =
+          msg.what === 'log'
+            ? state.log.slice(-(msg.limit || 30))
+            : msg.what === 'tree'
+              ? reactTree(msg.limit || 600)
+              : msg.what === 'console'
+                ? state.console.slice(0)
+                : {inflight: state.inflight, quietMs: Date.now() - state.last, sockets: state.sockets.length};
         ch.send(JSON.stringify({type: 'reply', reqId: msg.reqId, data: data}));
       }
     };
@@ -230,7 +282,7 @@ function pitboxInApp(cfg: InAppConfig) {
 /* eslint-enable */
 
 /** The script with its config inlined, ready to splice into a bundle. */
-export const inAppScript = (cfg: InAppConfig): string => `;(${pitboxInApp.toString()})(${JSON.stringify(cfg)});\n`;
+export const inAppScript = (cfg: InAppConfig): string => `;(${pitboxInApp.toString()})(${JSON.stringify(cfg)}, ${pitboxFmt.toString()});\n`;
 
 /**
  * Splices the script in front of the bundle's last module call (the app entry), after the runtime's own
