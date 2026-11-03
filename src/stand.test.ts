@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterAll, describe, expect, it} from 'vitest';
+import {builtinRules} from './doctor/rules.ts';
+import type {DoctorContext} from './doctor/types.ts';
 import {ActorManager} from './stand/actors.ts';
 import {LlmMock} from './stand/llmMock.ts';
 import {ServiceManager} from './stand/services.ts';
@@ -77,6 +79,17 @@ describe('services', () => {
     const [s] = await m.up();
     expect(s?.status).toBe('failed');
     expect(s?.detail).toMatch(/no start command/);
+  });
+});
+
+describe('doctor services rule', () => {
+  it('reads a service the engine adds, like the dev server, from the stand and not from the config', async () => {
+    const port = await freePort();
+    const m = new ServiceManager(ctx, {devserver: {start: server(port), health: `tcp:${port}`}});
+    const rule = builtinRules.find(r => r.id === 'services')!;
+    const [f] = await rule.check({root: dir, config: {}, services: m, exposedPorts: []} as DoctorContext);
+    expect(f?.hint).toBe('start it: pitbox up devserver');
+    expect(f?.fix).toBeUndefined();
   });
 });
 

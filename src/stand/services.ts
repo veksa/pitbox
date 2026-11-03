@@ -99,6 +99,11 @@ export class ServiceManager {
     return Object.keys(this.#services);
   }
 
+  /** A service as the stand runs it: the config's, or one the engine adds (the dev server). */
+  definition(name: string): ServiceConfig | undefined {
+    return this.#services[name];
+  }
+
   #cwd(svc: ServiceConfig) {
     return svc.cwd ? path.resolve(this.#ctx.root, svc.cwd) : this.#ctx.root;
   }

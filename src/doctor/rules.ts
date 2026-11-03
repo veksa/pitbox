@@ -262,7 +262,8 @@ const servicesHealthy: Rule = {
     const findings: Finding[] = [];
     for (const s of await ctx.services.status()) {
       if (s.status === 'up' || s.status === 'external') continue;
-      const svc = ctx.config.services?.[s.name];
+      // The stand's own definition: the dev server is not in `config.services`, but it has a start command.
+      const svc = ctx.services.definition(s.name);
       if (svc?.autostart === false && s.status === 'stopped') continue;
       const port = probePort(svc?.health);
       let owner: string | undefined;
@@ -272,8 +273,9 @@ const servicesHealthy: Rule = {
         rule: 'services',
         severity: 'error',
         message: `${s.name} is ${s.status}${s.detail ? ` (${s.detail.split('\n')[0]})` : ''}${owner ? `; port ${port} held by ${owner}` : ''}`,
-        hint: owner ? 'something else holds the port — find out what it is before killing it' : svc?.start ? 'start it' : 'start it outside pitbox, it has no start command',
-        fix: svc?.start && !owner ? async () => {
+        hint: owner ? 'something else holds the port — find out what it is before killing it' : svc?.start ? `start it: pitbox up ${s.name}` : 'start it outside pitbox, it has no start command',
+        // `up` through the engine: the dev server also needs its proxy, which the service manager does not start.
+        fix: svc?.start && !owner && ctx.config.services?.[s.name] ? async () => {
           const [r] = await ctx.services.up([s.name]);
           return `${s.name}: ${r?.status}`;
         } : undefined,
