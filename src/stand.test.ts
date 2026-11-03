@@ -191,6 +191,9 @@ describe('a restored emulator', () => {
     expect(calls).toContain('reconnect offline');
     state = 'device';
     await expect(s.restore('s1', emulator)).resolves.toMatchObject({name: 's1'});
+  });
+});
+
 describe('named states', () => {
   it("save and bring back the backend and the device's side, backend first", async () => {
     const {StateStore} = await import('./stand/states.ts');

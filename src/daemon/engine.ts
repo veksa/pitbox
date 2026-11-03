@@ -22,7 +22,7 @@ import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
 import {ServiceManager} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
-import {type DeviceSnapshot, StateStore} from '../stand/states.ts';
+import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import type {PerfData} from '../flows/budget.ts';
 import {formatResult} from '../format.ts';
@@ -105,11 +105,7 @@ export class Engine {
     if (!a || (!online.length && !device)) return {};
     const serial = await a.resolve(device);
     if (!serial.startsWith('emulator-')) throw new Error('device snapshots need an emulator');
-    const emu = async (op: string, n: string, timeoutMs = 180_000) => {
-      const r = await a.adb(['emu', 'avd', 'snapshot', op, n], serial, {timeoutMs});
-      if (op !== 'delete' && !/OK/.test(r.stdout)) throw new Error(`emulator snapshot ${op} failed: ${(r.stdout + r.stderr).trim()}`);
-    };
-    return {serial, snap: {id: serial, label: online.find(d => d.serial === serial)?.avd, kind: 'emulator', save: n => emu('save', n), load: n => emu('load', n), remove: n => emu('delete', n, 60_000)}};
+    return {serial, snap: emulatorSnapshot(a, serial, online.find(d => d.serial === serial)?.avd)};
   }
 
   /** After a snapshot load the device's runner and forwards belong to a past moment: start them again. */
