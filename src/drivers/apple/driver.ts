@@ -41,7 +41,8 @@ export class AppleError extends Error {
 
 /** `com.apple.CoreSimulator.SimRuntime.iOS-27-1` → `iOS 27.1`. */
 export const runtimeName = (id: string): string => {
-  const m = /SimRuntime\.([a-zA-Z]+)-([\d-]+)$/.exec(id);
+  // A runtime made for one device carries its model after the version: `iOS-27-2-iPhone19-4`.
+  const m = /SimRuntime\.([a-zA-Z]+)-(\d+(?:-\d+)*)(?:-[A-Za-z][\w-]*)?$/.exec(id);
   return m ? `${m[1]} ${m[2]!.replace(/-/g, '.')}` : id;
 };
 

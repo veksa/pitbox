@@ -24,6 +24,7 @@ const list = JSON.stringify({
 describe('apple driver', () => {
   it('names runtimes and kinds', () => {
     expect(runtimeName('com.apple.CoreSimulator.SimRuntime.iOS-27-1')).toBe('iOS 27.1');
+    expect(runtimeName('com.apple.CoreSimulator.SimRuntime.iOS-27-2-iPhone19-4')).toBe('iOS 27.2');
     expect(simKind('tvOS 27.2', 'Apple TV')).toBe('tv');
     expect(simKind('xrOS 3.0', 'Apple Vision Pro')).toBe('xr');
     expect(simKind('iOS 27.0', 'com.apple.CoreSimulator.SimDeviceType.iPad-Air')).toBe('tablet');
