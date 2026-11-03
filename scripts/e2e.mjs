@@ -175,7 +175,7 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     pitbox(['press', 'id=busy', '--device', avd]);
     const perf = pitbox(['perf', '--device', avd]);
     head(perf.out.split('\n').filter(l => /JS thread|workHard|React:|Main —/.test(l)).join('\n'), 5);
-    checks.push({name: 'js profile names the slow app function', ok: /app code, with what it called:\n\s+\d+ ms {2}workHard {2}App\.tsx:\d+/.test(perf.out)});
+    checks.push({name: 'js profile names the slow app function', ok: /app code, with what it called:(\n {4}\s*\d+ ms {2}\S.*)*?\n {4}\s*\d+ ms {2}workHard {2}App\.tsx:\d+/.test(perf.out)});
     checks.push({name: 'react commits name a component and why it rendered', ok: /React: \d+ commits?/.test(perf.out) && /\d+× +[\d.]+ ms {2}Main — state/.test(perf.out)});
     const budgets = pitbox(['run', 'perf', '--device', avd]);
     head(budgets.out, 3);
@@ -187,6 +187,8 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     head(traced.out.split('\n').filter(l => l.startsWith('platform trace')).join('\n'), 1);
     checks.push({name: 'platform trace of the app', ok: /platform trace [\d.]+s: .*\bmain \d+ ms/.test(traced.out) && /RenderThread \d+ ms/.test(traced.out)});
     // An edit reaches the app as a hot update (the app runs bytecode), and a broken edit comes back as text.
+    // The title is back on screen first: the trace above scrolled the list.
+    pitbox(['scroll', 'up', 'until', 'id=title', '--device', avd]);
     const appFile = path.join(rnDir, 'App.tsx');
     const appSource = fs.readFileSync(appFile, 'utf8');
     try {
