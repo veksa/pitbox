@@ -44,8 +44,10 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **Checks instead of screenshots** — `media` (is the video playing, or black), `visual` (the screen against a
   baseline, changed regions in pixels), `focus_map` (D-pad reachability, traps, irreversible moves), `perf`
   (janky frames, frame-time percentiles, memory, the JS thread's profile — the functions that took the time,
-  mapped to source lines — and React's commits: which components rendered, their own time and why), `app_tree` (the React tree from inside the app). Crashes,
-  ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files and lines
+  mapped to source lines — React's commits: which components rendered, their own time and why — and, on
+  request, the platform's trace on Android: time per thread and the long slices with what took the time),
+  with budgets in flows (`expect perf janky<5 js<300 renders:Row<=40`), `app_tree` (the React tree from
+  inside the app). Crashes, ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files and lines
   by the bundler, bytecode included.
 - **Cold start, measured** — `open!` reports the activity, when the JS bundle started running and what it
   was served (bytecode or source, cached or not); a flow adds the time to its first check.

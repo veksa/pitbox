@@ -15,6 +15,8 @@ export const METRICS: Record<string, string> = {
   rendering: 'ms',
   heap: 'MB',
   allocated: 'MB',
+  /** The longest slice on the app's main thread in the platform trace (`perf trace`). */
+  slice: 'ms',
 };
 
 export const parseBudget = (token: string): Budget => {
@@ -35,6 +37,7 @@ export type PerfData = {
   p99?: number;
   memoryMb?: number;
   js?: {busyMs?: number; note?: string};
+  trace?: {threads?: {thread: string; longest: number}[]; note?: string};
   react?: {commits?: number; renderMs?: number; counts?: Record<string, number>; react?: boolean; heap?: {liveBefore: number; liveAfter: number; allocated: number}};
 };
 
@@ -62,6 +65,9 @@ export const measure = (d: PerfData, metric: string): number | undefined => {
       return h ? Math.round(((h.liveAfter - h.liveBefore) / MB) * 10) / 10 : undefined;
     case 'allocated':
       return h ? Math.round((h.allocated / MB) * 10) / 10 : undefined;
+    case 'slice':
+      if (!d.trace || d.trace.note) return undefined;
+      return d.trace.threads?.find(t => t.thread === 'main')?.longest ?? 0;
     default:
       return undefined;
   }
@@ -78,7 +84,8 @@ export const checkBudgets = (d: PerfData, budgets: Budget[]): {ok: boolean; line
     const unit = METRICS[b.metric] ?? '';
     if (v === undefined) {
       ok = false;
-      lines.push(`${b.metric}: not measured here (${b.metric.startsWith('renders:') || ['commits', 'rendering', 'heap', 'allocated', 'js'].includes(b.metric) ? 'needs a dev build through the dev server' : 'this device has no counter for it'})`);
+      const why = b.metric === 'slice' ? 'needs `perf trace` on Android' : b.metric.startsWith('renders:') || ['commits', 'rendering', 'heap', 'allocated', 'js'].includes(b.metric) ? 'needs a dev build through the dev server' : 'this device has no counter for it';
+      lines.push(`${b.metric}: not measured here (${why})`);
       continue;
     }
     const pass = holds(v, b);

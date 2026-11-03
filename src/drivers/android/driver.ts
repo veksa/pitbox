@@ -8,6 +8,7 @@ import {launchHidden, run, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {avdHome, avdKind, findAdb, findEmulator, listAvds} from './sdk.ts';
 import {car, physicalDisplays, pngFrom, posture, rotate, wear, windowMode} from './formfactor.ts';
+import {summarizeAtrace, type TraceSummary} from './atrace.ts';
 
 export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
 
@@ -472,6 +473,23 @@ export class AndroidDriver {
       p99: num(/99th percentile:\s*(\d+)ms/),
       memoryMb: pss ? Math.round(Number(pss) / 1024) : undefined,
     };
+  }
+
+  /**
+   * Starts the platform trace for the app (atrace: graphics, views, input, activities, the runtime, windows,
+   * resources). CPU scheduling is left out: it multiplies the trace tenfold for little an app developer reads.
+   */
+  async traceStart(serial: string, pkg: string): Promise<void> {
+    const r = await this.adb(['shell', 'atrace', '--async_start', '-b', '16384', '-a', pkg, 'gfx', 'view', 'input', 'am', 'dalvik', 'wm', 'res'], serial, {timeoutMs: 20_000});
+    if (r.code !== 0) throw new AndroidError(`atrace did not start: ${(r.stderr || r.stdout).trim().split('\n').pop()}`);
+  }
+
+  /** Stops the trace and sums it up for the app's process. */
+  async traceStop(serial: string, pkg: string): Promise<TraceSummary & {pid?: number}> {
+    const r = await this.adb(['exec-out', 'atrace', '--async_stop', '-a', pkg], serial, {timeoutMs: 60_000});
+    const pid = Number((await this.shell(serial, `pidof ${pkg}`)).trim().split(/\s+/)[0]);
+    if (!pid) return {ms: 0, threads: [], long: [], longMs: 16};
+    return {...summarizeAtrace(r.stdout, pid), pid};
   }
 
   async info(serial: string): Promise<Record<string, string>> {

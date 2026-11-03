@@ -71,7 +71,10 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   which components rendered how often, their own time, and why (`Button — props onPress ×4`: a new function
   each render; `parent rendered, same props`: a `memo` would skip it); and the JS heap: live bytes before and
   after, bytes allocated, collections. Live bytes depend on when the collector last ran, so a leak shows as a
-  trend over repeats of a step, not in one window. About 25 lines.
+  trend over repeats of a step, not in one window. About 25 lines. `trace=true` on the reset adds the
+  platform's trace (Android, atrace): time per app thread and the long slices grouped by kind, with what took
+  the time inside (`Choreographer#doFrame > traversal > draw`), about 8 more lines. It slows the device a
+  little while it runs, so it is opt-in.
   Sampling is ~10 ms, so measure an interaction that takes longer than a few samples.
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.

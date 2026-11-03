@@ -66,6 +66,8 @@ export class Engine {
   #lastForwardCheck = 0;
   #dev?: DevServer;
   readonly #uis = new Map<string, DeviceUi>();
+  /** Devices with a platform trace running for the current perf window. */
+  readonly #tracing = new Set<string>();
 
   #states(): StateStore {
     return new StateStore({root: this.#loaded.root, stateDir: this.#loaded.stateDir, shell: this.config.shell}, this.config.states);
@@ -220,8 +222,8 @@ export class Engine {
   #flowHost(device?: string, variant?: string): FlowHost {
     return {
       jsErrors: since => this.#jsErrors(since),
-      perf: async reset => {
-        const data = await this.methods.perf({device, reset});
+      perf: async (reset, trace) => {
+        const data = await this.methods.perf({device, reset, trace});
         return {data: data as PerfData, text: formatResult('perf', data)};
       },
       reshape: (op, value) => this.methods[op]({device, value}),
@@ -1166,7 +1168,21 @@ export class Engine {
     perf: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
       const reset = bool(p, 'reset');
-      const device = t.platform === 'apple' ? await t.s.perf(t.id, this.#bundleId(p), reset) : await t.a.perf(t.id, this.#pkg(p), reset);
+      const device: Record<string, unknown> = t.platform === 'apple' ? await t.s.perf(t.id, this.#bundleId(p), reset) : await t.a.perf(t.id, this.#pkg(p), reset);
+      // The platform trace (opt-in: it costs the device some speed while it runs) over the same window.
+      if (t.platform === 'android') {
+        const pkg = this.#pkg(p);
+        if (this.#tracing.has(t.id)) {
+          this.#tracing.delete(t.id);
+          const summary = await t.a.traceStop(t.id, pkg).catch(e => ({note: `no trace: ${(e as Error).message}`}));
+          if (!reset) device.trace = summary;
+        }
+        if (reset && bool(p, 'trace')) {
+          await t.a.traceStart(t.id, pkg);
+          this.#tracing.add(t.id);
+          device.tracing = true;
+        }
+      } else if (reset && bool(p, 'trace')) device.tracing = 'no platform trace on Apple simulators';
       const dev = this.#dev;
       if (!dev) return device;
       // React commits come from the in-app script of each connected app; the first answer is shown.

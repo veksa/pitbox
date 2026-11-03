@@ -15,7 +15,7 @@
 //   wait text="Home" [seconds] | wait gone id=spinner [seconds]
 //   expect text="Welcome" | expect gone id=error | expect focus id=play
 //   expect playing id=player | expect paused id=player   (frames compared on the device; black is not playing)
-//   perf                         start measuring (frames, JS thread, React commits, heap)
+//   perf [trace]                 start measuring (frames, JS thread, React commits, heap; trace: the platform's trace)
 //   expect perf janky<5 js<300 renders:Row<=40   stop measuring and check the numbers against budgets
 //   tool sql query="select 1" contains "1"
 //   state signed-in              restore a named stand state (device snapshot + backend)

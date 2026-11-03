@@ -112,8 +112,8 @@ Every action waits for the UI to settle before the next step.
 | `expect playing [selector]` | the region (or screen) moves between frames and is not black; tried a few times while a player starts |
 | `expect paused [selector]` | nothing moves in the region |
 | `visual <name> [mask <selector>]…` | the screen matches the stored baseline `<name>`; the first run stores it. Masked targets (a video, a clock) are blanked on both sides |
-| `perf` | always passes; starts measuring frames, the JS thread, React commits and the JS heap |
-| `expect perf <budget>…` | every budget holds over the window since `perf`, like `janky<5 p90<=20ms js<300 commits<=3 rendering<16 heap<2 allocated<20 renders:Row<=40`. Units: `%` (janky), ms (`s` converts), MB (memory, heap growth, allocated). A metric this device or app cannot measure fails the step. On failure the step shows the broken budgets and the whole perf report |
+| `perf [trace]` | always passes; starts measuring frames, the JS thread, React commits and the JS heap; `trace` adds the platform's trace (Android) |
+| `expect perf <budget>…` | every budget holds over the window since `perf`, like `janky<5 p90<=20ms js<300 commits<=3 rendering<16 heap<2 allocated<20 renders:Row<=40`, and with `perf trace` `slice<16` (the longest slice on the app's main thread). Units: `%` (janky), ms (`s` converts), MB (memory, heap growth, allocated). A metric this device or app cannot measure fails the step. On failure the step shows the broken budgets and the whole perf report |
 | `tool <name> key=value… [contains "text"]` | the project tool exits with 0 (and its output contains the text) |
 | `screenshot [name] [full]` | always passes; saves a downscaled JPEG, or a full-resolution PNG with `full` (store screenshots). Under `matrix` the file goes into the variant's folder |
 

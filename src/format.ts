@@ -8,6 +8,7 @@ import type {ServiceState} from './stand/services.ts';
 import type {ToolResult} from './stand/tools.ts';
 import type {DevserverStatus, Freshness} from './devserver/devserver.ts';
 import type {EvalResult, JsProfile, Logpoint} from './devserver/jsdebug.ts';
+import type {TraceSummary} from './drivers/android/atrace.ts';
 import type {JsError} from './devserver/proxy.ts';
 import type {ActResult, FocusMap} from './ui/device.ts';
 import type {FlowResult} from './flows/run.ts';
@@ -125,6 +126,21 @@ export const fmtObject = (o: unknown): string => {
 };
 
 /** Formats any engine result by method. */
+const fmtTrace = (t?: TraceSummary & {note?: string}): string[] => {
+  if (!t) return [];
+  if (t.note) return [t.note];
+  if (!t.threads.length) return ['platform trace: nothing traced in the app (not running?)'];
+  return [
+    `platform trace ${seconds(t.ms)}: ${t.threads
+      .slice(0, 4)
+      .map(x => `${x.thread} ${x.ms} ms`)
+      .join(', ')}`,
+    ...(t.long.length
+      ? [`  slices of ${t.longMs} ms and more (longest, how often, sum):`, ...t.long.map(s => `  ${String(s.ms).padStart(6)} ms ${`×${s.count}`.padStart(4)} ${String(s.totalMs).padStart(7)} ms  ${s.thread}  ${[s.name, ...s.path].join(' > ').slice(0, 120)}`)]
+      : [`  no slice reached ${t.longMs} ms`]),
+  ];
+};
+
 type ReactRenders = {
   ms: number;
   react?: boolean;
@@ -226,13 +242,16 @@ export const formatResult = (method: string, r: unknown): string => {
       ].join('\n');
     }
     case 'perf': {
-      if (x.reset) return `${String(x.note ?? 'frame stats reset')}${x.jsProfiling ? ' · JS profiler started' : ''}${x.reactRecording ? ' · React commits recorded' : ''} — interact, then read perf`;
+      if (x.reset) {
+        const tracing = x.tracing === true ? ' · platform trace started' : typeof x.tracing === 'string' ? ` · ${x.tracing}` : '';
+        return `${String(x.note ?? 'frame stats reset')}${x.jsProfiling ? ' · JS profiler started' : ''}${x.reactRecording ? ' · React commits recorded' : ''}${tracing} — interact, then read perf`;
+      }
       // Without a frame counter (simulators) only the memory line, not a row of question marks.
       const head =
         x.frames === undefined
           ? `memory ${x.memoryMb ?? '?'} MB${x.note ? ` · ${x.note}` : ''}`
           : `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
-      return [head, ...fmtJsProfile(x.js as JsProfile | undefined), ...fmtRenders(x.react as ReactRenders | undefined)].join('\n');
+      return [head, ...fmtJsProfile(x.js as JsProfile | undefined), ...fmtRenders(x.react as ReactRenders | undefined), ...fmtTrace(x.trace as (TraceSummary & {note?: string}) | undefined)].join('\n');
     }
     case 'visual':
       return x.status === 'saved' ? `baseline saved: ${x.baseline}` : x.status === 'match' ? `matches ${x.name} (score ${x.score})` : `differs from ${x.name}: score ${x.score}, ${Math.round((x.changedShare as number) * 1000) / 10}% of the screen, regions ${(x.regions as number[][]).map(r => `[${r.join(',')}]`).join(' ')}\ncurrent: ${x.current}\nbaseline: ${String(x.baseline).replace(/\.json$/, '.jpg')}`;

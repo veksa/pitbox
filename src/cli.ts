@@ -35,7 +35,7 @@ android
   screenshot [file]
   reverse                       forward every exposed port to every device now
   info
-  perf [reset]                  frames since reset (janky share, frame time percentiles) and memory of the app
+  perf [reset [trace]]          since reset: frames, memory, the JS thread, React commits, the JS heap; trace adds the platform's trace (Android)
 
 ui (through the on-device runner; every action waits for the UI to settle and prints what changed)
   snapshot [--system]           the screen as short lines with refs (@e12)
@@ -239,7 +239,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'reverse':
       return {method: 'reverse', params: {}};
     case 'perf':
-      return {method: 'perf', params: {...common, reset: rest[0] === 'reset'}};
+      return {method: 'perf', params: {...common, reset: rest[0] === 'reset', trace: rest.includes('trace') || flags.trace}};
     case 'info':
       return {method: 'info', params: {device}};
     case 'doctor':

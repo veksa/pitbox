@@ -23,7 +23,7 @@ export type FlowHost = {
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
   reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car', value: string) => Promise<unknown>;
   /** Starts a perf window (`reset`), or ends it with the numbers and their text as `perf` prints it. */
-  perf: (reset: boolean) => Promise<{data: PerfData; text: string}>;
+  perf: (reset: boolean, trace?: boolean) => Promise<{data: PerfData; text: string}>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
   jsErrors?: (since: number) => Promise<{summary: string; lines: string[]}[]>;
 };
@@ -131,7 +131,7 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
       return;
     }
     case 'perf':
-      await host.perf(true);
+      await host.perf(true, a[0] === 'trace');
       return;
     case 'expect': {
       if (a[0] === 'perf') {
