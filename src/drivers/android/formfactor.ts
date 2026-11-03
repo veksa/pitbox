@@ -53,6 +53,10 @@ export const posture = async (shell: Shell, serial: string, name: string): Promi
   }
   // The displays switch a moment after the state does.
   await new Promise(r => setTimeout(r, 1500));
+  // Folding puts up the keyguard on the outer screen by default (Android 15 and later: "swipe up to continue");
+  // the app stays behind it. Dismissed, as the swipe would: a screen lock with a credential stays.
+  await shell(serial, 'input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard').catch(() => '');
+  await new Promise(r => setTimeout(r, 500));
   return {posture: name, states: names};
 };
 

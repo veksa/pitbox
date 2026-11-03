@@ -283,6 +283,17 @@ describe('form factors', () => {
     expect(taskIdOf(dump, 'com.example.app')).toBe('63');
     expect(taskIdOf(dump, 'com.example')).toBeUndefined();
   });
+
+  it('folds to a state and dismisses the keyguard folding put up', async () => {
+    const {posture} = await import('./drivers/android/formfactor.ts');
+    const calls: string[] = [];
+    const shell = async (_s: string, c: string) => {
+      calls.push(c);
+      return c.includes('print-states') ? "DeviceState{identifier=0, name='CLOSED'}\nDeviceState{identifier=3, name='OPENED'}" : '';
+    };
+    await posture(shell, 'emulator-5554', 'closed');
+    expect(calls).toEqual(['cmd device_state print-states', 'cmd device_state state 0', 'input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard']);
+  }, 10_000);
 });
 
 describe('watch and window helpers', () => {
