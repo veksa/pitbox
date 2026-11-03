@@ -315,6 +315,38 @@ describe('a keyboard over the target', () => {
   });
 });
 
+describe('a tap that only closed the keyboard', () => {
+  it('is pressed again, so the control gets it', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = true;
+    let greeted = false;
+    const calls: string[] = [];
+    const greet: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 100, 400, 150], id: 'greet', t: 'Greet', f: 'c'};
+    const keys: UiNode = {p: -1, w: 1, c: 'Keyboard', b: [0, 300, 400, 500]};
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'tap') {
+          calls.push(cmd);
+          // A list that spends the first tap on the keyboard.
+          if (keyboard) keyboard = false;
+          else greeted = true;
+        }
+        if (cmd === 'tree') {
+          const nodes = [greet, ...(greeted ? [{p: -1, w: 0, c: 'Text', b: [0, 160, 400, 200], t: 'Hello'} as UiNode] : []), ...(keyboard ? [keys] : [])];
+          return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}, ...(keyboard ? [{type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'}] : [])], nodes};
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).press('id=greet');
+    expect(calls).toEqual(['tap', 'tap']);
+    expect(greeted).toBe(true);
+    expect(r.note).toMatch(/pressed again/);
+  });
+});
+
 describe('focus map', () => {
   it('tells apart cells that share one id', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

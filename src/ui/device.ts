@@ -216,8 +216,24 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     t = this.#phase('input', t);
     if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
     else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
-    const settled = await this.#settle(snap);
-    const note = this.last && onlyClosedKeyboard(snap, this.last) ? 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)' : undefined;
+    let settled = await this.#settle(snap);
+    let note: string | undefined;
+    // A list that spends the first tap on the keyboard (React Native's default) closed it and nothing else
+    // changed: the control did not get the tap. Pressed once more, where the control is now.
+    if (this.last && onlyClosedKeyboard(snap, this.last)) {
+      const closed = this.last;
+      let again: ReturnType<typeof resolveTarget> | undefined;
+      try {
+        again = resolveTarget(closed, selector);
+      } catch {
+        again = undefined;
+      }
+      if (again && kind === 'tap' && !/^@e\d+$/.test(selector.trim())) {
+        await this.runner.call(kind, {x: again.x, y: again.y});
+        settled = await this.#settle(snap);
+        note = 'the first tap only closed the keyboard: pressed again';
+      } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
+    }
     return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...(note ? {note} : {}), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
   }
 
