@@ -13,6 +13,18 @@ export type StateInfo = {name: string; savedAt: number; device?: string; avd?: s
 
 const snapshotName = (name: string) => `pitbox-${name}`;
 
+/**
+ * Why `adb emu avd snapshot` gave no OK. An emulator that went away mid-snapshot leaves adb with nothing to say, and
+ * an empty reason sends one hunting in the wrong place.
+ */
+export const snapshotFailure = async (android: Pick<AndroidDriver, 'devices'>, serial: string, r: {stdout: string; stderr: string; code?: number | null; timedOut?: boolean}) => {
+  const said = (r.stdout + r.stderr).trim();
+  const online = (await android.devices().catch(() => [])).some(d => d.serial === serial && d.state === 'device');
+  if (!online) return `${said ? `${said} — ` : ''}the emulator ${serial} is gone (it exited during the snapshot, which writes the whole RAM to disk: short of memory or disk space); boot it again`;
+  if (r.timedOut) return 'the emulator did not answer in time';
+  return said || `adb exited with ${r.code ?? 'no code'} and said nothing`;
+};
+
 export const validStateName = (name: string) => {
   if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`state name must be letters, digits, . _ - (got "${name}")`);
   return name;
@@ -62,7 +74,7 @@ export class StateStore {
     if (serial) {
       if (!serial.startsWith('emulator-')) throw new Error('device snapshots need an emulator');
       const r = await android!.adb(['emu', 'avd', 'snapshot', 'save', snapshotName(name)], serial, {timeoutMs: 180_000});
-      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot failed: ${(r.stdout + r.stderr).trim()}`);
+      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot failed: ${await snapshotFailure(android!, serial, r)}`);
     }
     const backend = await this.#hook('save', name);
     const info: StateInfo = {name, savedAt: Date.now(), device: serial, avd, backend};
@@ -80,7 +92,7 @@ export class StateStore {
     if (info.device) {
       if (!serial) throw new Error(`state "${name}" has a device snapshot (${info.avd ?? info.device}); boot that emulator first`);
       const r = await android!.adb(['emu', 'avd', 'snapshot', 'load', snapshotName(name)], serial, {timeoutMs: 180_000});
-      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot load failed: ${(r.stdout + r.stderr).trim()}`);
+      if (!/OK/.test(r.stdout)) throw new Error(`emulator snapshot load failed: ${await snapshotFailure(android!, serial, r)}`);
     }
     return {...info, ms: Date.now() - t0};
   }

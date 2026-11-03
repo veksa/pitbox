@@ -152,3 +152,14 @@ describe('llm mock', () => {
     await mock.stop();
   });
 });
+
+describe('a failed emulator snapshot', () => {
+  it('says the emulator is gone instead of an empty reason', async () => {
+    const {snapshotFailure} = await import('./stand/states.ts');
+    const gone = {devices: async () => []};
+    expect(await snapshotFailure(gone as never, 'emulator-5554', {stdout: '', stderr: '', code: 1})).toMatch(/emulator-5554 is gone .*boot it again/);
+    const there = {devices: async () => [{serial: 'emulator-5554', state: 'device'}]};
+    expect(await snapshotFailure(there as never, 'emulator-5554', {stdout: '', stderr: '', code: 1})).toBe('adb exited with 1 and said nothing');
+    expect(await snapshotFailure(there as never, 'emulator-5554', {stdout: 'KO: no space', stderr: ''})).toBe('KO: no space');
+  });
+});
