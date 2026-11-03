@@ -194,3 +194,42 @@ describe('embedded build', () => {
     await expect(new DevServer({adapter: 'command', start: 'x'}, root, path.join(root, '.pitbox')).embed()).rejects.toThrow(/devserver.embed.output/);
   });
 });
+
+describe('main bundle compression', () => {
+  it('gzips the main bundle for a client that asks, and leaves it plain for one that does not', async () => {
+    const upPort = await freePort();
+    const port = await freePort();
+    const bundle = `__d(function(){},0);\n${'var x = "padding padding padding";\n'.repeat(4000)}__r(0);`;
+    const upstream = http.createServer((_q, s) => s.end(bundle));
+    await new Promise<void>(r => upstream.listen(upPort, '127.0.0.1', () => r()));
+    // With the in-app script on, the proxy answers the native request itself (it splices the script in).
+    const proxy = new DevProxy({port, upstreamPort: upPort, inApp: true});
+    await proxy.start();
+    const get = (encoding?: string) =>
+      new Promise<{headers: http.IncomingHttpHeaders; body: Buffer}>((resolve, reject) => {
+        http
+          .get({host: '127.0.0.1', port, path: '/index.bundle?platform=android', headers: {accept: 'multipart/mixed', ...(encoding ? {'accept-encoding': encoding} : {})}}, res => {
+            const chunks: Buffer[] = [];
+            res.on('data', c => chunks.push(c as Buffer));
+            res.on('end', () => resolve({headers: res.headers, body: Buffer.concat(chunks)}));
+          })
+          .on('error', reject);
+      });
+    try {
+      const {gunzipSync} = await import('node:zlib');
+      const zipped = await get('gzip');
+      expect(zipped.headers['content-encoding']).toBe('gzip');
+      expect(Number(zipped.headers['content-length'])).toBe(zipped.body.length);
+      const unpacked = gunzipSync(zipped.body).toString();
+      expect(unpacked).toContain('__pitbox');
+      expect(zipped.body.length).toBeLessThan(unpacked.length / 4);
+      expect(proxy.stats.requests.at(-1)?.note).toMatch(/gzip of \d+ KB/);
+      const plain = await get();
+      expect(plain.headers['content-encoding']).toBeUndefined();
+      expect(plain.body.toString()).toBe(unpacked);
+    } finally {
+      await proxy.stop();
+      upstream.close();
+    }
+  });
+});

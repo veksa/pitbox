@@ -8,6 +8,7 @@
 
 import http from 'node:http';
 import net from 'node:net';
+import zlib from 'node:zlib';
 import {WebSocket as WsClient, WebSocketServer, type RawData, type WebSocket} from 'ws';
 import type {BytecodeCache, Compiler} from './hermes.ts';
 import {BytecodeCache as Cache} from './hermes.ts';
@@ -127,6 +128,8 @@ export class DevProxy {
   /** When apps said hello (host clock), newest last. */
   readonly #hellos: number[] = [];
   readonly #symbolicating = new Set<Promise<void>>();
+  /** Gzipped main bundles by content hash: compressed once, sent many times. */
+  readonly #gzipped = new Map<string, Buffer>();
 
   constructor(opts: ProxyOptions) {
     this.opts = opts;
@@ -240,6 +243,21 @@ export class DevProxy {
     if (wait) return {kind: 'bytecode', body: await compile, cached: false, status: 200, bundle};
     compile.catch(() => undefined);
     return {kind: 'source', body, cached: false, status: 200, bundle};
+  }
+
+  /**
+   * A bundle gzipped, from the cache when it was sent before. The device side of the link (adb's reverse forward,
+   * Wi-Fi) moves a few MB per second, and bytecode shrinks to about two fifths.
+   */
+  gzipped(body: Buffer): Buffer {
+    const key = Cache.key(body);
+    let gz = this.#gzipped.get(key);
+    if (!gz) {
+      gz = zlib.gzipSync(body, {level: 6});
+      this.#gzipped.set(key, gz);
+      if (this.#gzipped.size > 4) this.#gzipped.delete(this.#gzipped.keys().next().value!);
+    }
+    return gz;
   }
 
   // ---- apps -------------------------------------------------------------------------------------------------
@@ -393,11 +411,14 @@ export class DevProxy {
           this.#record({at: t0, url, kind: 'source', ms: Date.now() - t0, bytes: r.body.length, status: r.status, note: 'bundler error'});
           return;
         }
-        res.writeHead(200, {'content-type': 'application/javascript', 'content-length': r.body.length, 'cache-control': 'no-store'});
-        res.end(r.body);
+        // The app's HTTP client asks for gzip and unpacks it itself.
+        const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? '')) && r.body.length > 64 * 1024;
+        const sent = gzip ? this.gzipped(r.body) : r.body;
+        res.writeHead(200, {'content-type': 'application/javascript', 'content-length': sent.length, 'cache-control': 'no-store', ...(gzip ? {'content-encoding': 'gzip'} : {})});
+        res.end(sent);
         this.servedKind.set(platformOf(url), r.kind);
         const note = r.kind === 'bytecode' ? 'cached' : this.debugSource ? 'source for the debugger' : this.opts.bytecode ? 'bytecode not ready, compiling in background' : undefined;
-        this.#record({at: t0, url, kind: r.kind, ms: Date.now() - t0, bytes: r.body.length, status: 200, note});
+        this.#record({at: t0, url, kind: r.kind, ms: Date.now() - t0, bytes: sent.length, status: 200, note: [note, gzip ? `gzip of ${Math.round(r.body.length / 1024)} KB` : undefined].filter(Boolean).join(', ') || undefined});
         return;
       } catch (e) {
         // Fall back to plain proxying: a broken compiler or injector must not take the app down with it.

@@ -204,6 +204,8 @@ export class DevServer {
       try {
         if (this.proxy.opts.bytecode || this.proxy.opts.inApp) {
           const r = await this.proxy.bundleFor(url, this.proxy.mainHosts.get(platform) ?? `localhost:${this.port}`, true);
+          // The compressed copy too, so the device's first request does not wait for it.
+          if (!r.error) this.proxy.gzipped(r.body);
           const what = !this.proxy.opts.bytecode ? 'source built' : r.cached ? 'bytecode cached' : 'bytecode compiled';
           results.push({platform, ms: Date.now() - t0, ok: !r.error, note: r.error ? `bundler answered ${r.status}` : what});
         } else {
