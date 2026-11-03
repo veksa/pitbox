@@ -1,0 +1,5 @@
+# Greet without a name: the app warns, and the warning is kept in the app's console with its source line.
+open!
+wait id=title 90
+press id=greet
+expect text="Hello, stranger"

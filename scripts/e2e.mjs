@@ -163,6 +163,11 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
     const err = pitbox(['run', 'js-error', '--device', avd]);
     head(err.out, 8);
     checks.push({name: 'js error with its source line', ok: err.out.startsWith('✓') && /! JS error: example js error/.test(err.out) && /App\.tsx:\d+:\d+/.test(err.out)});
+    const greet = pitbox(['run', 'console', '--device', avd]);
+    head(greet.out, 2);
+    const warned = pitbox(['app-console', '--level', 'warn']);
+    head(warned.out, 3);
+    checks.push({name: 'console warning with its source line', ok: greet.code === 0 && /W {2}greeting without a name {2}← greet {2}App\.tsx:\d+:\d+/.test(warned.out)});
     const ev = pitbox(['js', 'eval', 'Promise.resolve(40 + 2)']);
     head(ev.out, 2);
     checks.push({name: 'js eval', ok: /^= 42/.test(ev.out)});

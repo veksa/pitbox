@@ -16,13 +16,17 @@ function failOnPurpose(): never {
 function Main({onFetch, response}: {onFetch: () => void; response: string}) {
   const [name, setName] = useState('');
   const [greeting, setGreeting] = useState('');
+  const greet = () => {
+    if (!name.trim()) console.warn('greeting without a name');
+    setGreeting(`Hello, ${name.trim() || 'stranger'}`);
+  };
   return (
     <View>
       <Text testID="title" style={styles.title}>
         pitbox example
       </Text>
       <TextInput testID="name" placeholder="Your name" value={name} onChangeText={setName} style={styles.input} />
-      <Button testID="greet" title="Greet" onPress={() => setGreeting(`Hello, ${name.trim() || 'stranger'}`)} />
+      <Button testID="greet" title="Greet" onPress={() => greet()} />
       <Text testID="greeting">{greeting}</Text>
       <Button testID="fetch" title="Ask the stand" onPress={onFetch} />
       <Text testID="response">{response}</Text>
