@@ -201,7 +201,9 @@ describe('named states', () => {
     const order: string[] = [];
     const store = new StateStore(
       {root, stateDir: path.join(root, '.pitbox')},
-      {save: `node -e "require('fs').writeFileSync('{file}', '7')"`, restore: `node -e "require('fs').writeFileSync('restored', require('fs').readFileSync('{file}'))"`},
+      // `{file}` arrives quoted for the shell, so it is an argument, not part of the script: a Windows path quoted
+      // inside a JS string literal breaks it.
+      {save: `node -e "require('fs').writeFileSync(process.argv[1], '7')" {file}`, restore: `node -e "require('fs').writeFileSync('restored', require('fs').readFileSync(process.argv[1]))" {file}`},
     );
     const device = {
       id: 'AAA',
