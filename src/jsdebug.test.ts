@@ -161,7 +161,7 @@ describe('js profiles', () => {
 
 // ---- a fake Hermes page behind an inspector proxy ------------------------------------------------------------
 
-type Fake = {port: number; origins: string[]; app: vm.Context; reparse: () => void; breakpoints: Map<string, {line: number; column: number; condition: string}>; runLine: (locals: Record<string, unknown>) => void; close: () => Promise<void>};
+type Fake = {port: number; origins: string[]; app: vm.Context; reparse: () => void; breakpoints: Map<string, {line: number; column: number; condition: string}>; runLine: (locals: Record<string, unknown>) => void; pauseLine: (locals: Record<string, unknown>) => Promise<void>; resumed: () => number; close: () => Promise<void>};
 
 /** `allow`: which origins the inspector takes (a refused one gets 401, as React Native's verifyClient answers). */
 const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake> => {
@@ -179,6 +179,13 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
   });
   const wss = new WebSocketServer({server, verifyClient: info => !allow || allow(info.origin)});
   let seq = 0;
+  let resumed = 0;
+  let frameLocals: Record<string, unknown> = {};
+  const frameEval = (expression: string) => {
+    const frame = vm.createContext(Object.assign(Object.create(null), frameLocals));
+    Object.defineProperty(frame, 'globalThis', {value: vm.runInContext('globalThis', app)});
+    return vm.runInContext(expression, frame);
+  };
   wss.on('connection', (ws, req) => {
     origins.push(String(req.headers.origin));
     ws.on('message', raw => {
@@ -200,6 +207,11 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
         reply({breakpointId, actualLocation: {scriptId: '3', lineNumber: params.location.lineNumber, columnNumber: params.location.columnNumber}});
       } else if (method === 'Profiler.stop') {
         reply({profile: profileOf(bundle)});
+      } else if (method === 'Debugger.evaluateOnCallFrame') {
+        reply({result: {type: 'boolean', value: frameEval(params.expression)}});
+      } else if (method === 'Debugger.resume') {
+        resumed++;
+        reply({});
       } else if (method === 'Debugger.removeBreakpoint') {
         breakpoints.delete(params.breakpointId);
         reply({});
@@ -224,6 +236,19 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
         expect(vm.runInContext(bp.condition, frame)).toBe(false);
       }
     },
+    // A runtime that ignores breakpoint conditions: it stops at each breakpoint of the line instead.
+    pauseLine: async locals => {
+      frameLocals = locals;
+      for (const bp of breakpoints.values()) {
+        const before = resumed;
+        // Stored as the CDP location it was set at.
+        const {lineNumber, columnNumber} = bp as unknown as {lineNumber: number; columnNumber: number};
+        const callFrames = [{callFrameId: 'f1', functionName: 'Home', location: {scriptId: '3', lineNumber, columnNumber}}];
+        for (const c of wss.clients) c.send(JSON.stringify({method: 'Debugger.paused', params: {reason: 'other', callFrames}}));
+        for (const end = Date.now() + 2000; resumed === before && Date.now() < end; ) await new Promise(r => setTimeout(r, 10));
+      }
+    },
+    resumed: () => resumed,
     close: async () => {
       for (const c of wss.clients) c.terminate();
       await new Promise<void>(r => server.close(() => r()));
@@ -286,6 +311,17 @@ describe('the app runtime', () => {
     const {logpoints} = await js.hits();
     expect(logpoints[0]!.count).toBe(2);
     expect(logpoints[0]!.hits.map(h => h.v)).toEqual(['"Ann"  ! ReferenceError: missing is not defined  2', '"Bob"  ! ReferenceError: missing is not defined  0']);
+  });
+
+  it('records a logpoint from the paused frame when the runtime stops instead of evaluating the condition', async () => {
+    const before = fake.resumed();
+    await fake.pauseLine({user: {name: 'Cy'}, items: [1]});
+    expect(fake.resumed()).toBe(before + 1);
+    const {logpoints, paused} = await js.hits();
+    expect(logpoints[0]!.count).toBe(3);
+    expect(logpoints[0]!.hits.at(-1)!.v).toBe('"Cy"  ! ReferenceError: missing is not defined  1');
+    // Not counted as a stop at someone else's breakpoint.
+    expect(paused ?? 0).toBe(0);
   });
 
   it('removes the breakpoints and goes back to bytecode with no logpoints left', async () => {

@@ -234,6 +234,17 @@ export class JsDebugger {
     } else if (e.method === 'Runtime.executionContextsCleared') {
       this.#scripts.clear();
     } else if (e.method === 'Debugger.paused') {
+      // Some Hermes builds stop at a conditional breakpoint without evaluating its condition (reason "other", no
+      // hitBreakpoints). A stop at a logpoint is then recorded here, from the paused frame, before going on.
+      const frame = (e.params.callFrames as {callFrameId: string; location: {lineNumber: number; columnNumber?: number}}[] | undefined)?.[0];
+      const lp = frame && [...this.#logpoints.values()].find(l => l.bps.length && l.at?.line === frame.location.lineNumber && l.at.column === (frame.location.columnNumber ?? 0));
+      if (lp) {
+        void s
+          .send('Debugger.evaluateOnCallFrame', {callFrameId: frame.callFrameId, expression: conditionFor(lp.id, lp.exprs), returnByValue: true})
+          .catch(() => undefined)
+          .finally(() => void s.send('Debugger.resume').catch(() => undefined));
+        return;
+      }
       // pitbox never wants the app stopped: a `debugger` statement or a breakpoint left by someone else is passed.
       this.#paused++;
       void s.send('Debugger.resume').catch(() => undefined);
