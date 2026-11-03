@@ -20,6 +20,18 @@ const nodes: UiNode[] = [
 ];
 
 describe('snapshot', () => {
+  it('drops the iOS scroll indicators and keeps the position of a long list on its line', () => {
+    const w: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const snap = buildSnapshot(w, [
+      {p: -1, w: 0, c: 'ScrollView', b: [0, 0, 400, 800], f: 's', id: 'feed'},
+      {p: 0, w: 0, c: 'Other', b: [390, 0, 400, 800], t: 'Vertical scroll bar, 3 pages', d: '40%'},
+      {p: 0, w: 0, c: 'Other', b: [0, 790, 400, 800], t: 'Horizontal scroll bar, 1 page', d: '0%'},
+      {p: -1, w: 0, c: 'ScrollView', b: [0, 800, 400, 900], f: 's', id: 'chips'},
+      {p: 3, w: 0, c: 'Other', b: [390, 800, 400, 900], t: 'Vertical scroll bar, 1 page', d: '0%'},
+    ]);
+    expect(snap.lines).toEqual(['@e1 list #feed [3 pages 40%]', '@e2 list #chips']);
+  });
+
   const snap = buildSnapshot(windows, nodes, {height: 2400});
 
   it('folds a button with its label, hides system bars, keeps hints and ids', () => {

@@ -29,6 +29,7 @@ const SYSTEM_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinsta
 const PERMISSION_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinstaller)$/;
 // The process an Apple runner reads system alerts from (permissions, "Open in …?"): iOS's shell, visionOS's.
 const SHELL_ALERT = /^com\.apple\.(springboard|RealityNotifications)$/;
+const SCROLL_BAR = /^(Vertical|Horizontal) scroll bar, (\d+) pages?$/;
 
 /** The question of a runtime permission request over the app ("Allow MyApp to send you notifications?"), if any. */
 export const permissionPrompt = (snap: Pick<Snapshot, 'windows' | 'nodes'>): string | undefined => {
@@ -119,10 +120,20 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
   const hidden = new Set<number>();
   const label = new Map<number, string>();
 
+  // iOS lists two scroll indicators per scroller ("Vertical scroll bar, 2 pages" with "0%"): two lines that say
+  // nothing to act on. Hidden; a vertical one over more than a page moves onto its scroller's line as `[2 pages 0%]`.
+  const scrolled = new Map<number, string>();
   nodes.forEach((n, i) => {
     const w = windows[n.w];
     // System UI windows (bars, and on XR the shell's own panels and window captions) unless asked for.
     if (!opts.system && w && w.pkg?.startsWith('com.android.systemui')) hidden.add(i);
+    const bar = SCROLL_BAR.exec(n.t ?? '');
+    if (!bar) return;
+    hidden.add(i);
+    if (bar[1] !== 'Vertical' || bar[2] === '1') return;
+    let k = n.p;
+    while (k >= 0 && !has(nodes[k]!, 's')) k = nodes[k]!.p;
+    if (k >= 0 && !scrolled.has(k)) scrolled.set(k, `${bar[2]} pages${n.d ? ` ${n.d}` : ''}`);
   });
 
   // Fold unlabelled interactive containers with their text descendants — but not lists (they hold many items),
@@ -187,7 +198,7 @@ export const buildSnapshot = (windows: UiWindow[], nodes: UiNode[], opts: Snapsh
     if (n.d && n.d !== own) parts.push(`(${clean(n.d, 60)})`);
     if (!own && n.h) parts.push(`hint ${JSON.stringify(clean(n.h, 40))}`);
     if (n.id) parts.push(`#${n.id}`);
-    const flags = [has(n, 'F') && 'focused', (has(n, 'X') || has(n, 'S')) && 'on', has(n, 'x') && !has(n, 'X') && 'off', has(n, 'd') && 'disabled', opts.height && n.b[1] >= opts.height && 'below'].filter(Boolean);
+    const flags = [scrolled.get(i), has(n, 'F') && 'focused', (has(n, 'X') || has(n, 'S')) && 'on', has(n, 'x') && !has(n, 'X') && 'off', has(n, 'd') && 'disabled', opts.height && n.b[1] >= opts.height && 'below'].filter(Boolean);
     if (flags.length) parts.push(`[${flags.join(' ')}]`);
     if (opts.bounds) parts.push(`@[${n.b.join(',')}]`);
     lines.push(parts.join(' '));
