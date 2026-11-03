@@ -228,6 +228,107 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     return {surfaces: surface, nodes: out, truncated: out.length >= limit};
   };
 
+  // React commits while a measurement runs: which components rendered, their own time, and why. Wrapped on the
+  // dev tools hook when the measurement starts, so the wrapper sits above anything installed since. Durations
+  // come from React's profiling timers, on whenever the hook is present (development).
+  var rec: any = null;
+  var nameOf = function (t: any): string {
+    if (!t) return 'Anonymous';
+    if (typeof t === 'function') return t.displayName || t.name || 'Anonymous';
+    return t.displayName || (t.type && nameOf(t.type)) || (t.render && (t.render.displayName || t.render.name)) || 'Anonymous';
+  };
+  var isEffect = function (x: any) {
+    return x && typeof x === 'object' && 'create' in x && 'deps' in x;
+  };
+  var hooksChanged = function (a: any, b: any) {
+    for (var n = 0; a && b && n < 100; n++, a = a.next, b = b.next) if (!isEffect(a.memoizedState) && a.memoizedState !== b.memoizedState) return true;
+    return false;
+  };
+  var whyOf = function (f: any): string {
+    var p = f.alternate;
+    if (!p) return 'mount';
+    var np = f.memoizedProps;
+    var pp = p.memoizedProps;
+    var stateChanged = f.tag === 1 ? f.memoizedState !== p.memoizedState : hooksChanged(f.memoizedState, p.memoizedState);
+    if (np !== pp && np && pp && typeof np === 'object') {
+      var keys: string[] = [];
+      var all: any = {};
+      for (var a in np) all[a] = 1;
+      for (var b in pp) all[b] = 1;
+      for (var k in all) if (np[k] !== pp[k]) keys.push(k);
+      if (keys.length) return 'props ' + keys.slice(0, 3).join(', ') + (keys.length > 3 ? '…' : '');
+      return stateChanged ? 'state' : 'parent rendered, same props';
+    }
+    return stateChanged ? 'state' : 'context';
+  };
+  var onCommit = function (root: any) {
+    var cur = root && root.current;
+    if (!cur) return;
+    rec.commits++;
+    rec.ms += cur.actualDuration || 0;
+    var budget = 20000;
+    // Only what this commit touched: a subtree React skipped keeps its children (and their flags from an older
+    // commit), so it is not entered.
+    var walk = function (x: any) {
+      for (; x && budget-- > 0; x = x.sibling) {
+        var prev = x.alternate;
+        // Function, class, forwardRef and memo components that did work in this commit.
+        if ((!prev || (x.flags & 1) !== 0) && (x.tag === 0 || x.tag === 1 || x.tag === 11 || x.tag === 14 || x.tag === 15)) {
+          var self = x.actualDuration || 0;
+          for (var c = x.child; c; c = c.sibling) self -= c.actualDuration || 0;
+          var name = nameOf(x.type);
+          var e = rec.by[name] || (rec.by[name] = {n: 0, ms: 0, why: {}});
+          e.n++;
+          e.ms += self > 0 ? self : 0;
+          var w = whyOf(x);
+          e.why[w] = (e.why[w] || 0) + 1;
+        }
+        if (!prev || x.child !== prev.child) walk(x.child);
+      }
+    };
+    if (!cur.alternate || cur.child !== cur.alternate.child) walk(cur.child);
+  };
+  var renders = function (msg: any) {
+    var hook = g.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    if (msg.start) {
+      if (!hook) return {error: 'no React dev tools hook in this bundle'};
+      if (!hook.__pitboxRenders) {
+        var orig = hook.onCommitFiberRoot;
+        hook.onCommitFiberRoot = function (id: any, root: any) {
+          try {
+            if (rec) onCommit(root);
+          } catch (e) {}
+          return orig ? orig.apply(this, arguments) : undefined;
+        };
+        hook.__pitboxRenders = true;
+      }
+      rec = {since: Date.now(), commits: 0, ms: 0, by: {}};
+      return {started: true};
+    }
+    if (!rec) return {error: 'no React measurement running'};
+    var r = rec;
+    rec = null;
+    var list: any[] = [];
+    for (var name in r.by) {
+      var e = r.by[name];
+      var why: any[] = [];
+      for (var w in e.why) why.push([w, e.why[w]]);
+      why.sort(function (a: any, b: any) {
+        return b[1] - a[1];
+      });
+      list.push({name: name, n: e.n, ms: Math.round(e.ms * 10) / 10, why: why.slice(0, 2)});
+    }
+    var byN = list.slice().sort(function (a, b) {
+      return b.n - a.n || b.ms - a.ms;
+    });
+    var byMs = list.slice().sort(function (a, b) {
+      return b.ms - a.ms;
+    });
+    var shown = byN.slice(0, 10);
+    for (var i = 0; i < byMs.length && i < 5; i++) if (shown.indexOf(byMs[i]) < 0) shown.push(byMs[i]);
+    return {ms: Date.now() - r.since, commits: r.commits, renderMs: Math.round(r.ms * 10) / 10, components: list.length, shown: shown};
+  };
+
   var connect = function (delay: number) {
     var ch: any;
     try {
@@ -266,7 +367,9 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
               ? reactTree(msg.limit || 600)
               : msg.what === 'console'
                 ? state.console.slice(0)
-                : {inflight: state.inflight, quietMs: Date.now() - state.last, sockets: state.sockets.length};
+                : msg.what === 'renders'
+                  ? renders(msg)
+                  : {inflight: state.inflight, quietMs: Date.now() - state.last, sockets: state.sockets.length};
         ch.send(JSON.stringify({type: 'reply', reqId: msg.reqId, data: data}));
       }
     };

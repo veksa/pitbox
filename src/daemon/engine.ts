@@ -1161,10 +1161,19 @@ export class Engine {
       const t = await this.#target(str(p, 'device'));
       const reset = bool(p, 'reset');
       const device = t.platform === 'apple' ? await t.s.perf(t.id, this.#bundleId(p), reset) : await t.a.perf(t.id, this.#pkg(p), reset);
-      const js = this.#dev?.js;
-      if (!js) return device;
-      if (reset) return {...device, jsProfiling: await js.profileStart(str(p, 'device')).catch(() => false)};
-      return {...device, js: await js.profileStop().catch(e => ({ms: 0, busyMs: 0, samples: 0, self: [], app: [], note: `no JS profile: ${(e as Error).message}`}))};
+      const dev = this.#dev;
+      if (!dev) return device;
+      // React commits come from the in-app script of each connected app; the first answer is shown.
+      const renders = async (q: Record<string, unknown>) => (dev.proxy.listening ? (await dev.proxy.query<Record<string, unknown>>('renders', q, 2000))[0]?.data : undefined);
+      if (reset) {
+        const [jsProfiling, react] = await Promise.all([dev.js.profileStart(str(p, 'device')).catch(() => false), renders({start: true}).catch(() => undefined)]);
+        return {...device, jsProfiling, reactRecording: !!react?.started};
+      }
+      const [js, react] = await Promise.all([
+        dev.js.profileStop().catch(e => ({ms: 0, busyMs: 0, samples: 0, self: [], app: [], note: `no JS profile: ${(e as Error).message}`})),
+        renders({stop: true}).catch(() => undefined),
+      ]);
+      return {...device, js, react: react && !react.error ? react : undefined};
     },
 
     info: async (p: Params) => {

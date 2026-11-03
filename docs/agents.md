@@ -67,7 +67,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   by level and `grep`; each warning and error points at the line that logged it (`← greet  App.tsx:20:35`).
 - `inspect what=perf reset=true` → interact → `inspect what=perf` — janky frames, frame times, memory, and
   with a dev server the JS thread over the same window: how busy it was, the functions that took the time
-  themselves, and the app's own functions with what they called (`workHard  App.tsx:14`), about 15 lines.
+  themselves, and the app's own functions with what they called (`workHard  App.tsx:14`); and React's commits:
+  which components rendered how often, their own time, and why (`Button — props onPress ×4`: a new function
+  each render; `parent rendered, same props`: a `memo` would skip it). About 25 lines.
   Sampling is ~10 ms, so measure an interaction that takes longer than a few samples.
 - `app action=open relaunch=true` answers with the cold start: activity, when the JS started running, and the
   bundle it got (bytecode or source, size, cached). In a flow, `open!` adds the time to the first check.

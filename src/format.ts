@@ -125,6 +125,17 @@ export const fmtObject = (o: unknown): string => {
 };
 
 /** Formats any engine result by method. */
+type ReactRenders = {ms: number; commits: number; renderMs: number; components: number; shown: {name: string; n: number; ms: number; why: [string, number][]}[]};
+
+const fmtRenders = (r?: ReactRenders): string[] => {
+  if (!r) return [];
+  if (!r.commits) return ['React: no commits'];
+  return [
+    `React: ${r.commits} commit${r.commits === 1 ? '' : 's'}, ${r.renderMs} ms rendering, ${r.components} component${r.components === 1 ? '' : 's'} rendered`,
+    ...r.shown.map(c => `  ${String(c.n).padStart(4)}×  ${String(c.ms).padStart(6)} ms  ${c.name} — ${c.why.map(([w, n]) => (n === c.n ? w : `${w} ×${n}`)).join('; ')}`),
+  ];
+};
+
 const fmtJsProfile = (p?: JsProfile): string[] => {
   if (!p) return [];
   if (p.note) return [p.note];
@@ -200,13 +211,13 @@ export const formatResult = (method: string, r: unknown): string => {
       ].join('\n');
     }
     case 'perf': {
-      if (x.reset) return `${String(x.note ?? 'frame stats reset')}${x.jsProfiling ? ' · JS profiler started' : ''} — interact, then read perf`;
+      if (x.reset) return `${String(x.note ?? 'frame stats reset')}${x.jsProfiling ? ' · JS profiler started' : ''}${x.reactRecording ? ' · React commits recorded' : ''} — interact, then read perf`;
       // Without a frame counter (simulators) only the memory line, not a row of question marks.
       const head =
         x.frames === undefined
           ? `memory ${x.memoryMb ?? '?'} MB${x.note ? ` · ${x.note}` : ''}`
           : `frames ${x.frames ?? '?'} · janky ${x.janky ?? '?'}% · frame time p50 ${x.p50 ?? '?'} ms, p90 ${x.p90 ?? '?'} ms, p99 ${x.p99 ?? '?'} ms · memory ${x.memoryMb ?? '?'} MB`;
-      return [head, ...fmtJsProfile(x.js as JsProfile | undefined)].join('\n');
+      return [head, ...fmtJsProfile(x.js as JsProfile | undefined), ...fmtRenders(x.react as ReactRenders | undefined)].join('\n');
     }
     case 'visual':
       return x.status === 'saved' ? `baseline saved: ${x.baseline}` : x.status === 'match' ? `matches ${x.name} (score ${x.score})` : `differs from ${x.name}: score ${x.score}, ${Math.round((x.changedShare as number) * 1000) / 10}% of the screen, regions ${(x.regions as number[][]).map(r => `[${r.join(',')}]`).join(' ')}\ncurrent: ${x.current}\nbaseline: ${String(x.baseline).replace(/\.json$/, '.jpg')}`;

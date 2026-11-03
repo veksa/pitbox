@@ -146,6 +146,60 @@ describe('the app console', () => {
   });
 });
 
+describe('react commits', () => {
+  type Fiber = {tag: number; type: unknown; flags: number; actualDuration: number; memoizedProps?: unknown; memoizedState?: unknown; alternate?: Fiber | null; child?: Fiber | null; sibling?: Fiber | null};
+  const fiber = (f: Partial<Fiber> & {type: unknown}): Fiber => ({tag: 0, flags: 0, actualDuration: 0, alternate: null, child: null, sibling: null, ...f});
+
+  it('counts the components a commit rendered, their own time and why, and skips subtrees React left alone', () => {
+    const commits: unknown[] = [];
+    const hook = {onCommitFiberRoot: (_id: number, root: unknown) => void commits.push(root)};
+    const {g, sent, sockets} = sandbox();
+    g.__REACT_DEVTOOLS_GLOBAL_HOOK__ = hook;
+    const channel = sockets.find(s => s.url === cfg.ws)!;
+    const ask = (q: object) => {
+      channel.onmessage!({data: JSON.stringify({type: 'query', what: 'renders', reqId: 9, ...q})});
+      return JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' ')).data;
+    };
+    expect(ask({start: true})).toEqual({started: true});
+
+    function Main() {}
+    function Row() {}
+    function Button() {}
+    const onPress = () => undefined;
+    // An untouched subtree: the same child object as before, with flags left from the commit that mounted it.
+    const staleRow = fiber({type: Row, flags: 1, actualDuration: 9});
+    const listPrev = fiber({type: 'RCTScrollView', child: staleRow});
+    const list = fiber({type: 'RCTScrollView', child: staleRow, alternate: listPrev});
+    // Main's state hook changed; its button got a new onPress; the other button got equal props.
+    const prevHooks = {memoizedState: 'a', next: {memoizedState: {create: 1, deps: []}, next: null}};
+    const hooks = {memoizedState: 'b', next: {memoizedState: {create: 2, deps: []}, next: null}};
+    const b1Prev = fiber({type: Button, memoizedProps: {title: 'Go', onPress: () => undefined}});
+    const b1 = fiber({type: Button, flags: 1, actualDuration: 1, memoizedProps: {title: 'Go', onPress}, alternate: b1Prev});
+    const b2Prev = fiber({type: Button, memoizedProps: {title: 'Stop'}});
+    const b2 = fiber({type: Button, flags: 1, actualDuration: 0.5, memoizedProps: {title: 'Stop'}, alternate: b2Prev});
+    b1.sibling = b2;
+    b2.sibling = list;
+    const mainPrev = fiber({type: Main, memoizedProps: {}, memoizedState: prevHooks, child: b1Prev});
+    const main = fiber({type: Main, flags: 1, actualDuration: 4, memoizedProps: mainPrev.memoizedProps, memoizedState: hooks, child: b1, alternate: mainPrev});
+    const rootPrev = fiber({tag: 3, type: null, child: mainPrev});
+    const root = {current: fiber({tag: 3, type: null, actualDuration: 4, child: main, alternate: rootPrev})};
+    (g.__REACT_DEVTOOLS_GLOBAL_HOOK__ as typeof hook).onCommitFiberRoot(1, root);
+    // A mount: no previous fiber.
+    const mounted = {current: fiber({tag: 3, type: null, actualDuration: 2, child: fiber({type: Row, flags: 1, actualDuration: 2})})};
+    (g.__REACT_DEVTOOLS_GLOBAL_HOOK__ as typeof hook).onCommitFiberRoot(1, mounted);
+    expect(commits).toHaveLength(2);
+
+    const r = ask({stop: true});
+    expect(r).toMatchObject({commits: 2, renderMs: 6, components: 3});
+    const by = Object.fromEntries((r.shown as {name: string; n: number; ms: number; why: [string, number][]}[]).map(c => [c.name, c]));
+    expect(by.Main).toEqual({name: 'Main', n: 1, ms: 2.5, why: [['state', 1]]});
+    expect(by.Button).toMatchObject({n: 2, ms: 1.5});
+    expect(Object.fromEntries(by.Button!.why)).toEqual({'props onPress': 1, 'parent rendered, same props': 1});
+    expect(by.Row).toEqual({name: 'Row', n: 1, ms: 2, why: [['mount', 1]]});
+    expect(ask({stop: true})).toEqual({error: 'no React measurement running'});
+  });
+});
+
 describe('js errors from inside the app', () => {
   it('sees errors before the handler the app installs, passes them on, and sends them once connected', () => {
     const {g, sent, sockets} = sandbox({errorUtils: true});
