@@ -149,8 +149,11 @@ if (examples.includes('react-native') && rnSim) {
   try {
     if (!fs.existsSync(path.join(rnDir, 'node_modules', 'react-native'))) execFileSync('yarn', ['install'], {cwd: rnDir, stdio: 'inherit'});
     const ios = path.join(rnDir, 'ios');
-    // Codegen writes into ios/build/generated during `pod install`: a deleted build needs it again.
-    if (!fs.existsSync(path.join(ios, 'Pods')) || !fs.existsSync(path.join(ios, 'build', 'generated'))) execFileSync('pod', ['install'], {cwd: ios, stdio: 'inherit'});
+    // Codegen writes into ios/build/generated during `pod install`: a deleted build needs it again. Pods that no
+    // longer match the lock file (a pull changed it) fail the build, so they are installed again too.
+    const lock = f => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+    const stale = lock(path.join(ios, 'Podfile.lock')) !== lock(path.join(ios, 'Pods', 'Manifest.lock'));
+    if (stale || !fs.existsSync(path.join(ios, 'Pods')) || !fs.existsSync(path.join(ios, 'build', 'generated'))) execFileSync('pod', ['install'], {cwd: ios, stdio: 'inherit'});
     execFileSync('xcodebuild', ['build', '-workspace', path.join(ios, 'PitboxExample.xcworkspace'), '-scheme', 'PitboxExample', '-configuration', 'Debug', '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', path.join(ios, 'build'), '-quiet'], {stdio: 'inherit'});
     const app = path.join(ios, 'build', 'Build', 'Products', 'Debug-iphonesimulator', 'PitboxExample.app');
     const ok = r => {
