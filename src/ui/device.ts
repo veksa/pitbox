@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, permissionPrompt, resolveTarget, selectorFor, swipeArea, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -212,12 +212,17 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const {snap, target} = await this.#target(selector);
     this.#front(snap);
     let t = this.#phase('target', t0);
-    await this.runner.call(kind, {x: target.x, y: target.y});
+    const at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
+    await this.runner.call(kind, {x: at.x, y: at.y});
     t = this.#phase('input', t);
     if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
     else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
     let settled = await this.#settle(snap);
-    let note: string | undefined;
+    let note: string | undefined = at.coveredBy
+      ? at.x === target.x && at.y === target.y
+        ? `the target is under ${at.coveredBy}: the tap went to it`
+        : `tapped ${at.x},${at.y}: the centre is under ${at.coveredBy}`
+      : undefined;
     // A list that spends the first tap on the keyboard (React Native's default) closed it and nothing else
     // changed: the control did not get the tap. Pressed once more, where the control is now.
     if (this.last && onlyClosedKeyboard(snap, this.last)) {

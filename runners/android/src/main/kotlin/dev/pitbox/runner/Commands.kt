@@ -102,14 +102,19 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
   private fun tree(all: Boolean): JSONObject {
     val nodes = JSONArray()
     val windows = JSONArray()
+    val paint = ArrayList<String>()
     roots().forEachIndexed { wi, (root, w) ->
       windows.put(JSONObject().put("type", windowType(w)).put("title", w?.title?.toString() ?: "").put("pkg", root.packageName?.toString() ?: ""))
-      walk(root, -1, wi, all, nodes, 0)
+      walk(root, -1, wi, all, nodes, 0, "", paint)
     }
+    // "z": the node's place in its window's painting, later on top. Siblings paint in drawing order, which follows
+    // elevation and differs from the order of the tree (a floating button early in the tree is drawn last).
+    val order = paint.indices.sortedBy { paint[it] }
+    order.forEachIndexed { rank, i -> nodes.getJSONObject(i).put("z", rank) }
     return JSONObject().put("windows", windows).put("nodes", nodes)
   }
 
-  private fun walk(n: AccessibilityNodeInfo, parent: Int, window: Int, all: Boolean, out: JSONArray, depth: Int) {
+  private fun walk(n: AccessibilityNodeInfo, parent: Int, window: Int, all: Boolean, out: JSONArray, depth: Int, key: String, paint: MutableList<String>) {
     if (depth > 80) return
     var index = parent
     if (n.isVisibleToUser) {
@@ -142,11 +147,14 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
         if (f.isNotEmpty()) o.put("f", f.toString())
         index = out.length()
         out.put(o)
+        paint.add(key)
       }
     }
     for (i in 0 until n.childCount) {
       val child = n.getChild(i) ?: continue
-      walk(child, index, window, all, out, depth + 1)
+      // A parent paints before its children; fixed-width parts keep the string order numeric.
+      val z = if (Build.VERSION.SDK_INT >= 24) child.drawingOrder else 0
+      walk(child, index, window, all, out, depth + 1, "$key${"%05d%05d".format(z, i)}", paint)
     }
   }
 
@@ -524,5 +532,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 15
+  const val VERSION = 16
 }

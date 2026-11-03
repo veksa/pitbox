@@ -253,6 +253,39 @@ describe('visual diff', () => {
   });
 });
 
+describe('a target with something drawn over its centre', () => {
+  // A floating button with elevation: earlier in the tree, painted last.
+  const fab: UiNode = {p: -1, w: 0, c: 'ImageView', b: [940, 140, 1080, 280], d: 'Tools', z: 2};
+  const profile: UiNode = {p: -1, w: 0, c: 'ViewGroup', b: [900, 100, 1060, 260], id: 'profile', f: 'c', z: 1};
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+
+  it('is tapped where the screen shows it, and the answer says what covered it', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const taps: string[] = [];
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') taps.push(`${args.x},${args.y}`);
+        if (cmd === 'tree') return {windows: app, nodes: [fab, profile]};
+        if (cmd === 'info') return {width: 1080, height: 2400};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).press('id=profile');
+    const [x, y] = taps[0]!.split(',').map(Number) as [number, number];
+    expect(x < 940 || y < 140).toBe(true);
+    expect(x >= 900 && x < 1060 && y >= 100 && y < 260).toBe(true);
+    expect(r.note).toMatch(/^tapped \d+,\d+: the centre is under @e1 .*Tools/);
+  });
+
+  it('is tapped in the centre when what overlaps it is painted below, or is its own child', async () => {
+    const {tapPoint} = await import('./ui/snapshot.ts');
+    expect(tapPoint(buildSnapshot(app, [{...fab, z: 0}, profile]), 1)).toEqual({x: 980, y: 180});
+    const child: UiNode = {p: 0, w: 0, c: 'ImageView', b: [940, 140, 1000, 200], d: 'icon', z: 2};
+    expect(tapPoint(buildSnapshot(app, [{...profile, p: -1}, child]), 0)).toEqual({x: 980, y: 180});
+  });
+});
+
 describe('a keyboard over the target', () => {
   it('is waited out when it was fullscreen and the app comes back a moment later', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

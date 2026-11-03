@@ -18,6 +18,8 @@ export type UiNode = {
   h?: string;
   /** Flags: c clickable, l long-clickable, f focusable, F focused, A a11y-focused, e editable, s scrollable, x/X checkable/checked, S selected, d disabled, p password. */
   f?: string;
+  /** Place in the window's painting, later on top (Android): follows elevation, unlike the tree's order. */
+  z?: number;
 };
 
 export type UiWindow = {type: string; title: string; pkg: string};
@@ -246,6 +248,41 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
   hits.sort((a, b) => Number(interactive(b.n)) - Number(interactive(a.n)));
   const best = hits[0]!;
   return {node: best.n, index: best.i, ref: snap.refOf.get(best.i), ...centre(best.n.b)};
+};
+
+/**
+ * Where a tap reaches a node: its centre, or the point of it nearest the centre that nothing covers when something
+ * painted over it (a floating button, an overlay, a window above) owns the centre. `coveredBy` names the cover.
+ * Within a window the painting order (`z`) decides; without it only windows above count.
+ */
+export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; coveredBy?: string} => {
+  const n = snap.nodes[index]!;
+  const c = centre(n.b);
+  const chain = (j: number) => {
+    const out = new Set<number>();
+    for (let k = j; k >= 0 && !out.has(k); k = snap.nodes[k]?.p ?? -1) out.add(k);
+    return out;
+  };
+  const mine = chain(index);
+  const meets = (a: Bounds, b: Bounds) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  const drawn = (m: UiNode) => interactive(m) || !!m.t || !!m.d || /image/i.test(m.c);
+  const above = (m: UiNode) => (m.w < n.w ? snap.windows[m.w]?.type === 'app' : m.w === n.w && m.z !== undefined && n.z !== undefined && m.z > n.z);
+  const covers = snap.nodes
+    .map((m, j) => ({m, j}))
+    .filter(({m, j}) => drawn(m) && above(m) && meets(m.b, n.b) && !mine.has(j) && !chain(j).has(index));
+  if (!covers.length) return c;
+  const inside = (x: number, y: number) => covers.find(({m}) => x >= m.b[0] && x < m.b[2] && y >= m.b[1] && y < m.b[3]);
+  const cover = inside(c.x, c.y);
+  if (!cover) return c;
+  const ref = snap.refOf.get(cover.j);
+  const coveredBy = (ref && snap.lines.find(l => l.startsWith(`${ref} `))) || `${cover.m.c}${cover.m.t || cover.m.d ? ` "${cover.m.t ?? cover.m.d}"` : ''}`;
+  const pts: {x: number; y: number}[] = [];
+  for (let i = 0; i < 9; i++) {
+    for (let k = 0; k < 9; k++) pts.push({x: Math.round(n.b[0] + ((n.b[2] - n.b[0]) * (i + 0.5)) / 9), y: Math.round(n.b[1] + ((n.b[3] - n.b[1]) * (k + 0.5)) / 9)});
+  }
+  pts.sort((a, b) => Math.hypot(a.x - c.x, a.y - c.y) - Math.hypot(b.x - c.x, b.y - c.y));
+  const free = pts.find(p => !inside(p.x, p.y));
+  return {...(free ?? c), coveredBy};
 };
 
 /** Whether a selector currently matches anything. */
