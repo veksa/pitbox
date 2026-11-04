@@ -27,9 +27,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # Node first, then corepack: on Windows a corepack enabled before setup-node loses to the image's yarn 1.
+      # setup-node's own cache would call that yarn 1 before corepack is on, so it is off.
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
+          package-manager-cache: false
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn compile
