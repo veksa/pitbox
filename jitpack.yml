@@ -1,6 +1,7 @@
 # JitPack builds the Android connect library from a release tag:
-#   debugImplementation "com.github.<owner>.pitbox:pitbox-connect:<version>"
+#   debugImplementation "com.github.<owner>:pitbox:<version>"
+# One artifact in the repository, so JitPack serves it as <owner>:<repo> whatever the build names it.
 jdk:
   - openjdk21
 install:
-  - ./runners/android/gradlew -p android/standalone publishToMavenLocal -Pgroup=$GROUP.$ARTIFACT -Pversion=$VERSION
+  - ./runners/android/gradlew -p android/standalone publishToMavenLocal -Pgroup=$GROUP -Pversion=$VERSION

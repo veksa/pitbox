@@ -2,7 +2,7 @@
 #   npm      @veksa/pitbox — CLI, MCP server, runners, the connect libraries for React Native (autolinked
 #            on Android, the podspec on iOS)
 #   SwiftPM  the tag itself: .package(url: "https://github.com/<owner>/pitbox.git", from: "<version>")
-#   JitPack  built from the tag: debugImplementation "com.github.<owner>.pitbox:pitbox-connect:<version>"
+#   JitPack  built from the tag: debugImplementation "com.github.<owner>:pitbox:<version>"
 # npm gets the version staged, not published: a maintainer approves it with 2FA (`npm stage list @veksa/pitbox`,
 # then `npm stage approve <id>`), and only then can it be installed. Needs the NPM_TOKEN secret: a granular
 # token with "Read and write (stage only)" on @veksa.
@@ -53,7 +53,8 @@ jobs:
       - name: Build the connect library on JitPack
         run: |
           base="https://jitpack.io/com/github/${GITHUB_REPOSITORY_OWNER}/${GITHUB_REPOSITORY#*/}"
-          pom="$base/pitbox-connect/$GITHUB_REF_NAME/pitbox-connect-$GITHUB_REF_NAME.pom"
+          # One artifact in a repository: JitPack serves it as <owner>:<repo>, whatever its own coordinates.
+          pom="$base/$GITHUB_REF_NAME/${GITHUB_REPOSITORY#*/}-$GITHUB_REF_NAME.pom"
           for i in $(seq 1 20); do
             if curl -fsS -o /dev/null --max-time 300 "$pom"; then echo "built: $pom"; exit 0; fi
             sleep 30
