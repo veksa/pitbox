@@ -1,0 +1,68 @@
+# A version tag (`yarn release 0.2.0` makes and pushes it) publishes everything from one commit:
+#   npm      @veksa/pitbox — CLI, MCP server, runners, the connect libraries for React Native (autolinked
+#            on Android, the podspec on iOS)
+#   SwiftPM  the tag itself: .package(url: "https://github.com/<owner>/pitbox.git", from: "<version>")
+#   JitPack  built from the tag: debugImplementation "com.github.<owner>.pitbox:pitbox-connect:<version>"
+# Needs the NPM_TOKEN secret (an npm automation token with publish rights to @veksa).
+name: release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  npm:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: yarn
+          registry-url: https://registry.npmjs.org
+      - name: The tag matches package.json
+        run: test "$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: yarn install --immutable
+      # prepack builds dist; a pre-release (1.2.0-beta.1) goes to the `next` dist-tag.
+      - run: npm publish --provenance --tag ${{ contains(github.ref_name, '-') && 'next' || 'latest' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  jitpack:
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      # JitPack builds on the first request for an artifact; asking here builds it now and fails the
+      # release when it does not build, instead of the first user finding out.
+      - name: Build the connect library on JitPack
+        run: |
+          base="https://jitpack.io/com/github/${GITHUB_REPOSITORY_OWNER}/${GITHUB_REPOSITORY#*/}"
+          pom="$base/pitbox-connect/$GITHUB_REF_NAME/pitbox-connect-$GITHUB_REF_NAME.pom"
+          for i in $(seq 1 20); do
+            if curl -fsS -o /dev/null --max-time 300 "$pom"; then echo "built: $pom"; exit 0; fi
+            sleep 30
+          done
+          echo "JitPack did not build $GITHUB_REF_NAME; log: $base/$GITHUB_REF_NAME/build.log"
+          exit 1
+
+  github:
+    needs: [npm, jitpack]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+        env:
+          GH_TOKEN: ${{ github.token }}
