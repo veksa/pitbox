@@ -4,7 +4,7 @@
 //
 // Playwright is not a dependency of pitbox's core: `playwright-core` (or `playwright`) is loaded the first time a
 // web app is driven, from the project first and pitbox's own install second. Browsers are the ones Playwright
-// installs (`npx playwright install chromium`) or a channel the machine has (`chrome`, `msedge`).
+// installs (`npx playwright-core install chromium`) or a channel the machine has (`chrome`, `msedge`).
 
 import {createRequire} from 'node:module';
 import path from 'node:path';
@@ -54,7 +54,7 @@ const loadPlaywright = async (root: string): Promise<Pw> => {
       }
     }
   }
-  throw new WebError('Playwright is not installed', 'add playwright-core to the project (yarn add -D playwright-core) and `npx playwright install chromium`');
+  throw new WebError('Playwright is not installed', 'add playwright-core to the project (yarn add -D playwright-core) and `npx playwright-core install chromium`');
 };
 
 /** Android keycodes back to names, for the keys DeviceUi sends. */
@@ -299,7 +299,7 @@ export class WebRunner {
         this.#browser = await type.launch({headless: !this.cfg.headed, ...(this.cfg.channel ? {channel: this.cfg.channel} : {})});
       } catch (e) {
         const msg = (e as Error).message.split('\n')[0] ?? '';
-        throw new WebError(`cannot start ${this.cfg.browser ?? 'chromium'}: ${msg}`, /Executable doesn't exist|install/i.test(msg) ? `npx playwright install ${this.cfg.browser ?? 'chromium'}, or set web.<app>.channel: 'chrome'` : undefined);
+        throw new WebError(`cannot start ${this.cfg.browser ?? 'chromium'}: ${msg}`, /Executable doesn't exist|install/i.test(msg) ? `npx playwright-core install ${this.cfg.browser ?? 'chromium'}, or set web.<app>.channel: 'chrome'` : undefined);
       }
     }
     this.#context = await this.#browser.newContext({viewport: this.viewport, deviceScaleFactor: this.cfg.scale ?? 1});
