@@ -24,3 +24,5 @@ examples/android/.gradle/
 examples/android/.kotlin/
 examples/android/local.properties
 examples/apple/build/
+android/standalone/.gradle/
+android/standalone/build/

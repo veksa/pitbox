@@ -1,0 +1,20 @@
+// Builds the connect library on its own, outside a React Native app: for CI and for the Maven artifact JitPack
+// makes from a release tag. A React Native app never reads this directory; it includes ../ through autolinking.
+pluginManagement {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+}
+
+dependencyResolutionManagement {
+  repositories {
+    google()
+    mavenCentral()
+  }
+}
+
+rootProject.name = 'pitbox-connect-standalone'
+include ':connect'
+project(':connect').projectDir = file('..')

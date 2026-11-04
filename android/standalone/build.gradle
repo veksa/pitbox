@@ -1,0 +1,63 @@
+// The versions a React Native app would otherwise bring, and the Maven publication of the connect library.
+// The artifact is the debug variant: the library is meant for debug builds only (`debugImplementation`), and
+// its release variant ships with the connect components switched off.
+buildscript {
+  ext {
+    compileSdkVersion = 36
+    minSdkVersion = 24
+  }
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath 'com.android.tools.build:gradle:9.2.1'
+    classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.0'
+  }
+}
+
+// JitPack passes the coordinates as -Pgroup and -Pversion; a plain build uses neutral ones.
+def publishGroup = findProperty('group') ?: 'dev.pitbox'
+def publishVersion = findProperty('version') ?: '0.0.0'
+
+project(':connect') {
+  // The package class for React Native autolinking compiles against react-android; any version serves.
+  configurations.configureEach {
+    resolutionStrategy.eachDependency { details ->
+      if (details.requested.group == 'com.facebook.react' && !details.requested.version) {
+        details.useVersion '0.81.4'
+      }
+    }
+  }
+
+  // React Native's Gradle plugin sets this in an app; here Kotlin would follow the JDK and disagree with Java.
+  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    compilerOptions.jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+  }
+
+  apply plugin: 'maven-publish'
+
+  plugins.withId('com.android.library') {
+    android {
+      publishing {
+        singleVariant('debug') {
+          withSourcesJar()
+        }
+      }
+    }
+
+    // Registered after the Android plugin's own hook, which creates the component.
+    afterEvaluate {
+      publishing {
+        publications {
+          connect(MavenPublication) {
+            from components.debug
+            groupId = publishGroup
+            artifactId = 'pitbox-connect'
+            version = publishVersion
+          }
+        }
+      }
+    }
+  }
+}
