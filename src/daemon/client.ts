@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
 import {isAlive, startHidden} from '../util/proc.ts';
-import {daemonFile, type DaemonInfo} from './info.ts';
+import {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo} from './info.ts';
 
 export class DaemonClient {
   readonly info: DaemonInfo;
@@ -89,11 +89,29 @@ const waitForBusy = async (info: DaemonInfo, waitMs: number): Promise<boolean> =
   return false;
 };
 
+/**
+ * Stops a daemon that runs another version of pitbox — after an upgrade it would go on serving the old code.
+ * Services outlive it as on any daemon stop; the dev server, actors and the LLM mock belong to the daemon, so
+ * the note says they need `up` again.
+ */
+const stopOutdated = async (info: DaemonInfo) => {
+  await new DaemonClient(info).call(DAEMON_STOP, {}, 5000).catch(() => undefined);
+  const end = Date.now() + 15_000;
+  while (isAlive(info.pid)) {
+    if (Date.now() > end) throw new Error(`pitbox daemon ${info.pid} runs version ${info.version}, this is ${VERSION}, and it did not stop; end the process and try again`);
+    await new Promise(r => setTimeout(r, 150));
+  }
+  process.stderr.write(`pitbox: restarted the daemon of version ${info.version} as ${VERSION}; services kept running, the dev server, actors and the LLM mock need up again\n`);
+};
+
 /** Connects to the project's daemon, starting it in the background when none is running. */
 export const connect = async (opts: {config?: string; cwd?: string; busyWaitMs?: number} = {}): Promise<DaemonClient> => {
   const {file, stateDir} = resolveProject(opts);
   const existing = readInfo(stateDir);
-  if (existing && (await waitForBusy(existing, opts.busyWaitMs ?? 20_000))) return new DaemonClient(existing);
+  if (existing && (await waitForBusy(existing, opts.busyWaitMs ?? 20_000))) {
+    if (existing.version === VERSION) return new DaemonClient(existing);
+    await stopOutdated(existing);
+  }
 
   fs.mkdirSync(stateDir, {recursive: true});
   const logFile = path.join(stateDir, 'daemon.log');
