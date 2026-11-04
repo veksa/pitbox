@@ -1,163 +1,83 @@
 # pitbox
 
+[![CI](https://github.com/veksa/pitbox/actions/workflows/ci.yml/badge.svg)](https://github.com/veksa/pitbox/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@veksa/pitbox)](https://www.npmjs.com/package/@veksa/pitbox)
+[![node](https://img.shields.io/node/v/@veksa/pitbox)](docs/install.md#requirements)
+[![license](https://img.shields.io/npm/l/@veksa/pitbox)](LICENSE)
+
 Run, drive and debug apps on emulators, simulators and devices from one MCP server — fast and token-lean.
 
 pitbox gives a coding agent (and you) one tool for the whole local loop: the stand your app talks to, the
-devices it runs on, and the checks that tell you what is broken. Status: early development; measurements in
-[bench/README.md](bench/README.md).
+devices it runs on, and the checks that tell you what is broken. It works with any framework; React Native gets
+extra reach inside the app.
 
-## What works today
-
-- **Stand from a config.** Services start in dependency order and are health-checked; anything already
-  answering its probe is adopted instead of started twice; logs go to files; services outlive agent sessions
-  and daemon restarts, and only `down` stops them. Actors (extra users of the app), project tools (a protocol
-  call, an SQL query) and an OpenAI-compatible LLM mock.
-- **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots, selectors,
-  actions, checks and flows as on a phone, page errors reported with the action that caused them; one flow can switch
-  between a web app and a phone.
-- **Android** — phones, foldables, tablets, desktops, TV, XR headsets, AI glasses, watches and cars, emulators
-  and hardware: boot, install, open apps and deep links, logs,
-  settings, network conditions, screenshots, keys. Stand ports are forwarded to every device and re-forwarded
-  when a device reconnects.
-- **Dev server** — your bundler (`yarn start`) behind pitbox's proxy: a native file watcher on every platform
-  (Metro crawls every directory on Windows otherwise), the main bundle built before the device asks, and, with
-  `bytecode: true`, Hermes bytecode compiled on the host so the app skips parsing megabytes of source.
-- **Inside the app, with no app code** (React Native dev bundles served through pitbox): `fresh` says whether
-  the app runs the newest code (a new bundle or hot updates) or a stale bundle, and shows the compile error of
-  an edit that broke the build; hot updates keep working when the app runs host bytecode; the app's network log; network rules applied inside the app
-  (fail, mock, delay, a WebSocket frozen open, offline); a `traceparent` on every request an action causes;
-  in-flight requests count toward "the UI has settled"; the app's console from its start, warnings and errors
-  with the source line that logged them.
-- **The app's JS runtime as tools** (through the bundler's debugger channel, next to a person's DevTools):
-  `js eval` runs an expression in the app (statements and promises fine, values as compact text); `js log
-  <file:line> [expr…]` is a logpoint — the values each time the line runs, locals included, without stopping the
-  app or editing code. Host bytecode carries no debug info for locals, so while logpoints exist the app gets
-  source (one reload); `js clear` brings bytecode back on the next start.
-- **No dev launcher needed**: the Android connect library (autolinked, debug builds only) points the app at the
-  dev server from a link — `pitbox qr` puts it in a QR code for a phone, `open` uses it on emulators.
-  On an iOS or tvOS simulator `open` needs no library at all: it saves the dev server in the app's defaults
-  (`RCT_jsLocation`, where React Native looks) and passes it as launch arguments. Native apps read named hosts
-  with the Swift package `PitboxConnect` (this repository; `PitboxConnect.url("api")`,
-  `PitboxConnect.handle(url)` for the `pitbox.<bundle id>://connect` link on devices).
-- **UI automation on Android and Apple simulators** through pitbox's own runners (UiAutomation; XCUITest built
-  on the Mac on first use): the screen as short lines with refs, actions that
-  wait for the UI to settle and answer with what changed, exact gestures (double tap, swipe velocity), D-pad
-  keys and focus for TV. A finger can be held across calls (inspect a scrubber mid-drag). Taps on a screen
-  with a playing video take milliseconds (the platform's wait-for-animations is skipped).
-- **Checks instead of screenshots** — `media` (is the video playing, or black), `visual` (the screen against a
-  baseline, changed regions in pixels), `focus_map` (D-pad reachability, traps, irreversible moves), `perf`
-  (janky frames, frame-time percentiles, memory, the JS thread's profile — the functions that took the time,
-  mapped to source lines — React's commits: which components rendered, their own time and why — and, on
-  request, the platform's trace on Android: time per thread and the long slices with what took the time),
-  with budgets in flows (`expect perf janky<5 js<300 renders:Row<=40`), `app_tree` (the React tree from
-  inside the app). Crashes, ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files and lines
-  by the bundler, bytecode included.
-- **Cold start, measured** — `open!` reports the activity, when the JS bundle started running and what it
-  was served (bytecode or source, cached or not); a flow adds the time to its first check.
-- **What only some devices have** — fold and unfold a foldable (`posture`), rotate, run the app in a freeform
-  window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets and desktops; a
-  watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and
-  panel controls; the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
-  controller; TV remote and media keys.
-- **Named states** — an emulator snapshot plus the project's backend dump, restored in seconds.
-- **Several devices and variants** — a flow can switch devices (`device <avd>`); `matrix` runs a flow over
-  devices × font scales × themes × locales, with full-size screenshots per variant (store screenshots).
-- **Forwards that really work** — when `adb reverse` lists its forwards but carries no data, emulators switch to
-  a relay inside the runner through the emulator's host alias.
-- **Flows** — a line-per-step script the daemon runs on its own (`open`, `goto <route>`, `as <user>`, `press`,
-  `fill`, `scroll … until`, `wait`, `expect`, `tool … contains`, …): one call, one verdict, and on failure the
-  line, the error and the screen. Sessions can be recorded into flows. Reference: [docs/flows.md](docs/flows.md).
-- **Doctor** — known failures with remedies (`doctor --fix`), plus your own rules.
-- **Docs** — the lines of a long checklist or knowledge base that a step needs, not the whole file.
-- **MCP server** over stdio; the CLI prints the same compact text. How an agent should use it:
-  [docs/agents.md](docs/agents.md).
-
-## Install
-
-```sh
-yarn add -D @veksa/pitbox     # or npm i -D, pnpm add -D
-```
-
-The npm package carries the CLI, the MCP server, the prebuilt Android runner and the Apple runner's sources
-(built on the Mac on first use). The connect libraries come with it for React Native: autolinked on Android, and
-on iOS a pod for apps that want named hosts or the connect link on a device (simulators need none):
-
-```ruby
-pod 'PitboxConnect', :path => '../node_modules/@veksa/pitbox', :configurations => ['Debug']
-```
-
-Native apps take them from the same release tag:
-
-```swift
-.package(url: "https://github.com/veksa/pitbox.git", from: "0.1.0")   // SwiftPM, product PitboxConnect
-```
-
-```kotlin
-repositories { maven("https://jitpack.io") }
-dependencies { debugImplementation("com.github.veksa.pitbox:pitbox-connect:0.1.0") }
-```
+- **Phones, foldables, tablets, TVs, watches, XR headsets, glasses and cars** — Android emulators and devices,
+  Apple simulators, and web apps in a browser, behind the same tools.
+- **Answers an agent can afford** — the screen as short lines with refs, actions that wait for the UI to settle
+  and reply with what changed, images only on request.
+- **Flows** — a line-per-step script run by the daemon: a whole pass in one call, one verdict.
+- **Checks instead of screenshots** — is the video playing, does the screen match its baseline, can the D-pad
+  reach everything, which function made the frame janky.
+- **The stand** — services, mocks and backend states started from one config and kept warm between sessions.
+- **Inside a React Native app with no app code** — fresh code or stale, the network log and rules, the
+  console, `eval` and logpoints, hot updates, React renders.
 
 ## Quick start
 
-`pitbox init` in the project writes a first config from what it finds (the app, its id and scheme, the
-bundler, an emulator), lets the Android debug build use plain HTTP when nothing does yet, and adds `.pitbox/`
-to `.gitignore`; `--dry-run` only says what it would do. A config by hand:
+```sh
+yarn add -D @veksa/pitbox
+npx pitbox init          # writes pitbox.config.ts from what it finds in the project
+```
+
+Add the MCP server to the project's `.mcp.json`:
+
+```json
+{"mcpServers": {"pitbox": {"command": "npx", "args": ["pitbox", "mcp"]}}}
+```
+
+Or drive it from the shell:
+
+```sh
+pitbox up                # the stand: services, dev server
+pitbox boot              # the configured emulator, ports forwarded
+pitbox open              # launch the app
+pitbox snapshot          # the screen as text
+pitbox run smoke         # flows/smoke.flow, one verdict
+```
+
+A config by hand:
 
 ```ts
 // pitbox.config.ts
 import {defineConfig} from '@veksa/pitbox';
 
 export default defineConfig({
-  app: {android: 'com.example.app'},
+  app: {android: 'com.example.app', apple: 'com.example.app'},
   android: {avd: 'Pixel_8'},
   services: {
     db: {start: 'docker compose up -d db', stop: 'docker compose stop db', health: 'docker:db'},
     api: {start: 'yarn --cwd server start', health: 'http://localhost:3000/health', expose: 3000, dependsOn: ['db']},
   },
   devserver: {adapter: 'metro', root: 'mobile', bytecode: true},
-  tools: {
-    sql: {run: 'docker exec -i db psql -U app -qAt -c {query}', params: {query: 'SQL statement'}},
-  },
-  docs: {check: 'CHECK.md'},
 });
 ```
 
-```sh
-pitbox up            # the whole stand
-pitbox boot          # the configured emulator, ports forwarded
-pitbox install app-debug.apk && pitbox open
-pitbox doctor --fix
-pitbox status
-```
+## Documentation
 
-As an MCP server (`.mcp.json`):
+| | |
+|---|---|
+| [Install](docs/install.md) | requirements, the MCP server, connect libraries for React Native, Swift and Android |
+| [Features](docs/features.md) | everything pitbox does, by area |
+| [Config](docs/config.md) | every field of `pitbox.config.ts` |
+| [Flows](docs/flows.md) | the flow language: steps, selectors, recording |
+| [Using pitbox from an agent](docs/agents.md) | how an agent gets the most out of the tools |
+| [Benchmarks](bench/README.md) | what pitbox measures and how |
+| [Examples](examples) | sample Android, Apple and React Native apps with their flows |
 
-```json
-{"mcpServers": {"pitbox": {"command": "npx", "args": ["pitbox", "mcp"]}}}
-```
+## Contributing
 
-Probes: `http(s)://…` (any answer below 500), `tcp:<port>`, `docker:<container>`, `cmd:<command>`. Project
-commands run in bash (Git Bash on Windows) unless `shell` says otherwise. Every field: [docs/config.md](docs/config.md).
-
-## Testing pitbox itself
-
-`yarn check-all` runs the unit tests. `yarn e2e` drives two example apps through the CLI and prints a verdict
-per device kind: [examples/android](examples/android), a native app, on one emulator of every kind found on the
-machine (phone, foldable, tablet, desktop, TV, XR, glasses, watch, car), and
-[examples/react-native](examples/react-native) on a phone through pitbox's dev server (connect link, bytecode,
-freshness, the network log, a JS error mapped to its source line).
-
-GitHub Actions run the unit tests on Linux, macOS and Windows with two Node versions, build the Swift package,
-the Apple runner and the Android runner and connect library, and check what the npm package carries. Device runs
-stay local.
-
-## Releasing
-
-`yarn release 0.2.0` on a clean, up-to-date `main`: runs the checks, sets the version, commits, makes a signed
-tag `0.2.0` and pushes it. The tag's workflow publishes npm (the `NPM_TOKEN` secret), has JitPack build the
-Android connect library and opens a GitHub release; SwiftPM reads the tag itself. A pre-release (`0.2.0-beta.1`)
-goes to npm's `next` tag.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)
