@@ -127,6 +127,9 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const t0 = Date.now();
     let t = t0;
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
+    // Quiet at once: the runner saw no event after the input, so the effect had not begun yet (JS work before a
+    // navigation) and the first change seen can be only its first frame.
+    const quietAtOnce = r.idle && Date.now() - t < quietMs;
     t = this.#phase('quiet', t);
     if (this.#hooks.networkIdle) await this.#hooks.networkIdle(1500);
     t = this.#phase('network', t);
@@ -147,9 +150,26 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     let diff = diffSnapshots(before, snap);
     while (!diff.changed && Date.now() - t0 < graceMs) {
       await new Promise(res => setTimeout(res, 250));
-      diff = diffSnapshots(before, await this.snapshot());
+      snap = await this.snapshot();
+      diff = diffSnapshots(before, snap);
     }
-    this.#phase('grace', t);
+    t = this.#phase('grace', t);
+    // A change that began after the quiet check can be the first frame of a bigger one — a tab bar gone before the
+    // next screen is mounted. Followed until two snapshots agree, so the answer is the screen the action led to;
+    // while only lines have gone, the screen it leaves for is not drawn yet and is waited for (up to graceMs).
+    if (diff.changed && quietAtOnce) {
+      const onlyGone = (d: SnapshotDiff) => !d.full && d.lines.every(l => l.startsWith('- '));
+      const end = Date.now() + graceMs;
+      for (;;) {
+        await new Promise(res => setTimeout(res, 250));
+        const next = await this.snapshot();
+        const same = next.lines.join('\n') === snap.lines.join('\n');
+        snap = next;
+        diff = diffSnapshots(before, snap);
+        if ((same && !onlyGone(diff)) || Date.now() > end) break;
+      }
+      this.#phase('follow', t);
+    }
     return {diff, idle: r.idle};
   }
 

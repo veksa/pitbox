@@ -389,6 +389,33 @@ describe("React Native's warnings toast over a target", () => {
   }, 15_000);
 });
 
+describe('a press that starts a navigation after the UI looked quiet', () => {
+  it('answers with the screen it led to, not with the first frame of the change', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const home: UiNode[] = [
+      {p: -1, w: 0, c: 'Button', b: [0, 100, 1080, 600], id: 'hero', f: 'c'},
+      {p: -1, w: 0, c: 'Button', b: [810, 2204, 1080, 2325], id: 'tab-profile', f: 'c'},
+    ];
+    const leaving = home.slice(0, 1);
+    const detail: UiNode[] = [{p: -1, w: 0, c: 'View', b: [0, 0, 1080, 2400], id: 'detail-screen'}, {p: 0, w: 0, c: 'Button', b: [40, 900, 400, 1000], id: 'watch', f: 'c'}];
+    let tapped = 0;
+    let reads = 0;
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'tap') tapped = Date.now();
+        // The tab bar goes first; the next screen is mounted a few hundred milliseconds later.
+        if (cmd === 'tree') return {windows: app, nodes: !tapped ? home : (reads++, Date.now() - tapped < 400 ? leaving : detail)};
+        if (cmd === 'info') return {width: 1080, height: 2400};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).press('id=hero');
+    expect(r.diff.lines.join('\n')).toMatch(/#detail-screen/);
+  }, 15_000);
+});
+
 describe("iOS's offer to save a password", () => {
   const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
   const sheet: UiNode[] = [
