@@ -144,8 +144,8 @@ routes: {order: '/orders/{id}'},   // a route that starts with / opens in the we
 | `headed` | show the window (default headless) |
 | `scale` | device scale factor, default 1 |
 
-Playwright is loaded only when a web app is driven: `playwright-core` (or `playwright`) from the project, else
-pitbox's own; its browsers come from `npx playwright install chromium`. `open!` (`relaunch`) starts from a clean
+Playwright is loaded only when a web app is driven, from the project: add `playwright-core` (or `playwright`) to
+its dev dependencies — pitbox does not bring one — and its browsers with `npx playwright-core install chromium`. `open!` (`relaunch`) starts from a clean
 profile — no cookies or storage — and `app action=clear` clears them in place. With no device named, a call goes to
 the only web app when no phone, emulator or simulator is online.
 

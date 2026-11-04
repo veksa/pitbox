@@ -5,7 +5,8 @@
 - Node.js 22.18 or newer.
 - For Android: the Android SDK (`adb`, the emulator). The Android runner ships prebuilt in the package.
 - For Apple simulators: a Mac with Xcode. The XCUITest runner is built from its sources on first use.
-- For web apps: `playwright-core` and a browser (optional dependency).
+- For web apps: `playwright-core` in the project (`yarn add -D playwright-core`) and a browser
+  (`npx playwright-core install chromium`).
 
 ## The package
 
