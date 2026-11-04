@@ -26,11 +26,11 @@ jobs:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v5
-      - run: corepack enable
+      # Node first, then corepack: on Windows a corepack enabled before setup-node loses to the image's yarn 1.
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
-          cache: yarn
+      - run: corepack enable
       - run: yarn install --immutable
       - run: yarn compile
       - run: yarn test
