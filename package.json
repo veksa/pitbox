@@ -41,7 +41,9 @@
     "check-all": "yarn compile && yarn test",
     "build-runner": "node scripts/build-runner.mjs",
     "e2e": "node scripts/e2e.mjs",
-    "e2e:apple": "node scripts/e2e-apple.mjs"
+    "e2e:apple": "node scripts/e2e-apple.mjs",
+    "prepack": "yarn build",
+    "release": "node scripts/release.mjs"
   },
   "keywords": [
     "mcp",
@@ -82,5 +84,8 @@
     "playwright-core": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
