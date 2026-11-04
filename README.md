@@ -72,6 +72,31 @@ devices it runs on, and the checks that tell you what is broken. Status: early d
 - **MCP server** over stdio; the CLI prints the same compact text. How an agent should use it:
   [docs/agents.md](docs/agents.md).
 
+## Install
+
+```sh
+yarn add -D @veksa/pitbox     # or npm i -D, pnpm add -D
+```
+
+The npm package carries the CLI, the MCP server, the prebuilt Android runner and the Apple runner's sources
+(built on the Mac on first use). The connect libraries come with it for React Native: autolinked on Android, and
+on iOS a pod for apps that want named hosts or the connect link on a device (simulators need none):
+
+```ruby
+pod 'PitboxConnect', :path => '../node_modules/@veksa/pitbox', :configurations => ['Debug']
+```
+
+Native apps take them from the same release tag:
+
+```swift
+.package(url: "https://github.com/veksa/pitbox.git", from: "0.1.0")   // SwiftPM, product PitboxConnect
+```
+
+```kotlin
+repositories { maven("https://jitpack.io") }
+dependencies { debugImplementation("com.github.veksa.pitbox:pitbox-connect:0.1.0") }
+```
+
 ## Quick start
 
 `pitbox init` in the project writes a first config from what it finds (the app, its id and scheme, the
@@ -121,6 +146,17 @@ per device kind: [examples/android](examples/android), a native app, on one emul
 machine (phone, foldable, tablet, desktop, TV, XR, glasses, watch, car), and
 [examples/react-native](examples/react-native) on a phone through pitbox's dev server (connect link, bytecode,
 freshness, the network log, a JS error mapped to its source line).
+
+GitHub Actions run the unit tests on Linux, macOS and Windows with two Node versions, build the Swift package,
+the Apple runner and the Android runner and connect library, and check what the npm package carries. Device runs
+stay local.
+
+## Releasing
+
+`yarn release 0.2.0` on a clean, up-to-date `main`: runs the checks, sets the version, commits, makes a signed
+tag `0.2.0` and pushes it. The tag's workflow publishes npm (the `NPM_TOKEN` secret), has JitPack build the
+Android connect library and opens a GitHub release; SwiftPM reads the tag itself. A pre-release (`0.2.0-beta.1`)
+goes to npm's `next` tag.
 
 ## License
 
