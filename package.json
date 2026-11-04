@@ -4,6 +4,12 @@
   "description": "Run, drive and debug apps on emulators, simulators and devices from one MCP server — fast and token-lean",
   "license": "MIT",
   "author": "Aleksandr Khizhnyi <mendler88@gmail.com>",
+  "homepage": "https://github.com/veksa/pitbox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/veksa/pitbox.git"
+  },
+  "bugs": "https://github.com/veksa/pitbox/issues",
   "type": "module",
   "bin": "./dist/bin.js",
   "exports": {
