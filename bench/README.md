@@ -1,6 +1,6 @@
-# bench — P0 measurements
+# Benchmarks
 
-Scripts that measure what pitbox is meant to improve. They run with Node 22+ directly (`node bench/x.ts`,
+Scripts that measure what pitbox is meant to improve, and what they found. They run with Node 22+ directly (`node bench/x.ts`,
 type stripping), with no dependencies.
 
 | Script | Measures |
@@ -46,7 +46,7 @@ Implications for pitbox:
   map of its own) — the single biggest dev-server win measured;
 - "ready" is not a useful health signal: a server can answer HTTP while the file map is still being built.
   Health means a bundle request that completes;
-- a 15.6 MB dev bundle on every cold start is worth the host-side bytecode and on-device cache.
+- a 15.6 MB dev bundle on every cold start is worth host-side bytecode and an on-device cache.
 
 ### Rspack (Re.Pack 5.4, Rspack 2.3) against Metro
 
@@ -100,7 +100,7 @@ Implications for pitbox:
 The release build measured was an older build with R8 and no dev tooling, so it is an
 upper bound on the gain rather than an exact one.
 
-### P2: pitbox's dev server against stock Metro
+### pitbox's dev server against stock Metro
 
 Same app, same emulator. pitbox runs the project's own `yarn start` on an internal port with the native
 watcher enabled at runtime, its proxy on the device port, prewarming, and host-compiled Hermes bytecode for
@@ -133,7 +133,7 @@ Rules that came out of it:
   restarted (Windows console close; EPIPE on the next log write) — now detached with logs written straight to
   files, covered by a test that runs a real daemon exit.
 
-### P3: pitbox's own Android runner
+### pitbox's own Android runner
 
 An instrumentation APK (650 KB, no AndroidX) on `UiAutomation`, reached over `adb forward`, one persistent
 connection. Same app, same emulator.
@@ -226,9 +226,9 @@ A device action's response is ~0.03% of what the turn costs; the rest is the con
 responses is noise — removing turns (flows run by the daemon, macro tools, one-call expectations) and keeping
 device work in small contexts is what moves the number.
 
-## Summary of P0
+## Summary
 
-| Where the time goes | Today | With pitbox's approach |
+| Where the time goes | Stock tools | With pitbox's approach |
 |---|---|---|
 | dev server start (Windows) | ~39 s warm, ~61 s cold | ~6.5 s once, then kept warm by the daemon |
 | app cold start on a dev build | 5.4–6.5 s (15.5 s after a server restart) | ~0.7 s on an embedded-bytecode build for verification |
