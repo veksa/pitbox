@@ -20,6 +20,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "runners/android/pitbox-runner.apk",
     "runners/apple/Host",
     "runners/apple/Runner",
