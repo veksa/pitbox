@@ -23,7 +23,9 @@ It carries the CLI (`pitbox`), the MCP server, the runners and the connect libra
 {"mcpServers": {"pitbox": {"command": "npx", "args": ["pitbox", "mcp"]}}}
 ```
 
-The server talks over stdio and starts the project's daemon on first use. How an agent should use it:
+The server talks over stdio and starts the project's daemon on first use. After an upgrade of the package, the
+first command replaces a daemon of the old version; services keep running, and the dev server, actors and the
+LLM mock come back with `up`. How an agent should use it:
 [agents.md](agents.md).
 
 ## A first config
