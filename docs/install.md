@@ -61,5 +61,5 @@ PitboxConnect.handle(url)         // in the app's URL handler, for the connect l
 
 ```kotlin
 repositories { maven("https://jitpack.io") }
-dependencies { debugImplementation("com.github.veksa.pitbox:pitbox-connect:0.1.0") }
+dependencies { debugImplementation("com.github.veksa:pitbox:0.1.0") }
 ```
