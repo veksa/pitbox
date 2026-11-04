@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {connect} from './daemon/client.ts';
-import {daemonFile} from './daemon/info.ts';
+import {daemonFile, VERSION} from './daemon/info.ts';
 
 const project = (port: number) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-client-'));
@@ -44,4 +44,12 @@ describe('finding the daemon', () => {
       server.close();
     }
   }, 30_000);
+});
+
+describe('version', () => {
+  it('is the package version, not a placeholder', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8')) as {version: string};
+    expect(VERSION).toBe(pkg.version);
+    expect(VERSION).not.toBe('0.0.0');
+  });
 });
