@@ -140,6 +140,22 @@ export class DevServer {
     this.#watch();
   }
 
+  /**
+   * Takes the device-facing port before the bundler starts, and says why when it cannot. A bundler started behind
+   * a port somebody else holds is the quiet failure: devices reach whoever holds it — another project's proxy
+   * forwarding to the same internal port serves this bundle well enough — while freshness, the network log and
+   * the console report to the other stand.
+   */
+  async claim(): Promise<string | undefined> {
+    if (this.proxy.listening) return undefined;
+    try {
+      await this.start();
+      return undefined;
+    } catch (e) {
+      return `${(e as Error).message} (the bundler was not started)`;
+    }
+  }
+
   async stop() {
     this.#watcher?.close();
     this.#watcher = undefined;

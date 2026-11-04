@@ -70,7 +70,7 @@ devserver: {adapter: 'metro', root: 'mobile', bytecode: true},
 | `adapter` | `metro` (React Native with Metro, Expo included), `rspack` (Re.Pack), `command` (anything else). Default `metro` |
 | `root` | the app directory the bundler runs in |
 | `start` | start command; `{port}` is the internal port. Default `yarn start --port {port}` |
-| `port` | port devices talk to (the proxy). Default 8081 |
+| `port` | port devices talk to (the proxy). Default 8081. Taken by another process (another project's pitbox, a bundler started by hand), `up` reports the dev server failed and does not start the bundler: devices would reach whoever holds the port. Projects sharing a machine each need their own |
 | `internalPort` | port of the bundler itself. Default `port + 1` |
 | `host` | where the proxy listens: `127.0.0.1` (default; devices behind adb), `lan` (phones on the network; the LAN address goes into links and Expo's manifest), or an address |
 | `env` | extra environment for the bundler |

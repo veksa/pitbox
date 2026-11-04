@@ -268,3 +268,33 @@ describe('main bundle compression', () => {
     }
   });
 });
+
+describe('port claim', () => {
+  it('reports a device-facing port held by another process instead of serving behind it', async () => {
+    const {DevServer} = await import('./devserver/devserver.ts');
+    const root = fs.mkdtempSync(path.join(dir, 'claim-'));
+    const other = net.createServer();
+    const port = await freePort();
+    await new Promise<void>(r => other.listen(port, '127.0.0.1', () => r()));
+    try {
+      const held = new DevServer({adapter: 'metro', port}, root, path.join(root, '.pitbox'));
+      expect(await held.claim()).toMatch(new RegExp(`port ${port} is taken.*the bundler was not started`));
+      expect(held.proxy.listening).toBe(false);
+    } finally {
+      other.close();
+    }
+  });
+
+  it('takes a free port and keeps it on a second claim', async () => {
+    const {DevServer} = await import('./devserver/devserver.ts');
+    const root = fs.mkdtempSync(path.join(dir, 'claim-'));
+    const dev = new DevServer({adapter: 'metro', port: await freePort()}, root, path.join(root, '.pitbox'));
+    try {
+      expect(await dev.claim()).toBeUndefined();
+      expect(dev.proxy.listening).toBe(true);
+      expect(await dev.claim()).toBeUndefined();
+    } finally {
+      await dev.stop();
+    }
+  });
+});

@@ -21,7 +21,7 @@ import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
-import {ServiceManager} from '../stand/services.ts';
+import {ServiceManager, type ServiceState} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
 import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
@@ -176,6 +176,21 @@ export class Engine {
     const services = {...(this.config.services ?? {})};
     if (this.#dev) services[DEVSERVER] = this.#dev.service();
     return services;
+  }
+
+  /** The dev server's port taken before its bundler starts: the failed state to report when it cannot be. */
+  async #claimDevPort(): Promise<ServiceState | undefined> {
+    const dev = this.#dev;
+    if (!dev) return undefined;
+    const reason = await dev.claim();
+    return reason ? {name: DEVSERVER, status: 'failed', detail: reason, expose: [dev.port]} : undefined;
+  }
+
+  /** The services to bring up without the dev server: the named ones, or every autostart one. */
+  #withoutDev(names: string[]): string[] {
+    const all = this.#allServices();
+    const requested = names.length ? names : Object.keys(all).filter(n => all[n]!.autostart !== false);
+    return requested.filter(n => n !== DEVSERVER);
   }
 
   /** Brings the proxy up once the bundler answers, then prewarms. */
@@ -698,8 +713,12 @@ export class Engine {
     up: async (p: Params) => {
       const names = list(p, 'services');
       const mock = names.length ? undefined : await this.#startMock();
-      const services = await this.services.up(names);
-      const prewarm = !names.length || names.includes(DEVSERVER) ? await this.#devUp(true) : undefined;
+      const blocked = !names.length || names.includes(DEVSERVER) ? await this.#claimDevPort() : undefined;
+      // An empty list means every autostart service to `services.up`, the dev server included: none is asked for.
+      const rest = blocked ? this.#withoutDev(names) : names;
+      const services = blocked && !rest.length ? [] : await this.services.up(rest);
+      if (blocked) services.push(blocked);
+      const prewarm = !blocked && (!names.length || names.includes(DEVSERVER)) ? await this.#devUp(true) : undefined;
       const forwards = await this.ensureForwards(true).catch(() => []);
       return {services, mock, forwards, prewarm};
     },
@@ -718,8 +737,11 @@ export class Engine {
     restart: async (p: Params) => {
       const names = list(p, 'services');
       if (names.includes(DEVSERVER)) await this.#dev?.stop();
-      const services = await this.services.restart(names);
-      const prewarm = names.includes(DEVSERVER) ? await this.#devUp(true) : undefined;
+      const blocked = names.includes(DEVSERVER) ? await this.#claimDevPort() : undefined;
+      const rest = blocked ? this.#withoutDev(names) : names;
+      const services = blocked && !rest.length ? [] : await this.services.restart(rest);
+      if (blocked) services.push(blocked);
+      const prewarm = !blocked && names.includes(DEVSERVER) ? await this.#devUp(true) : undefined;
       return {services, prewarm};
     },
 
