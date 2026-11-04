@@ -52,6 +52,21 @@ export const passwordOffer = (snap: Pick<Snapshot, 'nodes'>): {title: string; de
   return decline ? {title, decline} : undefined;
 };
 
+/**
+ * React Native's warnings or errors toast in a debug build ("Open debugger to view warnings."). After the first
+ * warning it sits over the bottom of every screen — a tab bar under it takes no taps — and no check is about it.
+ * Returns it and its dismiss button: the control without a label inside it, on its right.
+ */
+export const logBoxToast = (snap: Pick<Snapshot, 'nodes'>): {toast: UiNode; dismiss: UiNode} | undefined => {
+  const toast = snap.nodes.find(n => /open debugger to view (warnings|errors)/i.test(n.t ?? n.d ?? ''));
+  if (!toast) return undefined;
+  const [x1, y1, x2, y2] = toast.b;
+  const dismiss = snap.nodes.find(
+    n => n !== toast && interactive(n) && !n.t && !n.d && n.b[0] >= (x1 + x2) / 2 && n.b[2] <= x2 && n.b[1] >= y1 && n.b[3] <= y2,
+  );
+  return dismiss ? {toast, dismiss} : undefined;
+};
+
 export type Snapshot = {
   windows: UiWindow[];
   nodes: UiNode[];

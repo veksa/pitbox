@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, keyboardTop, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -86,7 +86,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.recording?.push(line);
   }
 
-  /** System offers declined on the way (iOS "Save Password?"), told in the next press's note. */
+  /** System offers declined and overlays closed on the way (iOS "Save Password?", React Native's warnings toast), told in the next press's note. */
   declined: string[] = [];
 
   async snapshot(opts: {system?: boolean; bounds?: boolean} = {}): Promise<Snapshot> {
@@ -201,6 +201,26 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     if (covered || !target) {
       snap = await this.#hideKeyboard(selector);
       target = resolveTarget(snap, selector);
+    }
+    // React Native's warnings toast over the target (a tab bar under it): closed with its own dismiss button, as a
+    // person would, and the target found again. A target that is part of the toast is left alone.
+    const toast = ref ? undefined : logBoxToast(snap);
+    if (toast && target.index !== undefined && target.node !== toast.toast && target.node !== toast.dismiss) {
+      const [x1, y1, x2, y2] = toast.toast.b;
+      if (target.x >= x1 && target.x < x2 && target.y >= y1 && target.y < y2) {
+        const [d1, e1, d2, e2] = toast.dismiss.b;
+        await this.runner.call('tap', {x: Math.round((d1 + d2) / 2), y: Math.round((e1 + e2) / 2)});
+        this.declined.push("closed React Native's warnings toast that covered the target");
+        await this.runner.call('idle', {quiet: 200, timeout: 1000}, 6000);
+        // The toast slides away: the target is found again once it has left the tree.
+        const end = Date.now() + 1500;
+        snap = await this.snapshot();
+        while (logBoxToast(snap) && Date.now() < end) {
+          await new Promise(r => setTimeout(r, 150));
+          snap = await this.snapshot();
+        }
+        target = resolveTarget(snap, selector);
+      }
     }
     return {snap, target};
   }

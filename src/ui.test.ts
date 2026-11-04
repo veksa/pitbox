@@ -339,6 +339,56 @@ describe('a target with something drawn over its centre', () => {
   });
 });
 
+describe("React Native's warnings toast over a target", () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const tab: UiNode = {p: -1, w: 0, c: 'Button', b: [810, 2204, 1080, 2325], id: 'tab-profile', f: 'c'};
+  const toast: UiNode[] = [
+    {p: -1, w: 0, c: 'Button', b: [26, 2170, 1054, 2295], d: '!, Open debugger to view warnings.', f: 'c'},
+    {p: -1, w: 0, c: 'Button', b: [970, 2207, 1022, 2259], f: 'c'},
+  ];
+
+  it('is closed with its own dismiss button, then the target gets the tap, and the answer says so', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const taps: string[] = [];
+    let shown = true;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(`${args.x},${args.y}`);
+          if (args.x === 996 && args.y === 2233) shown = false;
+        }
+        if (cmd === 'tree') return {windows: app, nodes: shown ? [tab, ...toast] : [tab]};
+        if (cmd === 'info') return {width: 1080, height: 2424};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).press('id=tab-profile');
+    expect(taps).toEqual(['996,2233', '945,2265']);
+    expect(r.note).toMatch(/closed React Native's warnings toast/);
+  }, 15_000);
+
+  it('is left alone when the target is not under it, or is the toast itself', async () => {
+    const {logBoxToast} = await import('./ui/snapshot.ts');
+    expect(logBoxToast(buildSnapshot(app, [tab, ...toast]))?.dismiss.b).toEqual([970, 2207, 1022, 2259]);
+    expect(logBoxToast(buildSnapshot(app, [tab, {...toast[0]!, d: 'Open settings'}, toast[1]!]))).toBeUndefined();
+    const {DeviceUi} = await import('./ui/device.ts');
+    const taps: string[] = [];
+    const top: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 100, 540, 200], id: 'search', f: 'c'};
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') taps.push(`${args.x},${args.y}`);
+        if (cmd === 'tree') return {windows: app, nodes: [top, tab, ...toast]};
+        if (cmd === 'info') return {width: 1080, height: 2424};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('dev', runner as never).press('id=search');
+    expect(taps).toEqual(['270,150']);
+  }, 15_000);
+});
+
 describe("iOS's offer to save a password", () => {
   const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
   const sheet: UiNode[] = [
