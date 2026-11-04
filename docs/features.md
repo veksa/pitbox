@@ -42,7 +42,8 @@ compact text.
   velocity), D-pad keys and focus for TV, a finger held across calls (inspect a scrubber mid-drag).
 - **Taps that land** — the visible part of a covered target is tapped and what covers its centre is named; a
   keyboard over the target is closed first; system sheets that cover the app (permission requests, the save
-  password offer) are named in snapshots and failed waits.
+  password offer) are named in snapshots and failed waits; React Native's warnings toast is closed when it covers
+  the target.
 - **Fast on busy screens** — taps on a screen with a playing video take milliseconds (the platform's
   wait-for-animations is skipped).
 
