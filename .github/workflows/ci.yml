@@ -33,6 +33,8 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn compile
+      # The web driver's tests run a real headless browser.
+      - run: yarn playwright-core install --with-deps --only-shell chromium
       - run: yarn test
 
   package:
