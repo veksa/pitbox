@@ -3,7 +3,9 @@
 #            on Android, the podspec on iOS)
 #   SwiftPM  the tag itself: .package(url: "https://github.com/<owner>/pitbox.git", from: "<version>")
 #   JitPack  built from the tag: debugImplementation "com.github.<owner>.pitbox:pitbox-connect:<version>"
-# Needs the NPM_TOKEN secret (an npm automation token with publish rights to @veksa).
+# npm gets the version staged, not published: a maintainer approves it with 2FA (`npm stage list @veksa/pitbox`,
+# then `npm stage approve <id>`), and only then can it be installed. Needs the NPM_TOKEN secret: a granular
+# token with "Read and write (stage only)" on @veksa.
 name: release
 
 on:
@@ -25,17 +27,20 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v5
-      - run: corepack enable
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: yarn
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
+      - run: corepack enable
       - name: The tag matches package.json
         run: test "$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
       - run: yarn install --immutable
-      # prepack builds dist; a pre-release (1.2.0-beta.1) goes to the `next` dist-tag.
-      - run: npm publish --provenance --tag ${{ contains(github.ref_name, '-') && 'next' || 'latest' }}
+      - run: yarn build
+      # `npm stage` needs npm 11.15 or later; Node 22 comes with npm 10.
+      - run: npm install --global npm@11
+      # A pre-release (1.2.0-beta.1) goes to the `next` dist-tag.
+      - run: npm stage publish --provenance --access public --tag ${{ contains(github.ref_name, '-') && 'next' || 'latest' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
