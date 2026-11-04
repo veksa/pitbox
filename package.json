@@ -27,7 +27,9 @@
     "runners/apple/PitboxRunner.xcodeproj/xcshareddata",
     "android/build.gradle",
     "android/src",
-    "react-native.config.js"
+    "react-native.config.js",
+    "PitboxConnect.podspec",
+    "connect/apple/Sources"
   ],
   "engines": {
     "node": ">=22.18"
