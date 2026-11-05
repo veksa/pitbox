@@ -53,7 +53,8 @@ Steps that act on the screen take a selector:
 | `540,1200` | a point in screen pixels |
 | `@e12` | a ref from the last snapshot (interactive use; flows should not rely on refs) |
 
-When several nodes match, interactive ones win, then reading order. Prefer `id=`: ids survive copy changes and
+When several nodes match, a node of an alert or a sheet on top wins (whatever matches behind it cannot be tapped),
+then interactive ones, then reading order. Prefer `id=`: ids survive copy changes and
 locales.
 
 ## Steps
