@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -378,12 +378,35 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
     this.#front(before);
+    const notes: string[] = [];
     for (const k of keys) {
       const {code, meta} = keyOf(k, KEYS);
-      await this.runner.call('key', meta ? {code, meta} : {code});
+      await this.runner.call('key', meta ? {code, meta} : {code}).catch(async (e: Error) => {
+        // No back key (iOS): back is what a person does there, the navigation bar's back button or a swipe in from
+        // the left edge.
+        if (code !== 4 || meta || !/no equivalent/.test(e.message)) throw e;
+        notes.push(await this.#back());
+      });
     }
     this.record(`key ${keys.join(' ')}`);
-    return {action: 'key', target: keys.join(' '), ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    const settled = await this.#settle(before);
+    if (notes.length && !settled.diff.changed) notes.push('nothing changed: no screen to go back from');
+    return {action: 'key', target: keys.join(' '), ...(notes.length ? {note: notes.join('; ')} : {}), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+  }
+
+  /** Back where the device has no back key: the navigation bar's back button, or a swipe in from the left edge. */
+  async #back(): Promise<string> {
+    const snap = await this.snapshot();
+    const i = backButton(snap);
+    if (i !== undefined) {
+      const n = snap.nodes[i]!;
+      const at = tapPoint(snap, i);
+      await this.runner.call('tap', {x: at.x, y: at.y, ...aim(n, snap)});
+      return `back: pressed the navigation bar's back button${n.t ? ` "${n.t}"` : ''}`;
+    }
+    const {width, height} = await this.size();
+    await this.runner.call('swipe', {x1: 1, y1: Math.round(height / 2), x2: Math.round(width * 0.75), y2: Math.round(height / 2), duration: 300}, 10_300);
+    return 'back: no back button, swiped in from the left edge';
   }
 
   /**

@@ -713,3 +713,57 @@ describe('focus map on a list that scrolls under the focus', () => {
     expect(map).toMatchObject({reached: 3, focusable: 3, unreached: [], traps: []});
   });
 });
+
+describe('back where the device has no back key (iOS)', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const pushed: UiNode[] = [
+    {p: -1, w: 0, c: 'NavigationBar', b: [0, 62, 402, 116], id: 'Settings'},
+    {p: 0, w: 0, c: 'Button', b: [16, 62, 60, 106], t: 'Back', id: 'BackButton', f: 'c'},
+    {p: 0, w: 0, c: 'Text', b: [168, 74, 234, 94], t: 'Settings'},
+    {p: -1, w: 0, c: 'Text', b: [141, 458, 261, 498], t: 'Settings', id: 'settings_screen'},
+  ];
+
+  it("finds UIKit's back button, or the bar's first button at its start, and nothing on a root screen", async () => {
+    const {backButton} = await import('./ui/snapshot.ts');
+    expect(backButton(buildSnapshot(app, pushed))).toBe(1);
+    const titled = pushed.map(n => (n.id === 'BackButton' ? {...n, id: undefined, t: 'Inbox'} : n));
+    expect(backButton(buildSnapshot(app, titled))).toBe(1);
+    // A root screen's bar holds only an action on its end.
+    const root: UiNode[] = [pushed[0]!, {p: 0, w: 0, c: 'Button', b: [340, 62, 390, 106], t: 'Edit', f: 'c'}];
+    expect(backButton(buildSnapshot(app, root))).toBeUndefined();
+  });
+
+  const device = async (nodes: UiNode[]) => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const calls: string[] = [];
+    let back = false;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key' && args.code === 4) throw new Error('key code 4 has no equivalent on this device (home, enter and del do)');
+        if (cmd === 'tap' || cmd === 'swipe') {
+          calls.push(`${cmd} ${JSON.stringify(cmd === 'tap' ? {x: args.x, y: args.y} : args)}`);
+          back = true;
+        }
+        if (cmd === 'tree') return {windows: app, nodes: back ? [{p: -1, w: 0, c: 'Text', b: [0, 100, 400, 140], t: 'Home', id: 'home'}] : nodes};
+        if (cmd === 'info') return {width: 402, height: 874};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    return {ui: new DeviceUi('sim', runner as never), calls};
+  };
+
+  it("presses the navigation bar's back button", async () => {
+    const {ui, calls} = await device(pushed);
+    const r = await ui.key(['back']);
+    expect(calls).toEqual(['tap {"x":38,"y":84}']);
+    expect(r.note).toMatch(/navigation bar's back button "Back"/);
+  });
+
+  it('swipes in from the left edge when there is no back button', async () => {
+    const {ui, calls} = await device(pushed.slice(3));
+    const r = await ui.key(['back']);
+    expect(calls).toEqual(['swipe {"x1":1,"y1":437,"x2":302,"y2":437,"duration":300}']);
+    expect(r.note).toMatch(/swiped in from the left edge/);
+  });
+});

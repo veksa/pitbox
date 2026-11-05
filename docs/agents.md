@@ -36,7 +36,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - **Apple simulators:** the same tools. `device` takes a simulator name or udid, `install` a `.app` from a
   simulator build. The first UI call builds and starts the XCUITest runner (about 15 s once, then cached).
   XCUITest cannot hold a finger between calls (`touch`), and `network`, `perf`, display size and animations
-  are reported as unsupported. Apple TV has no touch: drive it with `key`. On iPhone and iPad simulators
+  are reported as unsupported. iOS has no back key: `key back` does what a person does instead — presses the
+  navigation bar's back button, or swipes in from the left edge when there is none — and its note says which.
+  Apple TV has no touch: drive it with `key`. On iPhone and iPad simulators
   `rotate` turns the device (an error when the app stays as it was), and iPad takes `press kind=right|hover`,
   `swipe via=wheel` and `key keys=["meta+k"]`; the watch takes `swipe via=rotary`. A foldable iPhone poses
   as in Xcode's device window: `device action=posture value=closed|half|open|<degrees> [fast|medium|slow]`

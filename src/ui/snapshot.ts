@@ -82,6 +82,30 @@ export type Snapshot = {
 };
 
 const has = (n: UiNode, flag: string) => (n.f ?? '').includes(flag);
+
+/**
+ * The back button of the navigation bar on top, for `key back` where the platform has no back key (iOS): UIKit's
+ * own (`BackButton`), or else the leftmost button of a navigation bar when it sits at the bar's start. The last bar
+ * in reading order is the one on top (a pushed screen, the detail of a split view).
+ */
+export const backButton = (snap: Pick<Snapshot, 'nodes'>): number | undefined => {
+  const bars = snap.nodes.flatMap((n, i) => (n.c === 'NavigationBar' ? [i] : []));
+  const inBar = (i: number, bar: number) => {
+    for (let k = snap.nodes[i]!.p, seen = 0; k >= 0 && seen < 64; k = snap.nodes[k]!.p, seen++) if (k === bar) return true;
+    return false;
+  };
+  for (const bar of bars.reverse()) {
+    const buttons = snap.nodes.flatMap((n, i) => (n.c === 'Button' && inBar(i, bar) ? [i] : []));
+    const own = buttons.find(i => snap.nodes[i]!.id === 'BackButton');
+    if (own !== undefined) return own;
+    const [x1, , x2] = snap.nodes[bar]!.b;
+    const first = buttons.sort((a, b) => snap.nodes[a]!.b[0] - snap.nodes[b]!.b[0])[0];
+    if (first !== undefined && snap.nodes[first]!.b[2] <= x1 + (x2 - x1) / 3) return first;
+  }
+  // A bar that is not one to the runner (a header drawn by JS) still often carries UIKit's id for its back button.
+  const any = snap.nodes.findLastIndex(n => n.c === 'Button' && n.id === 'BackButton');
+  return any >= 0 ? any : undefined;
+};
 export const interactive = (n: UiNode) => /[clesxX]/.test(n.f ?? '');
 
 const role = (n: UiNode): string => {

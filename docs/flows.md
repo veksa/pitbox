@@ -92,7 +92,7 @@ Every action waits for the UI to settle before the next step.
 | `doubletap <selector>` | two taps 90 ms apart (a real double tap) |
 | `fill <selector> "text"` | taps the field and replaces its text |
 | `type "text"` | appends text to the focused field |
-| `key <key>…` | presses keys in order: `back home up down left right center enter del menu search`, keyboard keys (`tab space escape page_up page_down`), media and TV remote keys (`play pause playpause next previous rewind fast_forward volume_up volume_down mute channel_up channel_down guide info captions settings`), watch buttons (`stem_primary stem_1 stem_2`), combinations (`ctrl+c`, `ctrl+shift+tab`, `alt+f4`), or a keycode number |
+| `key <key>…` | presses keys in order (`back` on iOS, which has no back key: the navigation bar's back button, or a swipe in from the left edge): `back home up down left right center enter del menu search`, keyboard keys (`tab space escape page_up page_down`), media and TV remote keys (`play pause playpause next previous rewind fast_forward volume_up volume_down mute channel_up channel_down guide info captions settings`), watch buttons (`stem_primary stem_1 stem_2`), combinations (`ctrl+c`, `ctrl+shift+tab`, `alt+f4`), or a keycode number |
 | `swipe up\|down\|left\|right [ms]` | swipes across the screen; the duration (default 300 ms) sets the velocity |
 | `swipe x1,y1,x2,y2 [ms]` | swipes between two points |
 | `scroll <direction> until <selector>` | swipes until the target is on screen (stops when the content stops moving, at most 25 swipes) |
