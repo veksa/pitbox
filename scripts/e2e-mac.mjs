@@ -61,9 +61,14 @@ try {
   // Finder in front, as a person's terminal would be: the press brings the app forward first, and lands.
   execFileSync('open', ['-a', 'Finder']);
   await new Promise(r => setTimeout(r, 800));
+  // The main window, whichever window the smoke flow left in front.
+  pitbox(['window', 'PitboxExample', '--device', 'mac']);
   pitbox(['fill', 'id=name', 'Front', '--device', 'mac']);
+  execFileSync('open', ['-a', 'Finder']);
+  await new Promise(r => setTimeout(r, 800));
   const press = pitbox(['press', 'id=greet', '--device', 'mac']);
   const front = pitbox(['run', '--steps', 'expect text="Hello, Front"', '--device', 'mac']);
+  pitbox(['window', 'front', '--device', 'mac']);
   check('input with another app in front brings the app forward first', press.code === 0 && front.code === 0, `${press.out}\n${front.out}`.split('\n').slice(0, 4).join(' '));
 
   step('images of the window');
