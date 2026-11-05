@@ -514,10 +514,13 @@ final class Commands {
       }
     }
     let before = req["append"] as? Bool ?? false ? ((field.value as? String) ?? "") : ""
+    if field.elementType == .secureTextField {
+      return try secureText(field, text, held: before == (field.placeholderValue ?? "") ? 0 : before.count)
+    }
     if !text.isEmpty { field.typeText(text) }
     // A controlled React Native input re-renders between keystrokes and can drop one that XCUITest typed
     // meanwhile. Checked, and typed again key by key when the field does not hold what was typed.
-    if field.elementType != .secureTextField, let got = field.value as? String, got != before + text {
+    if let got = field.value as? String, got != before + text {
       let shown = got == (field.placeholderValue ?? "") ? "" : got
       if !shown.isEmpty { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: shown.count)) }
       for ch in before + text {
@@ -527,6 +530,35 @@ final class Commands {
       return ["set": true, "retyped": true]
     }
     return ["set": true]
+  }
+
+  /// A secure field reports only bullets, one per character, so what it holds is checked by their count.
+  /// XCUITest types into it by pressing the software keyboard's keys, and a character the current layout has no
+  /// key for is dropped without an error: on a Cyrillic keyboard only the digits and punctuation of a Latin
+  /// password arrive. The text then goes in through the pasteboard and ⌘V — a paste the person started from the
+  /// keyboard, which iOS does not ask about — and the pasteboard gets back what it held.
+  private func secureText(_ field: XCUIElement, _ text: String, held: Int) throws -> [String: Any] {
+    // An empty field reports its placeholder as its value.
+    let count = { () -> Int in
+      let value = (field.value as? String) ?? ""
+      return value == (field.placeholderValue ?? "") ? 0 : value.count
+    }
+    if !text.isEmpty { field.typeText(text) }
+    let typed = count()
+    if typed == held + text.count { return ["set": true] }
+    #if os(iOS) || os(visionOS)
+    if typed > held { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed - held)) }
+    let board = UIPasteboard.general
+    let saved = board.items
+    board.string = text
+    field.typeKey("v", modifierFlags: .command)
+    board.items = saved
+    let pasted = count()
+    if pasted == held + text.count { return ["set": true, "pasted": true] }
+    throw RunnerError("the secure field holds \(pasted) characters, not \(held + text.count): neither the keyboard nor a paste put the text in")
+    #else
+    throw RunnerError("the secure field holds \(typed) characters, not \(held + text.count): the keyboard has no keys for some of them")
+    #endif
   }
 
   /// Android key codes, so flows stay the same across platforms.
