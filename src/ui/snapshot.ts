@@ -29,6 +29,8 @@ const SYSTEM_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinsta
 const PERMISSION_APP = /^com\.(google\.)?android\.(permissioncontroller|packageinstaller)$/;
 // The process an Apple runner reads system alerts from (permissions, "Open in …?"): iOS's shell, visionOS's.
 const SHELL_ALERT = /^com\.apple\.(springboard|RealityNotifications)$/;
+// An alert or an action sheet the app presents (Apple runner node types): while it is up, nothing behind it takes a tap.
+const MODAL = /^(Alert|Sheet)$/;
 const SCROLL_BAR = /^(Vertical|Horizontal) scroll bar, (\d+) pages?$/;
 
 /** The question of a runtime permission request over the app ("Allow MyApp to send you notifications?"), if any. */
@@ -279,7 +281,8 @@ const centre = (b: Bounds) => ({x: Math.round((b[0] + b[2]) / 2), y: Math.round(
 /**
  * Resolves a selector against a snapshot:
  * `@e12` · `id=submit` · `text=Continue` / `text~=Contin` · `label=Close` / `label~=…` · `540,1200` · bare words
- * (id, text or label, exact first, then contains). Several matches prefer interactive nodes, then reading order.
+ * (id, text or label, exact first, then contains). Several matches prefer a node of an alert or a sheet on top
+ * (whatever matches behind it cannot be tapped), then interactive nodes, then reading order.
  */
 export const resolveTarget = (snap: Snapshot, selector: string): Target => {
   const sel = selector.trim();
@@ -313,7 +316,19 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
     const prompt = permissionPrompt(snap);
     throw new Error(`nothing matches "${sel}"${prompt ? ` — a permission request is on top: "${prompt}"` : ''}`);
   }
-  hits.sort((a, b) => Number(interactive(b.n)) - Number(interactive(a.n)));
+  // Android lists a dialog's window first, so reading order already puts it ahead. An Apple runner lists an app's
+  // alert after the screen it covers and the shell's alert after the app: a button there that repeats a row behind
+  // it ("Sign out" over the "Sign out" row) would lose to the covered row.
+  const onTop = (i: number) => {
+    if (SHELL_ALERT.test(snap.windows[snap.nodes[i]!.w]?.pkg ?? '')) return true;
+    const seen = new Set<number>();
+    for (let k = i; k >= 0 && !seen.has(k); k = snap.nodes[k]?.p ?? -1) {
+      seen.add(k);
+      if (MODAL.test(snap.nodes[k]!.c)) return true;
+    }
+    return false;
+  };
+  hits.sort((a, b) => Number(onTop(b.i)) - Number(onTop(a.i)) || Number(interactive(b.n)) - Number(interactive(a.n)));
   const best = hits[0]!;
   return {node: best.n, index: best.i, ref: snap.refOf.get(best.i), ...centre(best.n.b)};
 };

@@ -84,6 +84,25 @@ describe('snapshot', () => {
     expect(() => resolveTarget(snap, '@e99')).toThrow(/fresh one/);
   });
 
+  it('prefers the button of an alert on top to the row behind it with the same text', () => {
+    const w: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}, {type: 'app', title: '', pkg: 'com.apple.springboard'}];
+    const alert = buildSnapshot(w, [
+      {p: -1, w: 0, c: 'Other', b: [0, 0, 400, 800]},
+      {p: 0, w: 0, c: 'Button', b: [0, 600, 400, 650], t: 'Sign out', id: 'settings-sign-out', f: 'c'},
+      {p: 0, w: 0, c: 'Alert', b: [60, 300, 340, 500], t: 'Sign out?'},
+      {p: 2, w: 0, c: 'Button', b: [60, 450, 200, 500], t: 'Cancel', f: 'c'},
+      {p: 2, w: 0, c: 'Button', b: [200, 450, 340, 500], t: 'Sign out', f: 'c'},
+      {p: 0, w: 0, c: 'Button', b: [0, 700, 400, 750], t: 'Allow', f: 'c'},
+      {p: -1, w: 1, c: 'Button', b: [200, 400, 340, 440], t: 'Allow', f: 'c'},
+    ]);
+    expect(resolveTarget(alert, 'text=Sign out').index).toBe(4);
+    expect(resolveTarget(alert, 'Sign out').index).toBe(4);
+    // The shell's alert is above the whole app.
+    expect(resolveTarget(alert, 'text=Allow').index).toBe(6);
+    // A match only behind the alert is still found.
+    expect(resolveTarget(alert, 'id=settings-sign-out').index).toBe(1);
+  });
+
   it('finds a control by the label folded in from its children, as its line quotes it', () => {
     const folded = buildSnapshot(windows, [
       {p: -1, w: 1, c: 'View', b: [0, 0, 200, 100], f: 'c'},
