@@ -44,7 +44,7 @@ final class Commands {
     try Host.needAccessibility()
     // An app that is gone (it crashed, it was quit) shows nothing rather than failing the read: the action that
     // ended it settles, and its crash comes back with it.
-    if (cmd == "tree" || cmd == "idle" || cmd == "info") && (try? running(req)) == nil {
+    if (cmd == "tree" || cmd == "idle" || cmd == "info") && windowless(req) {
       let screen = NSScreen.main?.frame.size ?? .zero
       switch cmd {
       case "tree": return ["windows": [["type": "app", "title": "not running", "pkg": req["app"] as? String ?? ""]], "nodes": [[String: Any]]()]
@@ -59,7 +59,13 @@ final class Commands {
       return ["width": Int(f.width.rounded()), "height": Int(f.height.rounded()), "platform": "macos", "version": runnerVersion, "window": Ax.string(Ax.attr(w, kAXTitleAttribute))]
     case "windows": return ["windows": Ax.children(t.ax, kAXWindowsAttribute).map { describeWindow($0) }]
     case "tree": return try tree(t, req, maxAge: 0.05).value
-    case "idle": return ["idle": try idle(t, req, quiet: double(req, "quiet", 300) / 1000, timeout: double(req, "timeout", 3000) / 1000)]
+    case "idle":
+      do {
+        return ["idle": try idle(t, req, quiet: double(req, "quiet", 300) / 1000, timeout: double(req, "timeout", 3000) / 1000)]
+      } catch where windowless(req) {
+        // The app lost its last window while it was watched (it crashed, it quit): nothing more will change.
+        return ["idle": true]
+      }
     case "focus": return try focus(t, req)
     case "foreground": return ["foreground": foreground(req, timeout: double(req, "timeout", 5000) / 1000)]
     case "activate":
@@ -90,6 +96,12 @@ final class Commands {
   }
 
   // MARK: the app and its windows
+
+  /// Not running, or running with no window (a crash on its way, a quit in progress).
+  private func windowless(_ req: [String: Any]) -> Bool {
+    guard let app = try? running(req) else { return true }
+    return Ax.children(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute).isEmpty
+  }
 
   private func running(_ req: [String: Any]) throws -> NSRunningApplication {
     guard let id = req["app"] as? String, !id.isEmpty else { throw RunnerError("no app: set the bundle id in mac.<name>.app") }
