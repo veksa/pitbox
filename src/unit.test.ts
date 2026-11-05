@@ -437,3 +437,12 @@ describe('the device list', () => {
     expect(formatResult('devices', {devices: [], avds: [], simulators: [], simulatorsError: 'the Mac at http://mac.example.test:7700 refused the token'})).toBe('no devices online\n✗ simulators: the Mac at http://mac.example.test:7700 refused the token');
   });
 });
+
+describe('the npm package', () => {
+  it('ships every Apple runner source directory that pitbox builds on the Mac', () => {
+    const files: string[] = JSON.parse(fs.readFileSync('package.json', 'utf8')).files;
+    const shipped = (p: string) => files.some(f => f === p || f.startsWith(`${p}/`) || p.startsWith(`${f}/`));
+    const missing = fs.readdirSync('runners/apple').filter(e => !e.startsWith('.')).map(e => `runners/apple/${e}`).filter(p => !shipped(p));
+    expect(missing).toEqual([]);
+  });
+});

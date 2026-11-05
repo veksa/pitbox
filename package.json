@@ -22,6 +22,7 @@
     "dist",
     "docs",
     "runners/android/pitbox-runner.apk",
+    "runners/apple/Fold",
     "runners/apple/Host",
     "runners/apple/Runner",
     "runners/apple/Mac",
