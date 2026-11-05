@@ -103,6 +103,23 @@ describe('snapshot', () => {
     expect(resolveTarget(alert, 'id=settings-sign-out').index).toBe(1);
   });
 
+  it("prefers the button of React Native's alert, listed after the screen and nested in its scroll views", () => {
+    // As an iOS runner reads Alert.alert: the screen stays in the tree, the alert follows it in the same window
+    // with its title and its buttons each in a scroll view of their own.
+    const rn = buildSnapshot([{type: 'app', title: '', pkg: 'com.example.app'}], [
+      {p: -1, w: 0, c: 'Other', b: [0, 0, 402, 874], id: 'content-list'},
+      {p: 0, w: 0, c: 'Button', b: [16, 400, 386, 440], t: 'Remove', id: 'remove', f: 'c'},
+      {p: -1, w: 0, c: 'Alert', b: [41, 388, 361, 514], t: 'Remove the row?'},
+      {p: 2, w: 0, c: 'ScrollView', b: [41, 388, 361, 434], f: 's'},
+      {p: 3, w: 0, c: 'Text', b: [71, 410, 331, 430], t: 'Remove the row?'},
+      {p: 2, w: 0, c: 'ScrollView', b: [41, 434, 361, 514], f: 's'},
+      {p: 5, w: 0, c: 'Button', b: [57, 450, 197, 498], t: 'Cancel', f: 'c'},
+      {p: 5, w: 0, c: 'Button', b: [205, 450, 345, 498], t: 'Remove', f: 'c'},
+    ]);
+    expect(resolveTarget(rn, 'text=Remove').index).toBe(7);
+    expect(resolveTarget(rn, 'Remove').index).toBe(7);
+  });
+
   it('finds a control by the label folded in from its children, as its line quotes it', () => {
     const folded = buildSnapshot(windows, [
       {p: -1, w: 1, c: 'View', b: [0, 0, 200, 100], f: 'c'},
