@@ -50,7 +50,7 @@ services: {
 | `cwd`, `env` | working directory and extra environment |
 | `health` | probe: `http(s)://…` (any answer below 500), `tcp:<port>` / `tcp:<host>:<port>`, `docker:<container>` (running, and healthy when it has a health check), `cmd:<command>` (exit 0) |
 | `expose` | host port(s) devices must reach; forwarded to every device |
-| `dependsOn` | services that start first (and stop after) |
+| `dependsOn` | services that start first (and stop after). When a service fails, `up` skips only the services that depend on it; the rest still start |
 | `startTimeout` | seconds to wait for the probe (default 120) |
 | `autostart` | started by a bare `up` (default true) |
 

@@ -73,6 +73,23 @@ describe('services', () => {
     process.kill(Number(fs.readFileSync(path.join(dir, 'bg.pid'), 'utf8')));
   }, 30_000);
 
+  it('skips only the dependents of a service that fails, and starts the services that do not need it', async () => {
+    const [dead, b] = [await freePort(), await freePort()];
+    const m = new ServiceManager(ctx, {
+      broken: {start: 'exit 1', health: `tcp:${dead}`, startTimeout: 10},
+      needsBroken: {start: server(dead), health: `tcp:${dead}`, dependsOn: ['broken']},
+      alone: {start: server(b), health: `tcp:${b}`},
+    });
+    managers.push(m);
+    const up = await m.up();
+    expect(up.map(s => [s.name, s.status, s.status === 'stopped' ? s.detail : undefined])).toEqual([
+      ['broken', 'failed', undefined],
+      ['needsBroken', 'stopped', 'skipped: broken failed'],
+      ['alone', 'up', undefined],
+    ]);
+    await m.down();
+  }, 30_000);
+
   it('fails without a start command when nothing answers', async () => {
     const port = await freePort();
     const m = new ServiceManager(ctx, {ext: {health: `tcp:${port}`}});

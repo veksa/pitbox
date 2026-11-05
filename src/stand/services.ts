@@ -178,14 +178,19 @@ export class ServiceManager {
     const requested = names.length ? names : this.names().filter(n => this.#services[n]!.autostart !== false);
     const order = orderServices(this.#services, requested);
     const results: ServiceState[] = [];
+    // A failed service blocks only what depends on it (through any chain); the rest still comes up. The order
+    // has dependencies first, so a blocked dependency is known before its dependents.
+    const blocked = new Map<string, string>();
     for (const name of order) {
+      const cause = (this.#services[name]!.dependsOn ?? []).map(d => blocked.get(d)).find(c => c !== undefined);
+      if (cause !== undefined) {
+        blocked.set(name, cause);
+        results.push(this.#set(name, {status: 'stopped', detail: `skipped: ${cause} failed`}));
+        continue;
+      }
       const result = await this.#upOne(name);
       results.push(result);
-      if (result.status === 'failed' || result.status === 'down') {
-        const rest = order.slice(order.indexOf(name) + 1);
-        for (const r of rest) results.push(this.#set(r, {status: 'stopped', detail: `skipped: ${name} failed`}));
-        break;
-      }
+      if (result.status === 'failed' || result.status === 'down') blocked.set(name, name);
     }
     return results;
   }
