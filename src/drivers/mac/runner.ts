@@ -222,7 +222,7 @@ export class MacRunner {
         reject(new MacError(`Mac runner: ${cmd} timed out after ${timeoutMs} ms`, 'the app may be hung: `app action=stop`, then open it again'));
       }, Math.max(timeoutMs, 5000));
       this.#pending.set(id, {resolve: v => resolve(v as T), reject, timer});
-      child.stdin!.write(`${JSON.stringify({id, cmd, app: this.cfg.app, ...(this.window ? {window: this.window} : {}), ...extra})}\n`);
+      child.stdin!.write(`${JSON.stringify({id, cmd, app: this.cfg.app, ...extra, ...(this.window ? {win: this.window} : {})})}\n`);
     });
   }
 

@@ -119,11 +119,11 @@ describe('mac apps', () => {
     const runner = new MacRunner('main', {app: 'com.example.app', window: 'Settings'}, dir, async () => fake);
     try {
       const tree = await runner.call<{echo: Record<string, unknown>}>('tree');
-      expect(tree.echo).toMatchObject({cmd: 'tree', app: 'com.example.app', window: 'Settings'});
+      expect(tree.echo).toMatchObject({cmd: 'tree', app: 'com.example.app', win: 'Settings'});
       runner.window = undefined;
       const key = await runner.call<{echo: Record<string, unknown>}>('key', {code: 39, meta: 0x30000});
       expect(key.echo).toMatchObject({cmd: 'key', vk: 40, flags: 0x100000});
-      expect(key.echo.window).toBeUndefined();
+      expect(key.echo.win).toBeUndefined();
       await expect(runner.call('fail')).rejects.toThrow('nope');
     } finally {
       await runner.stop();

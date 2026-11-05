@@ -1,5 +1,5 @@
 // The runner's commands for a Mac app. Every request names the app (`app`, a bundle id) and may name a window
-// (`window`: a title, part of one, `#2` for the second in the app's list, or `front`). Points are relative to that
+// (`win`: a title, part of one, `#2` for the second in the app's list, or `front`). Points are relative to that
 // window's top left, so its image, its tree and its input agree as a phone's screen does.
 
 import AppKit
@@ -121,7 +121,7 @@ final class Commands {
   /// The window a request is about: the named one, else the app's focused window, else its main one.
   private func selected(_ t: Target, _ req: [String: Any]) throws -> (AXUIElement, CGRect) {
     let all = Ax.children(t.ax, kAXWindowsAttribute)
-    let want = (req["window"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+    let want = (req["win"] as? String ?? "").trimmingCharacters(in: .whitespaces)
     let title = { (w: AXUIElement) in Ax.string(Ax.attr(w, kAXTitleAttribute)) }
     var hit: AXUIElement?
     if want.isEmpty || want == "front" {
