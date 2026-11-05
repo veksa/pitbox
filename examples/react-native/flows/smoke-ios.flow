@@ -8,6 +8,10 @@ expect text="Hello, Ada"
 press id=fetch
 wait text~="hello from the stand" 10
 tool hits contains "1"
+# React Native's alert comes after the screen it covers: its "Remove" wins over the button behind it.
+press id=remove
+press text=Remove
+expect text="removed"
 scroll down until text="Row 40"
 goto detail id=42
 wait text="Detail 42" 10

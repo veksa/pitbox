@@ -2,7 +2,7 @@
 // dev server side (connect link, bytecode, the in-app channel, symbolicated stacks) is checked too.
 
 import React, {useEffect, useState} from 'react';
-import {BackHandler, Button, FlatList, Linking, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
+import {Alert, BackHandler, Button, FlatList, Linking, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
 const rows = Array.from({length: 40}, (_, i) => `Row ${i + 1}`);
@@ -23,6 +23,13 @@ function failOnPurpose(): never {
 function Main({onFetch, response}: {onFetch: () => void; response: string}) {
   const [name, setName] = useState('');
   const [greeting, setGreeting] = useState('');
+  const [removed, setRemoved] = useState('');
+  // An alert whose button repeats the button behind it: a press must reach the alert's own.
+  const remove = () =>
+    Alert.alert('Remove the row?', undefined, [
+      {text: 'Cancel', style: 'cancel', onPress: () => setRemoved('kept')},
+      {text: 'Remove', style: 'destructive', onPress: () => setRemoved('removed')},
+    ]);
   const greet = () => {
     if (!name.trim()) console.warn('greeting without a name');
     setGreeting(`Hello, ${name.trim() || 'stranger'}`);
@@ -39,6 +46,8 @@ function Main({onFetch, response}: {onFetch: () => void; response: string}) {
       {response ? <Text testID="response">{response}</Text> : null}
       <Button testID="js-error" title="Throw a JS error" onPress={failOnPurpose} />
       <Button testID="busy" title="Work hard" onPress={() => workHard()} />
+      <Button testID="remove" title="Remove" onPress={remove} />
+      {removed ? <Text testID="removed">{removed}</Text> : null}
     </View>
   );
 }
