@@ -2,6 +2,9 @@
 // list, a request to the stand, a crash — and a deep link target. Ids match the Android example's.
 
 import SwiftUI
+#if os(iOS)
+import AVFoundation
+#endif
 #if os(visionOS)
 import RealityKit
 #endif
@@ -61,6 +64,7 @@ struct MainView: View {
   @State private var shortcut = ""
   @State private var confirming = false
   @State private var removed = ""
+  @State private var camera = ""
 
   var body: some View {
     GeometryReader { g in
@@ -80,6 +84,11 @@ struct MainView: View {
             Button("Cancel", role: .cancel) { removed = "kept" }
           }
         Text(removed).accessibilityIdentifier("removed")
+        // A system permission request: its alert is the shell's, over the app.
+        Button("Camera") {
+          AVCaptureDevice.requestAccess(for: .video) { ok in DispatchQueue.main.async { camera = ok ? "camera allowed" : "camera denied" } }
+        }.accessibilityIdentifier("camera")
+        Text(camera).accessibilityIdentifier("camera_result")
         NavigationLink("Settings") { Text("Settings").font(.largeTitle).accessibilityIdentifier("settings_screen").navigationTitle("Settings") }
           .accessibilityIdentifier("settings")
         #endif

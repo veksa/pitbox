@@ -8,6 +8,9 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!-- The camera, for a system permission request over the app. -->
+	<key>NSCameraUsageDescription</key>
+	<string>The example asks for the camera so a flow can answer a permission request.</string>
 	<!-- More than one window: a headset's second window. -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>

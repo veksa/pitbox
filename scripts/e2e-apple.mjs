@@ -28,7 +28,7 @@ const products = path.join(example, 'build', 'Build', 'Products');
 
 /** Per kind: the build that runs there, its flows, and the flows that must fail with the app's crash. */
 const PLAN = {
-  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'modal'], fails: ['crash'], features: true},
+  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'modal', 'permission'], fails: ['crash'], features: true},
   foldable: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'fold'], fails: ['crash'], cover: true},
   tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'pointer', 'modal'], fails: []},
   tv: {platform: 'tvOS Simulator', scheme: 'PitboxExample', app: 'Debug-appletvsimulator/PitboxExample.app', flows: ['tv'], fails: [], focusMap: true},
@@ -100,6 +100,8 @@ for (const kind of examples.includes('apple') ? wanted : []) {
     if (!wasBooted) console.log(must(['boot', sim.udid]));
     console.log(must(['install', app, '--device', sim.udid]));
     for (const flow of plan.flows) {
+      // The camera request asks again only once its answer is forgotten.
+      if (flow === 'permission') execFileSync('xcrun', ['simctl', 'privacy', sim.udid, 'reset', 'camera', 'dev.pitbox.example']);
       const r = pitbox(['run', flow, '--device', sim.udid]);
       console.log(r.out.split('\n').slice(0, 6).join('\n'));
       checks.push({name: flow, ok: r.code === 0 && r.out.startsWith('✓')});

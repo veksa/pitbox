@@ -13,6 +13,7 @@ that names itself for accessibility.
 | `smoke` | iPhone, foldable, iPad, Vision Pro | input, the stand, a project tool, scrolling, a deep link and its question |
 | `rotate` | iPhone, iPad | the layout follows a turn |
 | `modal` | iPhone, iPad | an alert's button over the same text behind it, `key back` on a pushed screen |
+| `permission` | iPhone | the system's camera request over the app, answered by its button's id |
 | `fold` | foldable | the hinge's poses, turns and the lit screen |
 | `pointer` | iPad | the pointer's hover, a context menu, the wheel, ⌘ shortcuts |
 | `tv` | Apple TV | the Siri Remote and the focus walk |

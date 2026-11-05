@@ -1,0 +1,7 @@
+# A system permission request over the app (the e2e run resets the camera permission first): its buttons are the
+# shell's, pressed by id.
+open!
+wait id=title 30
+press id=camera
+press id=kTCCServiceCamera-deny-button
+expect text="camera denied"

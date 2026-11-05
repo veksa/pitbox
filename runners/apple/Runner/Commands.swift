@@ -89,7 +89,9 @@ final class Commands {
       // point is tapped through the app, and XCTest first clears an alert that blocks the app on its own (UI
       // interruption handling) and then puts the tap on the app underneath.
       if (req["window"] as? String) == Self.alertsId, let label = req["label"] as? String, !label.isEmpty {
-        let button = systemAlert().buttons[label]
+        // iOS draws an alert's button as a button inside a button of the same name: the query matches both, and
+        // an element that is not the only match cannot be tapped.
+        let button = systemAlert().buttons[label].firstMatch
         if button.exists {
           if cmd == "tap" { button.tap() } else if cmd == "doubletap" { button.doubleTap() } else { button.press(forDuration: double(req, "hold", 800) / 1000) }
           return [:]
@@ -335,6 +337,15 @@ final class Commands {
         if !n.isEnabled { flags += "d" }
         if type == .secureTextField { flags += "p" }
         if !flags.isEmpty { o["f"] = flags }
+        // The same element twice (a system alert's button inside a button of the same name and frame, or twin
+        // siblings) is one line: its children hang under the line already there.
+        if let twin = Self.twin(o, in: out) {
+          index = twin
+          for child in n.children {
+            walk(child, parent: index, window: window, screen: screen, all: all, out: &out, hasher: &hasher, depth: depth + 1, focused: passFocus || (focused && index == parent), echo: n.label.isEmpty ? nil : (n.label, f))
+          }
+          return
+        }
         hasher.combine(b)
         hasher.combine(label)
         hasher.combine(value)
@@ -346,6 +357,21 @@ final class Commands {
     for child in n.children {
       walk(child, parent: index, window: window, screen: screen, all: all, out: &out, hasher: &hasher, depth: depth + 1, focused: passFocus || (focused && index == parent), echo: n.label.isEmpty ? nil : (n.label, f))
     }
+  }
+
+  /// A line already listed that `o` repeats: its parent, or one of the last siblings before it.
+  private static func twin(_ o: [String: Any], in out: [[String: Any]]) -> Int? {
+    func equal(_ a: [String: Any], _ b: [String: Any]) -> Bool {
+      ["c", "id", "t", "d", "f"].allSatisfy { (a[$0] as? String) == (b[$0] as? String) } && (a["b"] as? [Int]) == (b["b"] as? [Int]) && (a["w"] as? Int) == (b["w"] as? Int)
+    }
+    guard let parent = o["p"] as? Int else { return nil }
+    if parent >= 0, equal(out[parent], o) { return parent }
+    var k = out.count - 1
+    while k > parent && k >= out.count - 8 {
+      if (out[k]["p"] as? Int) == parent, equal(out[k], o) { return k }
+      k -= 1
+    }
+    return nil
   }
 
   private static func same(_ g: CGRect, _ f: CGRect) -> Bool {
