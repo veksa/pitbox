@@ -97,7 +97,7 @@ enum Shots {
     var luma: [Double] = [], diff: [Double] = []
     var prev: [UInt8]?
     for i in 0..<max(1, count) {
-      if i > 0 { Thread.sleep(forTimeInterval: interval) }
+      if i > 0 { pause(interval) }
       let cg = try capture(window)
       let scale = CGFloat(cg.width) / max(1, points.width)
       let px = try grey(cg, crop: bounds.map { toPixels($0, scale) }, cols: size, rows: size)

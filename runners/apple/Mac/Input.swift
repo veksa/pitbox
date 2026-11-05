@@ -25,10 +25,10 @@ enum Input {
     repeat {
       if Ax.frontPid() == t.pid {
         // The window server needs a moment to order the app's windows in front.
-        Thread.sleep(forTimeInterval: 0.1)
+        pause(0.1)
         return true
       }
-      Thread.sleep(forTimeInterval: 0.05)
+      pause(0.05)
     } while Date() < end
     return false
   }
@@ -55,7 +55,7 @@ enum Input {
 
   static func move(_ p: CGPoint) {
     mouse(.mouseMoved, p)
-    Thread.sleep(forTimeInterval: 0.03)
+    pause(0.03)
   }
 
   static func click(_ p: CGPoint, button: CGMouseButton = .left, count: Int = 1, hold: TimeInterval = 0.04) {
@@ -63,9 +63,9 @@ enum Input {
     move(p)
     for n in 1...max(1, count) {
       mouse(down, p, button, clicks: n)
-      Thread.sleep(forTimeInterval: hold)
+      pause(hold)
       mouse(up, p, button, clicks: n)
-      if n < count { Thread.sleep(forTimeInterval: 0.06) }
+      if n < count { pause(0.06) }
     }
   }
 
@@ -77,7 +77,7 @@ enum Input {
       guard let e = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: Int32(dy / Double(steps)), wheel2: Int32(dx / Double(steps)), wheel3: 0) else { return }
       e.location = p
       e.post(tap: .cghidEventTap)
-      Thread.sleep(forTimeInterval: max(0.01, seconds / Double(steps)))
+      pause(max(0.01, seconds / Double(steps)))
     }
   }
 
@@ -96,7 +96,7 @@ enum Input {
       e.flags = flags
       e.postToPid(t.pid)
     }
-    Thread.sleep(forTimeInterval: 0.02)
+    pause(0.02)
   }
 
   /// Characters as key events that carry their own text. Return and tab go as their keys.
@@ -111,7 +111,7 @@ enum Input {
         e.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
         e.postToPid(t.pid)
       }
-      Thread.sleep(forTimeInterval: 0.008)
+      pause(0.008)
     }
   }
 
@@ -128,7 +128,7 @@ enum Input {
     // V's key code, which is ⌘V on every layout: shortcuts are read from a Latin layout.
     key(t, 9, flags: .maskCommand)
     // The app reads the pasteboard when it handles the event, a moment later.
-    Thread.sleep(forTimeInterval: 0.3)
+    pause(0.3)
     board.clearContents()
     if !saved.isEmpty { board.writeObjects(saved) }
   }
@@ -138,7 +138,7 @@ enum Input {
     let end = Date().addingTimeInterval(seconds)
     repeat {
       if check() { return true }
-      Thread.sleep(forTimeInterval: 0.05)
+      pause(0.05)
     } while Date() < end
     return check()
   }

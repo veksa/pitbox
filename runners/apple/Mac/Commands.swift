@@ -61,7 +61,7 @@ final class Commands {
     case "tree": return try tree(t, req, maxAge: 0.05).value
     case "idle": return ["idle": try idle(t, req, quiet: double(req, "quiet", 300) / 1000, timeout: double(req, "timeout", 3000) / 1000)]
     case "focus": return try focus(t, req)
-    case "foreground": return ["foreground": foreground(t, timeout: double(req, "timeout", 5000) / 1000)]
+    case "foreground": return ["foreground": foreground(req, timeout: double(req, "timeout", 5000) / 1000)]
     case "activate":
       try Input.front(t)
       return [:]
@@ -93,7 +93,10 @@ final class Commands {
 
   private func running(_ req: [String: Any]) throws -> NSRunningApplication {
     guard let id = req["app"] as? String, !id.isEmpty else { throw RunnerError("no app: set the bundle id in mac.<name>.app") }
-    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first(where: { !$0.isTerminated }) else {
+    // AppKit's view of a process that quit lags behind: the newest one that is still alive.
+    let alive = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { !$0.isTerminated && kill($0.processIdentifier, 0) == 0 }
+    guard let app = alive.max(by: { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }) else {
+
       throw RunnerError("\(id) is not running\nhint: app action=open starts it")
     }
     return app
@@ -187,7 +190,7 @@ final class Commands {
     let deadline = Date().addingTimeInterval(timeout)
     var prev = try tree(t, req, maxAge: 0).hasher.finalize()
     while Date() < deadline {
-      Thread.sleep(forTimeInterval: min(quiet, max(0, deadline.timeIntervalSinceNow)))
+      pause(min(quiet, max(0, deadline.timeIntervalSinceNow)))
       let next = try tree(t, req, maxAge: 0).hasher.finalize()
       if next == prev { return true }
       prev = next
@@ -210,11 +213,13 @@ final class Commands {
     return ["input": o]
   }
 
-  private func foreground(_ t: Target, timeout: TimeInterval) -> Bool {
+  /// Waits for the app just launched to be in front with a window; the process is looked up again each time, as
+  /// the one of a relaunch replaces the one that quit.
+  private func foreground(_ req: [String: Any], timeout: TimeInterval) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     repeat {
-      if Ax.frontPid() == t.pid && !Ax.children(t.ax, kAXWindowsAttribute).isEmpty { return true }
-      Thread.sleep(forTimeInterval: 0.1)
+      if let t = try? target(req), Ax.frontPid() == t.pid && !Ax.children(t.ax, kAXWindowsAttribute).isEmpty { return true }
+      pause(0.1)
     } while Date() < deadline
     return false
   }
@@ -224,10 +229,12 @@ final class Commands {
     guard let id = req["app"] as? String, !id.isEmpty else { throw RunnerError("no app") }
     let apps = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { !$0.isTerminated }
     if apps.isEmpty { return ["running": false] }
-    let gone = { apps.allSatisfy { kill($0.processIdentifier, 0) != 0 } }
+    // Gone for the system too: launch services that still lists the app would hand an `open` to it as it dies.
+    let gone = { apps.allSatisfy { kill($0.processIdentifier, 0) != 0 && $0.isTerminated } }
+
     let wait = { (s: TimeInterval) -> Bool in
       let end = Date().addingTimeInterval(s)
-      while Date() < end { if gone() { return true }; Thread.sleep(forTimeInterval: 0.1) }
+      while Date() < end { if gone() { return true }; pause(0.1) }
       return gone()
     }
     apps.forEach { $0.terminate() }
@@ -265,7 +272,7 @@ final class Commands {
     if let focused = Ax.attr(t.ax, kAXFocusedWindowAttribute), CFEqual(focused, w) { return }
     AXUIElementPerformAction(w, kAXRaiseAction as CFString)
     _ = Ax.set(w, kAXMainAttribute, kCFBooleanTrue)
-    Thread.sleep(forTimeInterval: 0.15)
+    pause(0.15)
   }
 
   private func tap(_ cmd: String, _ t: Target, _ req: [String: Any]) throws -> [String: Any] {
