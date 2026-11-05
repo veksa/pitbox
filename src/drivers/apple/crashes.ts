@@ -24,7 +24,10 @@ type Ips = {
 
 export const reportsDir = () => path.join(os.homedir(), 'Library', 'Logs', 'DiagnosticReports');
 
-/** A crash report of `bundleId` on the simulator `udid` as an event, or undefined when it is someone else's. */
+/**
+ * A crash report of `bundleId` on the simulator `udid` as an event, or undefined when it is someone else's. An empty
+ * `udid` is the Mac itself: a report of an app that does not run in a simulator.
+ */
 export const parseIps = (text: string, bundleId: string | undefined, udid: string, fallbackAt: number): AppEvent | undefined => {
   const nl = text.indexOf('\n');
   if (nl < 0) return undefined;
@@ -38,7 +41,7 @@ export const parseIps = (text: string, bundleId: string | undefined, udid: strin
   }
   // 309 is a crash; hangs, jetsam and the like have other types.
   if (header.bug_type !== '309') return undefined;
-  if (!body.procPath?.includes(`/CoreSimulator/Devices/${udid}/`)) return undefined;
+  if (udid ? !body.procPath?.includes(`/CoreSimulator/Devices/${udid}/`) : !body.procPath || body.procPath.includes('/CoreSimulator/')) return undefined;
   const id = header.bundleID ?? body.bundleInfo?.CFBundleIdentifier;
   if (bundleId && id !== bundleId) return undefined;
   const images = body.usedImages ?? [];
@@ -57,8 +60,11 @@ export const parseIps = (text: string, bundleId: string | undefined, udid: strin
   return {at: Number.isFinite(at) ? at : fallbackAt, kind: 'crash', summary: summary || 'crash', lines: frames.slice(0, 15).map(frame)};
 };
 
+/** Whether the app runs, and whether its reports are slow to come (visionOS). */
+export type CrashProbe = {running: () => Promise<boolean>; slow: () => Promise<boolean>};
+
 export class AppleCrashWatcher {
-  readonly #driver: AppleDriver;
+  readonly #probe: CrashProbe;
   readonly #udid: string;
   readonly #bundleId?: string;
   readonly #dir: string;
@@ -66,8 +72,19 @@ export class AppleCrashWatcher {
   #wasRunning?: Promise<boolean>;
   readonly #seen = new Map<string, AppEvent | undefined>();
 
-  constructor(driver: AppleDriver, udid: string, bundleId?: string, dir = reportsDir()) {
-    this.#driver = driver;
+  /** `driver` reads a simulator; a probe stands for a Mac app (`udid` empty). */
+  constructor(driver: AppleDriver | CrashProbe, udid: string, bundleId?: string, dir = reportsDir()) {
+    this.#probe =
+      'simctl' in driver
+        ? {
+            running: async () => {
+              if (!bundleId) return false;
+              const r = await driver.simctl(['spawn', udid, 'launchctl', 'list'], {timeoutMs: 10_000});
+              return r.stdout.split('\n').some(l => l.includes(`UIKitApplication:${bundleId}[`) && /^\d+\s/.test(l));
+            },
+            slow: () => driver.simulators().then(sims => sims.find(s => s.udid === udid)?.kind === 'xr').catch(() => false),
+          }
+        : driver;
     this.#udid = udid;
     this.#bundleId = bundleId;
     this.#dir = dir;
@@ -85,10 +102,8 @@ export class AppleCrashWatcher {
     this.#wasRunning = front ? Promise.resolve(!!this.#bundleId && front.includes(this.#bundleId)) : this.#running().catch(() => false);
   }
 
-  async #running(): Promise<boolean> {
-    if (!this.#bundleId) return false;
-    const r = await this.#driver.simctl(['spawn', this.#udid, 'launchctl', 'list'], {timeoutMs: 10_000});
-    return r.stdout.split('\n').some(l => l.includes(`UIKitApplication:${this.#bundleId}[`) && /^\d+\s/.test(l));
+  #running(): Promise<boolean> {
+    return this.#probe.running();
   }
 
   #scan(since: number): AppEvent[] {
@@ -161,7 +176,7 @@ export class AppleCrashWatcher {
     const was = await this.#wasRunning;
     this.#wasRunning = undefined;
     if (found.length || !(was || final)) return found;
-    this.#slow ??= this.#driver.simulators().then(sims => sims.find(s => s.udid === this.#udid)?.kind === 'xr').catch(() => false);
+    this.#slow ??= this.#probe.slow().catch(() => false);
     const slow = await this.#slow;
     const gone = (slow && !!after && !!this.#bundleId && !after.includes(this.#bundleId)) || !(await this.#running().catch(() => true));
     // The app died during the action and its report is not written yet: it takes the reporter a few seconds.
