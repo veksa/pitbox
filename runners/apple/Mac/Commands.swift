@@ -38,6 +38,7 @@ final class Commands {
       let app = try? running(req)
       return app.map { ["pid": Int($0.processIdentifier)] } ?? [:]
     case "terminate": return try terminate(req)
+    case "dismissCrash": return ["dismissed": dismissCrash(req)]
     case "relays": return ["relayed": [Int]()]
     default: break
     }
@@ -108,7 +109,6 @@ final class Commands {
     // AppKit's view of a process that quit lags behind: the newest one that is still alive.
     let alive = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { !$0.isTerminated && kill($0.processIdentifier, 0) == 0 }
     guard let app = alive.max(by: { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }) else {
-
       throw RunnerError("\(id) is not running\nhint: app action=open starts it")
     }
     return app
@@ -236,6 +236,23 @@ final class Commands {
     return false
   }
 
+  /// Closes macOS's "<app> quit unexpectedly" panel about the app: while it is up no app can come to the front. It
+  /// is pressed away with its cancel button (Ignore), whatever the system's language.
+  private func dismissCrash(_ req: [String: Any]) -> Bool {
+    guard AXIsProcessTrusted(), let name = req["name"] as? String, !name.isEmpty else { return false }
+    var done = false
+    for center in NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.UserNotificationCenter") {
+      for w in Ax.children(AXUIElementCreateApplication(center.processIdentifier), kAXWindowsAttribute) {
+        let texts = Ax.children(w).filter { Ax.string(Ax.attr($0, kAXRoleAttribute)) == "AXStaticText" }.map { Ax.string(Ax.attr($0, kAXValueAttribute)) }
+        guard texts.contains(where: { $0.contains("«\(name)»") || $0.contains("\"\(name)\"") || $0.contains("“\(name)”") || $0.contains(" \(name) ") }) else { continue }
+        if let cancel = Ax.attr(w, kAXCancelButtonAttribute) {
+          done = AXUIElementPerformAction(cancel as! AXUIElement, kAXPressAction as CFString) == .success || done
+        }
+      }
+    }
+    return done
+  }
+
   /// Quits the app as a person would, then for good when it does not go.
   private func terminate(_ req: [String: Any]) throws -> [String: Any] {
     guard let id = req["app"] as? String, !id.isEmpty else { throw RunnerError("no app") }
@@ -243,7 +260,6 @@ final class Commands {
     if apps.isEmpty { return ["running": false] }
     // Gone for the system too: launch services that still lists the app would hand an `open` to it as it dies.
     let gone = { apps.allSatisfy { kill($0.processIdentifier, 0) != 0 && $0.isTerminated } }
-
     let wait = { (s: TimeInterval) -> Bool in
       let end = Date().addingTimeInterval(s)
       while Date() < end { if gone() { return true }; pause(0.1) }

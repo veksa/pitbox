@@ -238,12 +238,15 @@ export class MacRunner {
     if (appPath && !fs.existsSync(appPath)) throw new MacError(`no app at ${appPath}`, 'build it first, or drop mac.<name>.path to open the installed app by its bundle id');
     const link = target && /^[a-z][\w+.-]*:\/\//i.test(target) ? target : undefined;
     const args = link ? [link] : appPath ? [appPath] : ['-b', this.cfg.app];
+    // The panel macOS shows after a crash ("MyApp quit unexpectedly") keeps every app from the front.
+    const name = appPath ? path.basename(appPath).replace(/\.app$/, '') : undefined;
+    const dismissed = name ? (await this.call<{dismissed?: boolean}>('dismissCrash', {name}).catch(() => ({dismissed: false}))).dismissed : false;
     const r = await run('open', args, {timeoutMs: 60_000});
     if (r.code !== 0) throw new MacError(`open failed: ${(r.stderr || r.stdout).trim().split('\n').pop()}`, /Unable to find application/i.test(r.stderr) ? 'set mac.<name>.path to the built .app' : undefined);
     const front = await this.call<{foreground: boolean}>('foreground', {timeout: 15_000}, 20_000).catch(() => ({foreground: false}));
     const pid = (await this.call<{pid?: number}>('pid').catch(() => ({pid: undefined}))).pid;
     if (!front.foreground && pid === undefined) throw new MacError(`${this.cfg.app} did not start`, 'see `app action=logs`');
-    return {target: link ?? appPath ?? this.cfg.app, totalMs: Date.now() - t0, ...(pid ? {pid} : {})};
+    return {target: link ?? appPath ?? this.cfg.app, totalMs: Date.now() - t0, ...(pid ? {pid} : {}), ...(dismissed ? {note: 'closed the "quit unexpectedly" panel of an earlier crash'} : {})};
   }
 
   /** Quits the app (and kills it when it does not quit in a few seconds). */
