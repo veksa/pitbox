@@ -39,7 +39,7 @@ beforeAll(async () => {
     if (req.url?.startsWith('/hello')) {
       const name = new URL(req.url, 'http://x').searchParams.get('name');
       setTimeout(() => res.end(`Signed in as ${name}`), 200);
-    } else if (req.url === '/second') res.end('<!doctype html><title>Second</title><h2 data-testid="second">Second page</h2><button onclick="boom()">Break</button>');
+    } else if (req.url === '/second') res.end('<!doctype html><title>Second</title><h2 data-testid="second">Second page</h2><button onclick="boom()">Break</button><button onclick="setTimeout(() => location.reload(), 30)">Reload</button>');
     else res.setHeader('content-type', 'text/html').end(page);
   });
   await new Promise<void>(r => server.listen(port, '127.0.0.1', () => r()));
@@ -108,6 +108,15 @@ describe('a web app as a device', () => {
     expect(await runner.evaluate('fetch("/hello?name=a").then(r => r.text())')).toEqual({value: '"Signed in as a"'});
     expect(await runner.evaluate('(await fetch("/hello?name=b")).status')).toEqual({value: '200'});
     expect((await runner.evaluate('nope.x')).error).toMatch(/^ReferenceError: nope is not defined/);
+  });
+
+  it('presses a control that reloads the page (a sign-out) and reads the page that comes back', {timeout: 30_000}, async () => {
+    await runner.goto('/second');
+    for (let i = 0; i < 5; i++) {
+      const r = await ui.press('text=Reload');
+      expect(r.action).toBe('tap');
+      await ui.wait('id=second', {timeoutMs: 5000});
+    }
   });
 
   it('follows a link, goes back with the back key, and reports a page error with the action', {timeout: 30_000}, async () => {

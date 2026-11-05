@@ -82,6 +82,21 @@ export const webKey = (code: number, meta = 0): string => {
  * Runs in the page: the visible elements as UiNodes. An element becomes a node when it is interactive, carries text
  * of its own, a label, or a test id; its parent is the nearest such ancestor. Bounds are CSS pixels of the viewport.
  */
+/**
+ * `page.evaluate` that survives a navigation: a press that reloads or leaves the page (a sign-out) destroys the
+ * document the read started in. The read waits for the next document and runs again there.
+ */
+const evaluateAcrossNavigation = async <A, R>(page: Pw, fn: (arg: A) => R | Promise<R>, arg?: A): Promise<R> => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return (await page.evaluate(fn, arg)) as R;
+    } catch (error) {
+      if (attempt >= 4 || !/Execution context was destroyed|navigat/i.test(String((error as Error)?.message ?? error))) throw error;
+      await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+    }
+  }
+};
+
 function pageTree(): {windows: UiWindow[]; nodes: UiNode[]} {
   const out: any[] = [];
   const index = new Map<Element, number>();
@@ -364,7 +379,7 @@ export class WebRunner {
       case 'info':
         return {...this.viewport, density: 160 * (this.cfg.scale ?? 1), sdk: 0};
       case 'tree':
-        return (await page.evaluate(pageTree)) as Record<string, unknown>;
+        return (await evaluateAcrossNavigation(page, pageTree)) as Record<string, unknown>;
       case 'idle': {
         const quiet = Number(args.quiet ?? 300);
         const timeout = Number(args.timeout ?? 3000);
@@ -465,7 +480,7 @@ export class WebRunner {
         return {luma, diff};
       }
       case 'focus': {
-        const tree = (await page.evaluate(pageTree)) as {nodes: UiNode[]};
+        const tree = (await evaluateAcrossNavigation(page, pageTree)) as {nodes: UiNode[]};
         const input = tree.nodes.find(x => (x.f ?? '').includes('F'));
         return input ? {input} : {};
       }
