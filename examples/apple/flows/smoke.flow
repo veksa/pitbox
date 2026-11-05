@@ -1,10 +1,13 @@
-# The example app end to end: input, the stand on the Mac's network, scrolling, a deep link.
+# The example app end to end: input (a secure field too), the stand on the Mac's network, scrolling, a deep link.
 tool reset
 open!
 wait id=title 30
 fill id=name "Ada"
 press id=greet
 expect text="Hello, Ada"
+# A secure field holds the whole text even when the keyboard's layout has no keys for its letters.
+fill id=password "Secret-pass-1"
+expect text="Secret-pass-1"
 press id=fetch
 wait text~="hello from the stand" 10
 tool hits contains "1"

@@ -48,6 +48,7 @@ struct ExampleApp: App {
 
 struct MainView: View {
   @State private var name = ""
+  @State private var password = ""
   @State private var greeting = ""
   @State private var response = ""
   @State private var hovered = false
@@ -75,6 +76,9 @@ struct MainView: View {
         TextField("Your name", text: $name).accessibilityIdentifier("name")
         Button("Greet") { greeting = "Hello, \(name.isEmpty ? "stranger" : name)" }.accessibilityIdentifier("greet")
         Text(greeting).accessibilityIdentifier("greeting")
+        // A secure field and what it holds, so a flow checks typing into it: the field itself reports bullets.
+        SecureField("Password", text: $password).accessibilityIdentifier("password")
+        Text(password).accessibilityIdentifier("password_echo")
         Button("Ask the stand") { Task { await ask() } }.accessibilityIdentifier("fetch")
         Text(response).accessibilityIdentifier("response")
         Button("Crash") { crash() }.accessibilityIdentifier("crash")
