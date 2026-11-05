@@ -1,0 +1,5 @@
+# Fails on purpose: the crash must come back with the step that caused it.
+open!
+wait id=title 30
+press id=crash
+expect id=title

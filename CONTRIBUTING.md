@@ -32,6 +32,8 @@ library, Swift for the Apple runner and connect library.
   pitbox's dev server, with a verdict per device kind.
 - `yarn e2e:apple` — the same on every Apple simulator kind (iPhone, foldable iPhone, iPad, Apple TV, Apple
   Watch, Vision Pro).
+- `yarn e2e:mac` — the native Mac example (`examples/mac`: AppKit controls, a web view, a menu bar item, two
+  windows) as the device `mac`. Needs Accessibility (and Screen Recording) for the app that runs it.
 
 CI runs the unit tests on Linux, macOS and Windows and builds the runners and connect libraries; device runs
 need emulators and simulators and are run locally.

@@ -1,0 +1,25 @@
+# The example Mac app end to end: native input (a secure field too) and a shortcut whatever the keyboard layout,
+# the item in the menu bar, a second window with a web page, scrolling inside it, and back to the first window.
+open!
+wait id=title 30
+fill id=name "Ada"
+press id=greet
+expect text="Hello, Ada"
+fill id=password "Secret-pass-1"
+expect text="Secret-pass-1"
+key meta+k
+expect text="Count: 1"
+press id=status_item
+press text="Say hi"
+expect text="Hi from the menu bar"
+press id=open_web
+wait id=web_name 15
+fill id=web_name "Bob"
+expect text="Typed: Bob"
+press id=web_greet
+expect text="Hello from the web, Bob"
+scroll down until id=web_row_40
+expect id=web_row_40
+window "PitboxExample"
+expect id=greet
+window front
