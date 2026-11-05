@@ -16,7 +16,12 @@ struct ExampleApp: App {
         if let detail {
           DetailView(id: detail) { self.detail = nil }
         } else {
+          #if os(iOS)
+          // A navigation stack, so `key back` has a screen to go back from.
+          NavigationStack { MainView() }
+          #else
           MainView()
+          #endif
         }
       }
       // pitboxexample://detail/<id> — the deep link target for `goto`.
@@ -54,6 +59,8 @@ struct MainView: View {
   @State private var hovered = false
   @State private var copied = false
   @State private var shortcut = ""
+  @State private var confirming = false
+  @State private var removed = ""
 
   var body: some View {
     GeometryReader { g in
@@ -66,6 +73,15 @@ struct MainView: View {
         Text(hovered ? "hovered" : "hover here").accessibilityIdentifier("hover_target").onHover { hovered = $0 }
         Button("Shortcut ⌘K") { shortcut = "shortcut pressed" }.keyboardShortcut("k", modifiers: .command).accessibilityIdentifier("shortcut")
         Text(shortcut).accessibilityIdentifier("shortcut_result")
+        // An alert whose button repeats the button behind it: a press must reach the alert's own.
+        Button("Remove") { confirming = true }.accessibilityIdentifier("remove")
+          .alert("Remove the row?", isPresented: $confirming) {
+            Button("Remove", role: .destructive) { removed = "removed" }
+            Button("Cancel", role: .cancel) { removed = "kept" }
+          }
+        Text(removed).accessibilityIdentifier("removed")
+        NavigationLink("Settings") { Text("Settings").font(.largeTitle).accessibilityIdentifier("settings_screen").navigationTitle("Settings") }
+          .accessibilityIdentifier("settings")
         #endif
         #if !os(tvOS)
         Text(copied ? "copied" : "menu here").accessibilityIdentifier("menu_target").contextMenu { Button("Copy") { copied = true } }

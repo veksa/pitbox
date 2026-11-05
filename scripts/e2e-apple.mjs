@@ -28,9 +28,9 @@ const products = path.join(example, 'build', 'Build', 'Products');
 
 /** Per kind: the build that runs there, its flows, and the flows that must fail with the app's crash. */
 const PLAN = {
-  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate'], fails: ['crash'], features: true},
+  phone: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'modal'], fails: ['crash'], features: true},
   foldable: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'fold'], fails: ['crash'], cover: true},
-  tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'pointer'], fails: []},
+  tablet: {platform: 'iOS Simulator', scheme: 'PitboxExample', app: 'Debug-iphonesimulator/PitboxExample.app', flows: ['smoke', 'rotate', 'pointer', 'modal'], fails: []},
   tv: {platform: 'tvOS Simulator', scheme: 'PitboxExample', app: 'Debug-appletvsimulator/PitboxExample.app', flows: ['tv'], fails: [], focusMap: true},
   watch: {platform: 'watchOS Simulator', scheme: 'PitboxExampleWatch', app: 'Debug-watchsimulator/PitboxExampleWatch.app', flows: ['watch', 'crown'], fails: ['crash']},
   xr: {platform: 'visionOS Simulator', scheme: 'PitboxExample', app: 'Debug-xrsimulator/PitboxExample.app', flows: ['smoke', 'vision'], fails: ['crash'], windowShot: true},

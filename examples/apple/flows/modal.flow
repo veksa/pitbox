@@ -1,0 +1,10 @@
+# An alert over a button with the same text, and back on iOS, which has no back key.
+open!
+wait id=title 30
+press id=remove
+press text=Remove
+expect text="removed"
+press id=settings
+wait id=settings_screen 10
+key back
+expect id=content_list
