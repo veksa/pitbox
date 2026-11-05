@@ -29,6 +29,12 @@ compact text.
 - **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots,
   selectors, actions, checks and flows as on a phone, page errors reported with the action that caused them.
   One flow can switch between a web app and a phone.
+- **Mac apps** — a native app on this Mac as one more device (`mac:<name>`), read and driven through the
+  Accessibility API by a small runner built on first use: AppKit, SwiftUI and web views (WKWebView) in one tree,
+  several windows (the front one, or one picked by title), the app's menu bar items and open menus, screenshots
+  and visual checks of the window alone, crashes with their step. Input goes only to the app: it is brought to the
+  front first, or the action fails with nothing sent. `doctor` says which permission is missing and where to turn
+  it on.
 - **What only some devices have** — fold and unfold a foldable (`posture`), rotate, run the app in a freeform
   window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets and desktops; a
   watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and

@@ -149,6 +149,30 @@ its dev dependencies — pitbox does not bring one — and its browsers with `np
 profile — no cookies or storage — and `app action=clear` clears them in place. With no device named, a call goes to
 the only web app when no phone, emulator or simulator is online.
 
+## mac
+
+Native apps on this Mac, driven through the Accessibility API as devices named `mac:<name>` (`mac` alone when there
+is one). AppKit, SwiftUI and web views (WKWebView, so Tauri and similar shells) all come as the same lines with
+refs: ids from the accessibility identifier (`.accessibilityIdentifier`, `setAccessibilityIdentifier`) or, inside a
+web view, the element's `id`; labels from the title or `aria-label`.
+
+```ts
+mac: {
+  main: {app: 'com.example.app', path: './build/MyApp.app'},
+},
+```
+
+| Field | Meaning |
+|---|---|
+| `app` | the app's bundle id |
+| `path` | the built `.app` that `open` starts; without it the app is opened by its bundle id |
+| `window` | the window to read and drive: a title or part of one, `#2` (the second in the app's list), or `front` (default: the window in front) |
+
+pitbox drives the app with the permissions of the app that started it (a terminal, an editor): Accessibility to
+read and drive, Screen Recording for screenshots and visual checks. `doctor` names that app and where to turn each
+on. With no device named, a call goes to the only Mac app when there is no web app and no phone, emulator or
+simulator is online.
+
 ## actors
 
 Extra users of the app: instances of a project command that pitbox starts on a free port.

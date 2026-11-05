@@ -12,7 +12,7 @@ devices it runs on, and the checks that tell you what is broken. It works with a
 extra reach inside the app.
 
 - **Phones, foldables, tablets, TVs, watches, XR headsets, glasses and cars** — Android emulators and devices,
-  Apple simulators, and web apps in a browser, behind the same tools.
+  Apple simulators, native apps on the Mac, and web apps in a browser, behind the same tools.
 - **Answers an agent can afford** — the screen as short lines with refs, actions that wait for the UI to settle
   and reply with what changed, images only on request.
 - **Flows** — a line-per-step script run by the daemon: a whole pass in one call, one verdict.

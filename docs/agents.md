@@ -101,6 +101,30 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 `run` with flows. Give the page `data-testid`s the way an app gets `testID`s: they become `id=` selectors. A flow
 can mix devices — `device web:admin` … `device Pixel_8` — to act in a panel and check the phone.
 
+## Mac apps
+
+`device: "mac:<name>"` (from `mac` in the config; `mac` alone with one app) drives a native app on this Mac with the
+same tools: `snapshot`, `press`, `fill`, `type`, `key` (`meta+k` is ⌘K), `swipe` and `scroll … until` (they scroll
+what is under the pointer), `mouse right|hover|wheel`, `wait`, `inspect what=screenshot|visual|media`, `app
+action=open|stop|logs`, and `run` with flows; a crash comes back with its step. Web views (WKWebView) come in the same
+tree as native controls, with the page's `id`s as `id=` selectors.
+
+- **One window at a time.** A snapshot covers the app's window in front, with its sheets; points are from that
+  window's top left, and screenshots are of it alone. An open menu comes first (`— menu`), the app's items in the
+  menu bar after (`— menu bar`: press one to open its menu, then its item), and the app's other windows last, one
+  line each (`— other windows`): pressing one brings it to the front. `device action=window value="Settings"` (a
+  title, part of one, or `#2`) keeps snapshots and input on that window whatever is in front; `value=front` goes
+  back to following the front one, and no value lists the windows. In a flow: `window "Settings"`.
+- **Input goes to the app only.** Before each action the app is brought to the front; if it does not come (a modal
+  panel of another app, a full-screen app), the action fails and nothing is sent — a person's terminal in front never
+  gets the keys. Keys and text are posted to the app's process; a click lands only where the window under the point
+  is the app's. Text goes in as characters whatever the keyboard layout, and through the pasteboard when a field
+  does not take it that way; keys go by their place on the keyboard, so shortcuts work on a Cyrillic layout too.
+- **Permissions** belong to the app that started pitbox: Accessibility (everything) and Screen Recording (images).
+  `doctor` names that app and where to turn each on; a call without them fails at once with the same hint.
+- Not on a Mac: `install`, `app action=clear` (the app keeps its data where it chooses), `settings`, `network`,
+  `touch`, rotation.
+
 ## Network and backend
 
 - `net action=fail|mock|delay|freeze|offline|clear` — rules applied inside the app (a WebSocket can be frozen
