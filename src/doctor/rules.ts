@@ -365,4 +365,26 @@ const cleartext: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher];
+/**
+ * Driving a Mac app needs two permissions of the app that started pitbox (a terminal, an editor): without
+ * Accessibility no tree and no input, without Screen Recording no image of a window. Missing, each call would fail;
+ * here it is named once with where to turn it on.
+ */
+export const macPermissions: Rule = {
+  id: 'mac-permissions',
+  title: 'the app that started pitbox may read and drive Mac apps',
+  check: async ctx => {
+    if (!ctx.macPermissions) return [];
+    const p = await ctx.macPermissions();
+    const findings: Finding[] = [];
+    if (!p.accessibility) {
+      findings.push({rule: 'mac-permissions', severity: 'error', message: `Accessibility is off for ${p.host}: pitbox cannot read or drive Mac apps`, hint: `System Settings › Privacy & Security › Accessibility → turn on ${p.host} (add it with + if it is not listed), then run again`});
+    }
+    if (!p.screen) {
+      findings.push({rule: 'mac-permissions', severity: 'warn', message: `Screen Recording is off for ${p.host}: no screenshots or visual checks of Mac apps`, hint: `System Settings › Privacy & Security › Screen & System Audio Recording → turn on ${p.host}, then quit and reopen ${p.host}`});
+    }
+    return findings;
+  },
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions];

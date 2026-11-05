@@ -91,8 +91,10 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   async snapshot(opts: {system?: boolean; bounds?: boolean} = {}): Promise<Snapshot> {
     const read = async () => {
-      const [tree, size] = await Promise.all([this.runner.call<{windows: UiWindow[]; nodes: UiNode[]}>('tree'), this.size()]);
-      return buildSnapshot(tree.windows, tree.nodes, {system: opts.system, bounds: opts.bounds, height: size.height});
+      const [tree, size] = await Promise.all([this.runner.call<{windows: UiWindow[]; nodes: UiNode[]; size?: [number, number]}>('tree'), this.size()]);
+      // A runner whose screen changes shape between calls (a Mac app's window) says its size with the tree.
+      if (tree.size) this.#size = {width: tree.size[0], height: tree.size[1]};
+      return buildSnapshot(tree.windows, tree.nodes, {system: opts.system, bounds: opts.bounds, height: tree.size?.[1] ?? size.height});
     };
     let snap = await read();
     // iOS's "Save Password?" after a sign-in hides the app until it is answered: declined as a person would, so a

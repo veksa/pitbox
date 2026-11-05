@@ -417,6 +417,7 @@ export const formatResult = (method: string, r: unknown): string => {
         ...fmtDevices(x.devices as AndroidDevice[], x.avds as {name: string; kind: string}[], x.simulators as SimRow[] | undefined),
         ...(x.simulatorsError ? [`✗ simulators: ${x.simulatorsError}`] : []),
         ...((x.web as {name: string; url: string}[] | undefined) ?? []).map(w => `· ${w.name}  ${w.url}`),
+        ...((x.mac as {name: string; app: string}[] | undefined) ?? []).map(m => `· ${m.name}  ${m.app}`),
       ].join('\n');
     case 'doctor':
       return fmtDoctor(x as unknown as DoctorReport);

@@ -31,6 +31,8 @@ export type DoctorContext = {
   /** System dialogs on top of each device ("… isn't responding"), and a way to dismiss one. */
   systemDialogs?: () => Promise<{serial: string; title: string}[]>;
   dismissDialog?: (serial: string) => Promise<string>;
+  /** Whether the app that started pitbox may drive Mac apps (Accessibility) and take their images (Screen Recording). */
+  macPermissions?: () => Promise<{accessibility: boolean; screen: boolean; host: string}>;
 };
 
 export type Rule = {

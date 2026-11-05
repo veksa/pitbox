@@ -12,7 +12,7 @@ import {formatResult} from '../format.ts';
 
 type Shape = Record<string, z.ZodType>;
 
-const device = z.string().optional().describe('serial, AVD, simulator, or web:<app> (a web app from the config); default: the only online device');
+const device = z.string().optional().describe('serial, AVD, simulator, web:<app> or mac:<app> (a web or Mac app from the config); default: the only online device');
 
 type Caller = {call: (method: string, params: Record<string, unknown>) => Promise<unknown>};
 type ToolServer = {registerTool: (name: string, def: {description: string; inputSchema: Shape}, handler: (args: Record<string, unknown>) => Promise<{content: {type: 'text'; text: string}[]; isError?: boolean}>) => unknown};
@@ -99,7 +99,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Devices and the app
   tool(
     'device',
-    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now); pair (a phone on Wi-Fi: a QR to scan in Wireless debugging, then value=wait; or value="<ip:port> <code>"); posture value=closed|half|open|rear|reset (foldables), rotate value=0|90|180|270|auto, window value="freeform [x,y,w,h]"|fullscreen|"resize x,y,w,h" (relaunches the app), wear value="tile add|show|remove <component>"|"face <package>"|"ambient on|off"|home, xr value="look yaw,pitch"|"move dx,dy,dz"|"spin yaw,pitch,roll,ms"|"drift dx,dy,dz,ms"|recenter|"env day|night"|"passthrough 0…1"|options|"panel minimize|close|menu|info|spatial-audio|tidy|close-app", car value=day|night|auto|"drive [m/s]"|park|"rotary cw|ccw [n]".',
+    'Devices: list, boot <avd|simulator>, shutdown, info, reverse (forward stand ports now); pair (a phone on Wi-Fi: a QR to scan in Wireless debugging, then value=wait; or value="<ip:port> <code>"); posture value=closed|half|open|rear|reset (foldables), rotate value=0|90|180|270|auto, window value="freeform [x,y,w,h]"|fullscreen|"resize x,y,w,h" (relaunches the app; on mac:<app> value="<title>"|#2|front picks the window to drive, none lists them), wear value="tile add|show|remove <component>"|"face <package>"|"ambient on|off"|home, xr value="look yaw,pitch"|"move dx,dy,dz"|"spin yaw,pitch,roll,ms"|"drift dx,dy,dz,ms"|recenter|"env day|night"|"passthrough 0…1"|options|"panel minimize|close|menu|info|spatial-audio|tidy|close-app", car value=day|night|auto|"drive [m/s]"|park|"rotary cw|ccw [n]".',
     {action: z.enum(['list', 'boot', 'shutdown', 'info', 'reverse', 'pair', 'posture', 'rotate', 'window', 'wear', 'xr', 'car']), avd: opt.str(), wipe: opt.bool(), value: opt.str(), device},
     a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', info: 'info', reverse: 'reverse', pair: 'pair', posture: 'posture', rotate: 'rotate', window: 'window', wear: 'wear', xr: 'xr', car: 'car'})[a.action as string]!,
   );

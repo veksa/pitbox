@@ -88,6 +88,15 @@ jobs:
           -destination 'generic/platform=${{ matrix.destination }}' -derivedDataPath build/runner -quiet
           CODE_SIGN_IDENTITY=-
 
+  mac-runner:
+    name: mac runner and example
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The same build pitbox runs on a Mac on first use (src/drivers/mac/runner.ts), and the example app it drives.
+      - run: mkdir -p build && xcrun swiftc -O runners/apple/Mac/*.swift -o build/pitbox-mac
+      - run: xcrun swiftc -Onone examples/mac/App/main.swift -o build/PitboxExample
+
   android:
     name: android runner and connect library
     runs-on: ubuntu-latest

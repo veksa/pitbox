@@ -174,6 +174,23 @@ export const configSchema = z.object({
     )
     .optional(),
   /**
+   * Native apps on this Mac, driven through the Accessibility API as devices named `mac:<name>` (`mac` alone when
+   * there is one): `{main: {app: 'com.example.app', path: './build/MyApp.app'}}`.
+   */
+  mac: z
+    .record(
+      z.string().regex(/^[\w-]+$/, 'a Mac app name: letters, digits, - and _'),
+      z.object({
+        /** The app's bundle id. */
+        app: z.string().min(1),
+        /** The built .app that `open` starts; without it the app is found by its bundle id. */
+        path: z.string().optional(),
+        /** The window to read and drive: a title or part of one, `#2`, or `front` (the default, the one in front). */
+        window: z.string().optional(),
+      }),
+    )
+    .optional(),
+  /**
    * Named states: `save` and `restore` back up and bring back the backend (`{name}`, `{file}` — a file under
    * .pitbox/states); the device side is an emulator snapshot taken by pitbox.
    */

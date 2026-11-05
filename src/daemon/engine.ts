@@ -16,6 +16,7 @@ import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.t
 import {AppleDriver, isAppleBundle, pickSimulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
 import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
+import {MacRunner, macDevice} from '../drivers/mac/runner.ts';
 import {RemoteApple, RemoteAppleCrashes, RemoteAppleRunner, type AppleDevices} from '../remote/appleRemote.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
@@ -205,9 +206,10 @@ export class Engine {
 
   /** The UI session of a device (one runner per device, kept between calls). */
   async ui(device?: string): Promise<DeviceUi> {
-    const web = await this.#webTarget(device);
-    const t = web ? undefined : await this.#target(device);
-    const id = web ? `web:${web}` : t!.id;
+    const mac = await this.#macTarget(device);
+    const web = mac ? undefined : await this.#webTarget(device);
+    const t = web || mac ? undefined : await this.#target(device);
+    const id = mac ? `mac:${mac}` : web ? `web:${web}` : t!.id;
     let ui = this.#uis.get(id);
     if (ui) return ui;
     const hooks: UiHooks = {
@@ -231,7 +233,9 @@ export class Engine {
         }
       },
     };
-    ui = web
+    ui = mac
+      ? new DeviceUi(id, this.#macRunner(mac), hooks, this.#macCrashes(mac))
+      : web
       ? new DeviceUi(id, this.#webRunner(web), hooks, this.#webCrashes(web))
       : t!.platform === 'apple'
         ? t!.s instanceof RemoteApple
@@ -279,7 +283,7 @@ export class Engine {
       reshape: (op, value) => this.methods[op]({device, value}),
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
-        if (!(await this.#webTarget(name))) await this.#target(name);
+        if (!(await this.#macTarget(name)) && !(await this.#webTarget(name))) await this.#target(name);
         device = name;
       },
       ui: () => this.ui(device),
@@ -444,8 +448,40 @@ export class Engine {
     return {start: () => undefined, stop: () => undefined, since: (t: number) => r.events.filter(e => e.at >= t)};
   }
 
+  readonly #macRunners = new Map<string, MacRunner>();
+
+  /**
+   * The Mac app a call is for: `mac:<name>` (or `mac` with one app), or with no device named, the only Mac app when
+   * the config has no web app and no phone, emulator or simulator is online. Undefined for other devices.
+   */
+  async #macTarget(device?: string): Promise<string | undefined> {
+    const apps = Object.keys(this.config.mac ?? {});
+    if (device) return macDevice(device, apps);
+    if (apps.length !== 1 || Object.keys(this.config.web ?? {}).length) return undefined;
+    const androids = this.android ? (await this.android.devices().catch(() => [])).filter(d => d.state === 'device').length : 0;
+    const sims = this.apple ? (await this.apple.booted().catch(() => [])).length : 0;
+    return androids + sims ? undefined : apps[0];
+  }
+
+  #macRunner(name: string): MacRunner {
+    let r = this.#macRunners.get(name);
+    if (!r) {
+      r = new MacRunner(name, this.config.mac![name]!, this.#loaded.root);
+      this.#macRunners.set(name, r);
+    }
+    return r;
+  }
+
+  /** The Mac's crash reports of the app, as for a simulator app. */
+  #macCrashes(name: string) {
+    const r = this.#macRunner(name);
+    const probe = {running: async () => (await r.call<{pid?: number}>('pid').catch(() => ({pid: undefined}))).pid !== undefined, slow: async () => false};
+    return new AppleCrashWatcher(probe, '', r.cfg.app);
+  }
+
   async #target(device?: string): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices}> {
     if (device && /^web(:|$)/.test(device)) throw new Error(`${device} is a web app: this needs a phone, an emulator or a simulator`);
+    if (device && /^mac(:|$)/.test(device)) throw new Error(`${device} is a Mac app: this needs a phone, an emulator or a simulator`);
     const s = this.apple;
     const booted = s ? await s.booted().catch(() => []) : [];
     if (s && booted.length) {
@@ -669,6 +705,7 @@ export class Engine {
     await this.#mock?.stop();
     await this.#dev?.stop();
     for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
+    for (const r of this.#macRunners.values()) await r.stop().catch(() => undefined);
   }
 
   async #startMock() {
@@ -989,7 +1026,7 @@ export class Engine {
     devices: async () => {
       const a = this.android;
       const s = this.apple;
-      if (!a && !s && !this.config.web) this.#needAndroid();
+      if (!a && !s && !this.config.web && !this.config.mac) this.#needAndroid();
       // A simulator list that cannot be read (a remote Mac that refuses the token, Xcode gone) says why instead of
       // looking like a Mac without simulators.
       let simError: string | undefined;
@@ -998,6 +1035,7 @@ export class Engine {
         devices: a ? await a.devices() : [],
         avds: a ? a.avds() : [],
         ...(this.config.web ? {web: Object.entries(this.config.web).map(([name, w]) => ({name: `web:${name}`, url: w.url}))} : {}),
+        ...(this.config.mac ? {mac: Object.entries(this.config.mac).map(([name, m]) => ({name: `mac:${name}`, app: m.app}))} : {}),
         ...(s ? {simulators: sims.map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state}))} : {}),
         ...(simError ? {simulatorsError: simError} : {}),
       };
@@ -1041,6 +1079,12 @@ export class Engine {
     },
 
     open: async (p: Params) => {
+      const mac = await this.#macTarget(str(p, 'device'));
+      if (mac) {
+        const r = await this.#macRunner(mac).open(str(p, 'target'), bool(p, 'relaunch'));
+        this.#uis.get(`mac:${mac}`)?.screenChanged();
+        return {serial: `mac:${mac}`, ...r};
+      }
       const web = await this.#webTarget(str(p, 'device'));
       if (web) {
         const t0 = Date.now();
@@ -1111,6 +1155,8 @@ export class Engine {
     },
 
     stopApp: async (p: Params) => {
+      const mac = await this.#macTarget(str(p, 'device'));
+      if (mac) return {serial: `mac:${mac}`, ...(await this.#macRunner(mac).stopApp())};
       const web = await this.#webTarget(str(p, 'device'));
       if (web) {
         await this.#webRunner(web).goto('about:blank');
@@ -1126,6 +1172,7 @@ export class Engine {
     },
 
     clearApp: async (p: Params) => {
+      if (await this.#macTarget(str(p, 'device'))) throw new Error("a Mac app keeps its data where it chooses\nhint: remove it with a project tool (tools: in the config), or give the app a launch argument that starts it clean");
       const web = await this.#webTarget(str(p, 'device'));
       if (web) {
         await this.#webRunner(web).clear();
@@ -1156,6 +1203,8 @@ export class Engine {
     },
 
     appLogs: async (p: Params) => {
+      const mac = await this.#macTarget(str(p, 'device'));
+      if (mac) return {lines: await this.#macRunner(mac).logs({lines: num(p, 'lines') ?? 50, grep: str(p, 'grep'), level: str(p, 'level')})};
       const t = await this.#target(str(p, 'device'));
       const all = bool(p, 'all');
       const opts = {lines: num(p, 'lines') ?? 50, grep: str(p, 'grep'), level: str(p, 'level')};
@@ -1209,7 +1258,14 @@ export class Engine {
 
     screenshot: async (p: Params) => {
       const file = str(p, 'file') ? path.resolve(this.#loaded.root, req(p, 'file')) : path.join(this.#loaded.stateDir, 'shots', `${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
-      const web = await this.#webTarget(str(p, 'device'));
+      const mac = await this.#macTarget(str(p, 'device'));
+      const web = mac ? undefined : await this.#webTarget(str(p, 'device'));
+      if (mac) {
+        const r = await this.#macRunner(mac).call<{png: string}>('png', {}, 20_000);
+        fs.mkdirSync(path.dirname(file), {recursive: true});
+        fs.writeFileSync(file, Buffer.from(r.png, 'base64'));
+        return {serial: `mac:${mac}`, file, bytes: fs.statSync(file).size};
+      }
       if (web) {
         const r = await this.#webRunner(web).call<{png: string}>('png', {full: bool(p, 'full')});
         fs.mkdirSync(path.dirname(file), {recursive: true});
@@ -1223,7 +1279,7 @@ export class Engine {
 
     key: async (p: Params) => {
       const device = str(p, 'device');
-      if (await this.#webTarget(device)) return (await this.ui(device)).key(list(p, 'keys'));
+      if ((await this.#macTarget(device)) || (await this.#webTarget(device))) return (await this.ui(device)).key(list(p, 'keys'));
       const t = await this.#target(device);
       if (t.platform === 'apple') return {udid: t.id, ...(await (await this.ui(device)).key(list(p, 'keys')))};
       const keys = list(p, 'keys');
@@ -1304,6 +1360,23 @@ export class Engine {
       return this.#reshape(str(p, 'device'), 'wear', (a, serial) => a.wear(serial, op!, args));
     },
     window: async (p: Params) => {
+      const mac = await this.#macTarget(str(p, 'device'));
+      if (mac) {
+        // A Mac app's window: the one snapshots and input are about from now on (`front` follows the one in front).
+        const r = this.#macRunner(mac);
+        const value = str(p, 'value')?.trim();
+        if (value) {
+          const was = r.window;
+          r.window = value === 'front' ? undefined : value;
+          const info = await r.call<{window: string; width: number; height: number}>('info').catch(e => {
+            r.window = was;
+            throw e;
+          });
+          this.#uis.get(`mac:${mac}`)?.screenChanged();
+          return {serial: `mac:${mac}`, window: r.window ? info.window : `front: ${info.window}`, size: `${info.width}x${info.height}`};
+        }
+        return {serial: `mac:${mac}`, selected: r.window ?? 'front', windows: await r.windows()};
+      }
       const [mode, ...rest] = req(p, 'value').split(/\s+/);
       return this.#reshape(str(p, 'device'), 'window', (a, serial) => a.window(serial, this.#pkg(p), mode!, rest.join(',') || str(p, 'bounds')));
     },
@@ -1466,6 +1539,22 @@ export class Engine {
     },
 
     info: async (p: Params) => {
+      const mac = await this.#macTarget(str(p, 'device'));
+      if (mac) {
+        const r = this.#macRunner(mac);
+        const perms = await r.permissions();
+        const pid = (await r.call<{pid?: number}>('pid')).pid;
+        const win = pid && perms.accessibility ? await r.call<{window: string; width: number; height: number}>('info').catch(() => undefined) : undefined;
+        return {
+          serial: `mac:${mac}`,
+          app: r.cfg.app,
+          state: pid ? `running (pid ${pid})` : 'not running',
+          ...(win ? {window: `${win.window} ${win.width}x${win.height}`} : {}),
+          selected: r.window ?? 'front',
+          accessibility: perms.accessibility ? 'granted' : `off for ${perms.host}`,
+          screenRecording: perms.screen ? 'granted' : `off for ${perms.host}`,
+        };
+      }
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') return {udid: t.id, ...(await t.s.info(t.id))};
       return {serial: t.id, ...(await t.a.info(t.id))};
@@ -1487,6 +1576,7 @@ export class Engine {
             return out;
           },
           dismissDialog: async serial => (await (await this.ui(serial)).dismissSystemDialog()) ?? 'no dialog',
+          macPermissions: this.config.mac && process.platform === 'darwin' ? () => this.#macRunner(Object.keys(this.config.mac!)[0]!).permissions() : undefined,
         },
         {fix: bool(p, 'fix'), only: list(p, 'only'), extra},
       );
