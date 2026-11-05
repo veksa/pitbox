@@ -184,6 +184,17 @@ const fmtJsProfile = (p?: JsProfile): string[] => {
 const fmtLogpoint = (lp: Logpoint) =>
   `${lp.source ?? lp.file}:${lp.codeLine ?? lp.line}${lp.codeLine && lp.codeLine !== lp.line ? ` (no code at line ${lp.line})` : ''}${lp.exprs.length ? ` · ${lp.exprs.join(', ')}` : ''}`;
 
+type MacWindow = {title: string; size?: number[]; main?: boolean; minimized?: boolean};
+
+/** A Mac app's windows, numbered the way `window #n` picks them, and the one snapshots and input follow. */
+const fmtMacWindows = (serial: string, selected: string, windows: MacWindow[]): string =>
+  [
+    `${serial}: driving ${selected === 'front' ? 'the window in front' : JSON.stringify(selected)}`,
+    ...(windows.length
+      ? windows.map((w, i) => `  #${i + 1} ${JSON.stringify(w.title)}${w.size ? ` ${w.size.join('x')}` : ''}${w.main ? ' main' : ''}${w.minimized ? ' minimized' : ''}`)
+      : ['  no windows']),
+  ].join('\n');
+
 export const formatResult = (method: string, r: unknown): string => {
   const x = r as Record<string, unknown>;
   switch (method) {
@@ -225,6 +236,8 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'wear':
       return `${x.serial}: ${x.op}${x.detail ? ` — ${x.detail}` : ''}`;
     case 'window':
+      if (Array.isArray(x.windows)) return fmtMacWindows(x.serial as string, x.selected as string, x.windows as MacWindow[]);
+      if (typeof x.window === 'string') return `${x.serial}: driving ${x.window}${x.size ? ` (${x.size})` : ''}`;
       return `${x.serial}: ${x.mode === 'fullscreen' ? 'app fullscreen' : x.mode === 'resize' ? `window resized to ${x.bounds}` : `app in a freeform window${x.bounds ? ` at ${x.bounds}` : ''}`}`;
     case 'snapshot':
       return (x.lines as string[]).join('\n') || '(empty screen)';

@@ -10,8 +10,17 @@ import {KEYS} from './drivers/android/driver.ts';
 import {macPermissions} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
 import {buildSnapshot, type UiNode, type UiWindow} from './ui/snapshot.ts';
+import {formatResult} from './format.ts';
 
 describe('mac apps', () => {
+  it('lists the windows of a Mac app and the one it drives, not an Android freeform window', () => {
+    const windows = [{title: 'MyApp', size: [800, 600], main: true}, {title: 'Settings', minimized: true}];
+    expect(formatResult('window', {serial: 'mac:main', selected: 'front', windows})).toBe('mac:main: driving the window in front\n  #1 "MyApp" 800x600 main\n  #2 "Settings" minimized');
+    expect(formatResult('window', {serial: 'mac:main', selected: 'Settings', windows: []})).toBe('mac:main: driving "Settings"\n  no windows');
+    expect(formatResult('window', {serial: 'mac:main', window: 'Settings', size: '400x300'})).toBe('mac:main: driving Settings (400x300)');
+    expect(formatResult('window', {serial: 'emulator-5554', mode: 'freeform'})).toBe('emulator-5554: app in a freeform window');
+  });
+
   it('names a Mac app as a device: mac:<name>, or mac with one app', () => {
     expect(macDevice('mac:main', ['main', 'admin'])).toBe('main');
     expect(macDevice('mac', ['main'])).toBe('main');
