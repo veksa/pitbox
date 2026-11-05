@@ -244,6 +244,16 @@ describe('flows', () => {
     expect(calls).toEqual(['posture half', 'rotate 90', 'window freeform 0,0,800,600', 'posture reset']);
   });
 
+  it('reads a quoted name in a step the way the window step does', async () => {
+    const {host, calls} = fakeHost([['Home']]);
+    host.state = async n => void calls.push(`state ${n}`);
+    host.loadFlow = n => (calls.push(`run ${n}`), 'sleep 0');
+    const r = await runFlow(host, 'device "iPhone 18 Pro"\nwindow "My Doc"\nstate \'signed in\'\nrun "sign-in"\nscreenshot "home page"');
+    expect(r.ok).toBe(true);
+    expect(calls).toEqual(['device iPhone 18 Pro', 'window My Doc', 'state signed in', 'run sign-in']);
+    expect(r.notes).toContain('screenshot: /shots/home page.jpg');
+  });
+
   it('checks perf budgets over the window since a perf step', async () => {
     const {host, calls} = fakeHost([['Home']]);
     const ok = await runFlow(host, 'perf\npress text=Home\nexpect perf js<300 commits<=2 heap<2 allocated<=20');

@@ -55,6 +55,9 @@ const coldNote = (c: NonNullable<ColdStart['pending']>, first?: Step) =>
     .filter(Boolean)
     .join(' · ')}`;
 
+/** A step's argument that names something (a device, a window, a state): quotes are the flow's, not the name's. */
+const words = (a: string[]): string => a.map(unquote).join(' ');
+
 const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, cold: ColdStart = {}): Promise<void> => {
   const a = s.args;
   switch (s.cmd) {
@@ -66,14 +69,14 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
       return;
     }
     case 'goto':
-      return host.goto(a[0]!, kvArgs(a.slice(1)));
+      return host.goto(unquote(a[0]!), kvArgs(a.slice(1)));
     case 'posture':
     case 'rotate':
     case 'window':
     case 'wear':
     case 'xr':
     case 'car':
-      await host.reshape(s.cmd, a.map(unquote).join(' '));
+      await host.reshape(s.cmd, words(a));
       return;
     case 'touchpad':
       await (await host.ui()).touchpad(a[0] as 'forward' | 'back' | 'up' | 'down' | 'tap');
@@ -185,7 +188,7 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'tool': {
       const i = a.indexOf('contains');
       const params = kvArgs(i >= 0 ? a.slice(1, i) : a.slice(1));
-      const r = await host.tool(a[0]!, params);
+      const r = await host.tool(unquote(a[0]!), params);
       if (r.code !== 0) throw new Error(`tool ${a[0]} exited ${r.code}: ${r.output.split('\n').slice(-3).join(' ')}`);
       if (i >= 0) {
         const want = unquote(a.slice(i + 1).join(' '));
@@ -197,26 +200,26 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
       // visual <name> [mask <selector>]…
       const masks: string[] = [];
       for (let i = 1; i < a.length; i++) if (a[i] === 'mask' && a[i + 1]) masks.push(a[++i]!);
-      const r = await host.visual(a[0]!, masks);
+      const r = await host.visual(unquote(a[0]!), masks);
       if (r.status === 'changed') throw new Error(`screen differs from baseline ${a[0]} (score ${r.score}; regions ${(r.regions ?? []).map(x => `[${x.join(',')}]`).join(' ')}); current: ${r.current}`);
       if (r.status === 'saved') notes.push(`baseline saved: ${a[0]}`);
       return;
     }
     case 'device':
-      await host.setDevice(a.join(' '));
+      await host.setDevice(words(a));
       return;
     case 'state':
-      await host.state(a[0]!);
+      await host.state(unquote(a[0]!));
       return;
     case 'sleep':
       await new Promise(r => setTimeout(r, Number(a[0])));
       return;
     case 'screenshot':
-      notes.push(`screenshot: ${await host.screenshot(a[0], a[1] === 'full')}`);
+      notes.push(`screenshot: ${await host.screenshot(a[0] === undefined ? undefined : unquote(a[0]), a[1] === 'full')}`);
       return;
     case 'run': {
       if (depth > 5) throw new Error('flows nested too deep');
-      const r = await runFlow(host, host.loadFlow(a[0]!), kvArgs(a.slice(1)), depth + 1);
+      const r = await runFlow(host, host.loadFlow(unquote(a[0]!)), kvArgs(a.slice(1)), depth + 1);
       if (!r.ok) throw new Error(`${a[0]} failed at line ${r.failed?.line} (${r.failed?.step}): ${r.failed?.error}`);
       return;
     }
