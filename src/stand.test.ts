@@ -73,6 +73,21 @@ describe('services', () => {
     process.kill(Number(fs.readFileSync(path.join(dir, 'bg.pid'), 'utf8')));
   }, 30_000);
 
+  it('counts a service as its own when the start command exits 0 after the probe already passed', async () => {
+    const port = await freePort();
+    const bg = path.join(dir, 'bg-late.cjs');
+    const pidFile = path.join(dir, 'bg-late.pid').replace(/\\/g, '/');
+    // Launches the server in the background at once, then lingers before exiting 0, like `docker compose up -d`
+    // waiting for its containers: the probe passes while the start command still runs.
+    fs.writeFileSync(bg, `const {spawn} = require('child_process'); const c = spawn(process.execPath, ['-e', "require('http').createServer((q,s)=>s.end()).listen(${port})"], {detached: true, stdio: 'ignore'}); c.unref(); require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(c.pid)); setTimeout(() => process.exit(0), 1500);`);
+    const m = new ServiceManager(ctx, {late: {start: `${node} ${JSON.stringify(bg.replace(/\\/g, '/'))}`, health: `tcp:${port}`, startTimeout: 20}});
+    const [s] = await m.up();
+    expect(s?.status).toBe('up');
+    await new Promise(r => setTimeout(r, 2500));
+    expect((await m.status())[0]?.status).toBe('up');
+    process.kill(Number(fs.readFileSync(pidFile, 'utf8')));
+  }, 30_000);
+
   it('skips only the dependents of a service that fails, and starts the services that do not need it', async () => {
     const [dead, b] = [await freePort(), await freePort()];
     const m = new ServiceManager(ctx, {

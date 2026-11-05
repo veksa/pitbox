@@ -229,7 +229,10 @@ export class ServiceManager {
       this.#children.delete(name);
       const cur = this.#state.get(name);
       const starting = cur?.status === 'starting';
-      if (starting && code === 0 && svc.health) {
+      // The command may also exit after the probe has already passed (`docker compose up -d` returns once its
+      // containers run): the service is still the one pitbox started, now without a pid.
+      const upByThis = cur?.status === 'up' && cur.pid === child.pid;
+      if ((starting || upByThis) && code === 0 && svc.health) {
         detachedStart = true;
         this.#set(name, {pid: undefined, detached: true});
         this.#savePids();
