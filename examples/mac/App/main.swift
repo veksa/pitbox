@@ -58,6 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     actions.submenu = NSMenu(title: "Actions")
     actions.submenu!.addItem(withTitle: "Count", action: #selector(countUp), keyEquivalent: "k")
     menu.addItem(actions)
+    // ⌘W closes the window in front, as in any Mac app.
+    let windowItem = NSMenuItem()
+    windowItem.submenu = NSMenu(title: "Window")
+    windowItem.submenu!.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+    menu.addItem(windowItem)
     NSApp.mainMenu = menu
 
     // An item in the menu bar, as a tray app has.

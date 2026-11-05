@@ -33,6 +33,8 @@ export type MediaResult = {target?: string; moving: boolean; black: boolean; pla
 export type UiRunner = {
   call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
   stop(): Promise<void>;
+  /** What the runner changed on its own since the last action (a Mac app's followed window closed), told in its note. */
+  notices?: string[];
 };
 
 /** Crashes of the app under test, collected in the background. */
@@ -280,9 +282,11 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return [...native, ...js].sort((a, b) => a.at - b.at);
   }
 
-  async #crashed(since: number) {
+  /** The end of an action's answer: its note with what the runner changed on its own, and the crashes since it began. */
+  async #end(since: number, note?: string) {
     const c = await this.crashesSince(since);
-    return c.length ? {crashes: c} : {};
+    const notes = [note, ...(this.runner.notices?.splice(0) ?? [])].filter(Boolean);
+    return {...(notes.length ? {note: notes.join('; ')} : {}), ...(c.length ? {crashes: c} : {})};
   }
 
   /** Tells the crash source which apps were on screen just before the input: the snapshot the action used. */
@@ -331,7 +335,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     // A system offer declined while the press settled (the sign-in it answered brought it up).
     const declined = this.declined.splice(0);
     if (declined.length) note = [note, ...declined].filter(Boolean).join('; ');
-    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...(note ? {note} : {}), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0, note))};
   }
 
   async fill(selector: string, text: string): Promise<ActResult> {
@@ -360,7 +364,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
     this.#typed = true;
     const settled = await this.#settle(snap);
-    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   async type(text: string): Promise<ActResult> {
@@ -371,7 +375,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     if (!r.set) throw new Error('no focused text field to type into');
     this.record(`type ${quote(text)}`);
     this.#typed = true;
-    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'type', ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   async key(keys: string[]): Promise<ActResult> {
@@ -391,7 +395,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.record(`key ${keys.join(' ')}`);
     const settled = await this.#settle(before);
     if (notes.length && !settled.diff.changed) notes.push('nothing changed: no screen to go back from');
-    return {action: 'key', target: keys.join(' '), ...(notes.length ? {note: notes.join('; ')} : {}), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'key', target: keys.join(' '), ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0, notes.join('; ')))};
   }
 
   /** Back where the device has no back key: the navigation bar's back button, or a swipe in from the left edge. */
@@ -443,7 +447,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       await this.runner.call('mouse', {action, x, y});
       this.record(`mouse ${action} ${label}`);
     }
-    return {action: `mouse ${action}`, target: label || undefined, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: `mouse ${action}`, target: label || undefined, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   /**
@@ -459,7 +463,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.record(`rotary ${direction} ${steps}`);
     const settled = await this.#settle(before);
     const note = settled.diff.changed ? undefined : 'nothing moved: crown events go to the focused view, and no scroller has focus (a Wear OS app calls requestFocus() on it)';
-    return {action: 'rotary', target: `${direction} ${steps}`, note, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'rotary', target: `${direction} ${steps}`, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0, note))};
   }
 
   /**
@@ -489,7 +493,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.#front(before);
     await this.runner.call('touchnav', {gesture});
     this.record(`touchpad ${gesture}`);
-    return {action: 'touchpad', target: gesture, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'touchpad', target: gesture, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   /** The screen changed shape (folded, rotated, resized): the next action measures it again. */
@@ -517,7 +521,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const [x1, y1, x2, y2] = coords.map(Math.round) as [number, number, number, number];
     await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
     this.record(`swipe ${spec}${durationMs !== 300 ? ` ${durationMs}` : ''}`);
-    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   /**
@@ -541,7 +545,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     await this.runner.call('touch', {phase, x, y});
     this.record(`touch ${phase}${selector ? ` ${selector}` : ''}`);
     const settled = await this.#settle(before, 150, 800, 300);
-    return {action: `touch ${phase}`, target, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: `touch ${phase}`, target, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   /** Swipes in `direction` until `selector` is on screen or the content stops moving. */
@@ -560,7 +564,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     }
     if (!matches(snap, selector)) throw new Error(`scrolled ${direction} but "${selector}" never appeared`);
     this.record(`scroll ${direction} until ${selector}`);
-    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#crashed(t0))};
+    return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
   async #dirCoords(dir: string, snap?: Snapshot) {

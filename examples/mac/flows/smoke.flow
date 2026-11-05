@@ -1,5 +1,6 @@
 # The example Mac app end to end: native input (a secure field too) and a shortcut whatever the keyboard layout,
-# the item in the menu bar, a second window with a web page, scrolling inside it, and back to the first window.
+# the item in the menu bar, a second window with a web page, scrolling inside it, back to the first window, and
+# closing a window it follows (the next steps follow the window in front).
 open!
 wait id=title 30
 fill id=name "Ada"
@@ -22,4 +23,8 @@ scroll down until id=web_row_40
 expect id=web_row_40
 window "PitboxExample"
 expect id=greet
-window front
+press id=open_web
+window "Web page"
+expect id=web_list
+key meta+w
+expect id=greet

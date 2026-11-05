@@ -166,7 +166,7 @@ mac: {
 |---|---|
 | `app` | the app's bundle id |
 | `path` | the built `.app` that `open` starts; without it the app is opened by its bundle id |
-| `window` | the window to read and drive: a title or part of one, `#2` (the second in the app's list), or `front` (default: the window in front) |
+| `window` | the window to read and drive: a title or part of one, `#2` (the second in the app's list), or `front` (default: the window in front); when an action closes it, the window in front is followed from then on and the action's note says so |
 
 pitbox drives the app with the permissions of the app that started it (a terminal, an editor): Accessibility to
 read and drive, Screen Recording for screenshots and visual checks. `doctor` names that app and where to turn each

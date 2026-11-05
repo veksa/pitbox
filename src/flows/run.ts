@@ -125,9 +125,11 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'type':
       await (await host.ui()).type(unquote(a.join(' ')));
       return;
-    case 'key':
-      await (await host.ui()).key(a);
+    case 'key': {
+      const r = await (await host.ui()).key(a);
+      if (r?.note) notes.push(`line ${s.line} (${s.text}): ${r.note}`);
       return;
+    }
     case 'touch':
       await (await host.ui()).touch(a[0] as 'down' | 'move' | 'up', a.slice(1).join(' ') || undefined);
       return;

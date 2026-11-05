@@ -11,6 +11,7 @@ import {macPermissions} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
 import {buildSnapshot, type UiNode, type UiWindow} from './ui/snapshot.ts';
 import {formatResult} from './format.ts';
+import {DeviceUi} from './ui/device.ts';
 
 describe('mac apps', () => {
   it('lists the windows of a Mac app and the one it drives, not an Android freeform window', () => {
@@ -134,6 +135,49 @@ describe('mac apps', () => {
       expect(key.echo).toMatchObject({cmd: 'key', vk: 40, flags: 0x100000});
       expect(key.echo.win).toBeUndefined();
       await expect(runner.call('fail')).rejects.toThrow('nope');
+    } finally {
+      await runner.stop();
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  });
+
+  it('follows the window in front once an action closes the window it followed, and says so', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-mac-runner-'));
+    // A stand-in runner for an app with two windows, where ⌘W closes the selected one.
+    const fake = path.join(dir, 'runner.mjs');
+    fs.writeFileSync(
+      fake,
+      `#!${process.execPath}
+import readline from 'node:readline';
+const open = ['MyApp', 'Settings'];
+const answer = (r, body) => process.stdout.write(JSON.stringify({id: r.id, ...body}) + '\\n');
+for await (const line of readline.createInterface({input: process.stdin})) {
+  const r = JSON.parse(line);
+  if (r.cmd === 'shutdown') process.exit(0);
+  if (r.win && !open.includes(r.win)) { answer(r, {ok: false, error: 'no window "' + r.win + '" in MyApp\\nhint: its windows: ' + open.map(w => '"' + w + '"').join(', ')}); continue; }
+  const win = r.win ?? open[0];
+  if (r.cmd === 'key' && r.flags) open.splice(open.indexOf(win), 1);
+  if (r.cmd === 'tree') answer(r, {ok: true, windows: [{type: 'app', title: win, pkg: 'com.example.app'}], nodes: [{p: -1, w: 0, c: 'button', b: [0, 0, 100, 40], t: win}], size: [400, 300]});
+  else if (r.cmd === 'info') answer(r, {ok: true, width: 400, height: 300, window: win});
+  else if (r.cmd === 'idle') answer(r, {ok: true, idle: true});
+  else answer(r, {ok: true});
+}
+`,
+    );
+    fs.chmodSync(fake, 0o755);
+    const runner = new MacRunner('main', {app: 'com.example.app'}, dir, async () => fake);
+    const ui = new DeviceUi('mac:main', runner);
+    try {
+      // A window that was never there still fails.
+      runner.window = 'Nope';
+      await expect(runner.call('tree')).rejects.toThrow(/no window "Nope"/);
+      runner.window = 'Settings';
+      expect((await ui.snapshot()).lines).toEqual(['@e1 button "Settings"']);
+      const closed = await ui.key(['meta+w']);
+      expect(closed.note).toBe('the window "Settings" closed: following the window in front now');
+      expect(runner.window).toBeUndefined();
+      expect((await ui.snapshot()).lines).toEqual(['@e1 button "MyApp"']);
+      expect((await ui.key(['enter'])).note).toBeUndefined();
     } finally {
       await runner.stop();
       fs.rmSync(dir, {recursive: true, force: true});

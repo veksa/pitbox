@@ -133,8 +133,11 @@ export type MacPermissions = {accessibility: boolean; screen: boolean; host: str
 export class MacRunner {
   readonly name: string;
   readonly cfg: MacAppConfig;
-  /** The window everything is about: a title, `#n`, or undefined for the one in front. */
-  window?: string;
+  #window?: string;
+  /** The selected window answered a request since it was selected: it was there, so a later "no window" means it closed. */
+  #seen = false;
+  /** What changed under the agent's feet (the window it followed closed), told with the next action. */
+  readonly notices: string[] = [];
   readonly #root: string;
   #child?: ChildProcess;
   #buffer = '';
@@ -151,6 +154,16 @@ export class MacRunner {
     this.#root = root;
     this.#binary = binary;
     this.window = cfg.window && cfg.window !== 'front' ? cfg.window : undefined;
+  }
+
+  /** The window everything is about: a title, `#n`, or undefined for the one in front. */
+  get window(): string | undefined {
+    return this.#window;
+  }
+
+  set window(w: string | undefined) {
+    this.#window = w;
+    this.#seen = false;
   }
 
   get alive() {
@@ -210,6 +223,22 @@ export class MacRunner {
   }
 
   async call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {
+    const win = this.#window;
+    try {
+      const r = await this.#send<T>(cmd, args, timeoutMs);
+      if (win !== undefined && win === this.#window) this.#seen = true;
+      return r;
+    } catch (e) {
+      // The followed window was there and is gone (an action closed it, ⌘W, its close button): follow the window in
+      // front from now on rather than failing this and every later request. A window never seen still fails.
+      if (win === undefined || win !== this.#window || !this.#seen || !(e instanceof MacError) || !e.message.startsWith(`no window "${win.trim()}" `)) throw e;
+      this.window = undefined;
+      this.notices.push(`the window ${JSON.stringify(win)} closed: following the window in front now`);
+      return this.#send<T>(cmd, args, timeoutMs);
+    }
+  }
+
+  async #send<T extends Record<string, unknown>>(cmd: string, args: Record<string, unknown>, timeoutMs: number): Promise<T> {
     let extra = args;
     if (cmd === 'key') extra = {...args, ...macKey(Number(args.code), Number(args.meta ?? 0))};
     await this.start();
@@ -222,7 +251,7 @@ export class MacRunner {
         reject(new MacError(`Mac runner: ${cmd} timed out after ${timeoutMs} ms`, 'the app may be hung: `app action=stop`, then open it again'));
       }, Math.max(timeoutMs, 5000));
       this.#pending.set(id, {resolve: v => resolve(v as T), reject, timer});
-      child.stdin!.write(`${JSON.stringify({id, cmd, app: this.cfg.app, ...extra, ...(this.window ? {win: this.window} : {})})}\n`);
+      child.stdin!.write(`${JSON.stringify({id, cmd, app: this.cfg.app, ...extra, ...(this.#window ? {win: this.#window} : {})})}\n`);
     });
   }
 
