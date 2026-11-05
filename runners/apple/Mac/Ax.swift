@@ -181,10 +181,12 @@ final class Tree {
     if Ax.skipped.contains(role) || Ax.chrome.contains(subrole) { return }
     let f = Ax.frame(map)
     let sized = !f.isNull && f.width > 0 && f.height > 0
-    // Off screen or scrolled away: the subtree is too (a zero-sized group passes its children on).
-    if sized && !f.intersects(clip) { return }
+    // Off screen or scrolled away: the subtree is too (a zero-sized group passes its children on). A group's own
+    // frame is not trusted for its children: a web view's wrapper reports one far from where its page is drawn.
+    let outside = sized && !f.intersects(clip)
+    if outside && role != "AXGroup" { return }
     var index = parent
-    if !root && sized {
+    if !root && sized && !outside {
       let title = Ax.string(map[kAXTitleAttribute])
       let desc = Ax.string(map[kAXDescriptionAttribute])
       let rawValue = map[kAXValueAttribute]
