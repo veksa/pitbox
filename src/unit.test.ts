@@ -8,7 +8,7 @@ import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
 import {parseProbe, probePort} from './stand/health.ts';
 import {pickReply} from './stand/llmMock.ts';
-import {orderServices, stopOrder} from './stand/services.ts';
+import {orderServices, restartOrder, stopOrder} from './stand/services.ts';
 import {quoteArg} from './util/proc.ts';
 import {renderTemplate, tailLines, templateParams} from './util/text.ts';
 
@@ -61,6 +61,11 @@ describe('services order', () => {
   it('stops dependents first and leaves dependencies running', () => {
     expect(stopOrder(services, ['api'])).toEqual(['web', 'api']);
     expect(stopOrder(services, ['web'])).toEqual(['web']);
+  });
+  it('restarts the dependents that were running, not the ones that were down', () => {
+    expect(restartOrder(services, ['api'], new Set(['db', 'api', 'web']))).toEqual(['api', 'web']);
+    expect(restartOrder(services, ['api'], new Set(['db', 'api']))).toEqual(['api']);
+    expect(restartOrder(services, ['db'], new Set(['db', 'web']))).toEqual(['db', 'web']);
   });
   it('reports cycles and unknown names', () => {
     expect(() => orderServices({a: {dependsOn: ['b']}, b: {dependsOn: ['a']}}, ['a'])).toThrow(/cycle/);

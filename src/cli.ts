@@ -14,7 +14,7 @@ setup
 stand
   up [service…]                 start the stand (all autostart services, the LLM mock) or the named services
   down [service…]               stop what pitbox started
-  restart <service…>
+  restart <service…>            stop and start again, with the running services that depend on them
   status                        services, actors, mock, devices, forwarded ports
   logs <service|actor> [-n 40] [--grep re]
   llm [log [-n 10]] | llm reply <text> [--match re] [--once] | llm fail [status] | llm delay <ms> | llm clear | llm reload   the LLM mock

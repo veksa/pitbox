@@ -67,6 +67,13 @@ export const stopOrder = (services: Record<string, ServiceConfig>, names: string
   return orderServices(services, [...affected]).filter(n => affected.has(n)).reverse();
 };
 
+/**
+ * What restarting `names` starts again: those services, and every dependent that stopping them took down
+ * while it was running. A dependent that was not running stays down.
+ */
+export const restartOrder = (services: Record<string, ServiceConfig>, names: string[], running: Set<string>): string[] =>
+  stopOrder(services, names).filter(n => names.includes(n) || running.has(n)).reverse();
+
 export class ServiceManager {
   readonly #ctx: StandContext;
   #services: Record<string, ServiceConfig>;
@@ -284,8 +291,10 @@ export class ServiceManager {
   }
 
   async restart(names: string[]): Promise<ServiceState[]> {
+    // `down` also stops what depends on the named services; those that were running come back with them.
+    const running = new Set((await this.status()).filter(s => s.status === 'up' || s.status === 'external').map(s => s.name));
     await this.down(names);
-    return this.up(names);
+    return this.up(restartOrder(this.#services, names, running));
   }
 
   logTail(name: string, lines = 40, grep?: string): string[] {
