@@ -33,16 +33,16 @@ enum Input {
     return false
   }
 
-  /// The top window at a point (global, top-left origin) must be the app's.
+  /// What is at a point (global, top-left origin) must be the app's. Asked of the Accessibility API, which hit-tests
+  /// as a click would: a window that lets clicks through (the Dock keeps one over the whole screen) is not in the way.
   static func owns(_ t: Target, _ p: CGPoint) throws {
-    let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
-    for w in list {
-      guard let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b), r.contains(p) else { continue }
-      if ((w[kCGWindowAlpha as String] as? Double) ?? 1) <= 0 { continue }
-      let pid = (w[kCGWindowOwnerPID as String] as? Int).map { pid_t($0) }
-      if pid == t.pid { return }
-      let owner = (w[kCGWindowOwnerName as String] as? String) ?? Ax.appName(pid)
-      throw RunnerError("a window of \(owner) is over \(t.name) at that point: nothing was sent\nhint: move it away or close it")
+    var hit: AXUIElement?
+    if AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(p.x), Float(p.y), &hit) == .success, let hit {
+      var pid: pid_t = 0
+      if AXUIElementGetPid(hit, &pid) == .success {
+        if pid == t.pid { return }
+        throw RunnerError("a window of \(Ax.appName(pid)) is over \(t.name) at that point: nothing was sent\nhint: move it away or close it")
+      }
     }
     throw RunnerError("no window of \(t.name) at that point (\(Int(p.x)),\(Int(p.y)) on the screen): nothing was sent")
   }
