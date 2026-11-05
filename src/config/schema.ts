@@ -50,10 +50,19 @@ export const toolSchema = z.object({
   run: z.string(),
   cwd: z.string().optional(),
   env: env.optional(),
-  /** Parameter descriptions; every placeholder in `run` must be listed. */
-  params: z.record(z.string(), z.string()).optional(),
+  /**
+   * Parameters; every placeholder in `run` must be listed. A description makes one required; `{description,
+   * default}` makes it optional: omitted, it is the default (quoted), or nothing at all when there is no default.
+   */
+  params: z.record(z.string(), z.union([z.string(), z.object({description: z.string(), default: z.string().optional()}).strict()])).optional(),
   timeout: z.number().positive().optional(),
 });
+
+export type ToolParam = {name: string; description: string; optional: boolean; default?: string};
+
+/** A tool's parameters: a plain description is a required one, `{description, default}` an optional one. */
+export const toolParams = (tool: ToolConfig): ToolParam[] =>
+  Object.entries(tool.params ?? {}).map(([name, p]) => (typeof p === 'string' ? {name, description: p, optional: false} : {name, description: p.description, optional: true, default: p.default}));
 
 export const devserverSchema = z.object({
   /** `metro` (React Native with Metro, Expo included), `rspack` (Re.Pack) or `command` (anything else). */

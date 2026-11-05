@@ -152,6 +152,14 @@ describe('tools', () => {
     expect(r.code).toBe(0);
     expect(r.output).toBe(`it's a "test"`);
   }, 30_000);
+
+  it('leaves out an optional parameter that is not given, fills its default, and still requires the others', async () => {
+    const args = `${node} -e "console.log(JSON.stringify(process.argv.slice(1)))"`;
+    const tool = {run: `${args} {name} {platforms} {mode}`, params: {name: 'who', platforms: {description: 'which platforms'}, mode: {description: 'how', default: 'fast'}}};
+    expect((await runTool(ctx, 'todo', tool, {name: 'a'})).output).toBe('["a","fast"]');
+    expect((await runTool(ctx, 'todo', tool, {name: 'a', platforms: 'ios', mode: 'slow'})).output).toBe('["a","ios","slow"]');
+    await expect(runTool(ctx, 'todo', tool, {})).rejects.toThrow(/missing parameter \{name\}/);
+  }, 30_000);
 });
 
 describe('llm mock', () => {

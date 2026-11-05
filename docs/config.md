@@ -198,13 +198,14 @@ tool `tool_<name>`.
 ```ts
 tools: {
   sql: {description: 'SQL in the stand database', run: 'docker exec -i db psql -U app -qAt -c {query}', params: {query: 'SQL statement'}},
+  todo: {run: 'node scripts/todo.mjs {area} {platforms}', params: {area: 'which area', platforms: {description: 'ios, android or both'}}},
 },
 ```
 
 | Field | Meaning |
 |---|---|
 | `run` | command with `{param}` placeholders; values are quoted for the shell |
-| `params` | `name → description`; every placeholder must be listed (checked on load) |
+| `params` | every placeholder must be listed (checked on load). `name: 'description'` is a required parameter. `name: {description, default}` is an optional one: left out, `{name}` becomes the default (quoted), or nothing at all — not even an empty argument — when there is no default. `pitbox tools` marks optional ones with `?` |
 | `description` | shown to agents |
 | `cwd`, `env`, `timeout` | working directory, environment, seconds (default 120) |
 

@@ -978,7 +978,7 @@ export class Engine {
       const name = req(p, 'name');
       const tool = this.config.tools?.[name];
       if (!tool) throw new Error(`unknown tool: ${name} (known: ${Object.keys(this.config.tools ?? {}).join(', ') || 'none'})`);
-      const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).map(([k, v]) => [k, String(v)]));
+      const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
       return runTool({root: this.#loaded.root, stateDir: this.#loaded.stateDir, shell: this.config.shell}, name, tool, params, num(p, 'maxChars') ?? 6000);
     },
 

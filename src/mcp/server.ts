@@ -5,7 +5,7 @@ import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {z} from 'zod';
 import {loadConfig} from '../config/load.ts';
-import type {PitboxConfig} from '../config/schema.ts';
+import {toolParams, type PitboxConfig} from '../config/schema.ts';
 import {connect, resolveProject, type DaemonClient} from '../daemon/client.ts';
 import {VERSION} from '../daemon/info.ts';
 import {formatResult} from '../format.ts';
@@ -69,7 +69,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Typical answer: the matching log lines per service, up to 20 each.
   tool('trace', "What the stand's services and actors logged for an action: its trace id (from the action's answer, or the last action) searched in their logs.", {id: opt.str(), lines: opt.num()}, 'trace');
   for (const [name, t] of Object.entries(config.tools ?? {})) {
-    const shape: Shape = Object.fromEntries(Object.entries(t.params ?? {}).map(([k, d]) => [k, z.string().describe(d)]));
+    const shape: Shape = Object.fromEntries(toolParams(t).map(p => [p.name, p.optional ? z.string().optional().describe(p.description) : z.string().describe(p.description)]));
     tool(`tool_${name}`, t.description ?? t.run, shape, 'tool', a => ({name, params: a}));
   }
 

@@ -48,6 +48,17 @@ describe('config', () => {
     await expect(loadConfig({cwd: dir})).rejects.toThrow(/missing query/);
   });
 
+  it('takes optional tool parameters and lists them marked as such', async () => {
+    const {formatResult} = await import('./format.ts');
+    const {describeTool} = await import('./stand/tools.ts');
+    const dir = tmp();
+    const tools = {todo: {description: 'open tasks', run: 'todo {area} {platforms}', params: {area: 'which area', platforms: {description: 'which platforms', default: 'all'}}}};
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({tools}));
+    const {config} = await loadConfig({cwd: dir});
+    const listed = Object.entries(config.tools ?? {}).map(([n, t]) => describeTool(n, t));
+    expect(formatResult('tools', listed)).toBe('todo(area, platforms?) — open tasks');
+  });
+
   it('collects exposed ports from services, extra reverses and the mock', () => {
     expect(exposedPorts({services: {a: {expose: [3000, 8080]}, b: {expose: 3000}}, android: {reverse: [8097]}, mocks: {llm: {port: 4010}}})).toEqual([3000, 4010, 8080, 8097]);
   });

@@ -2,7 +2,7 @@
 // the CLI and as MCP tools, with parameters quoted for the shell and output kept short.
 
 import path from 'node:path';
-import type {ToolConfig} from '../config/schema.ts';
+import {toolParams, type ToolConfig} from '../config/schema.ts';
 import {quoteArg, resolveShell, runShell} from '../util/proc.ts';
 import {clipMiddle, renderTemplate} from '../util/text.ts';
 import type {StandContext} from './services.ts';
@@ -11,7 +11,16 @@ export type ToolResult = {code: number | null; ms: number; output: string; timed
 
 export const runTool = async (ctx: StandContext, name: string, tool: ToolConfig, params: Record<string, string>, maxChars = 6000): Promise<ToolResult> => {
   const shell = resolveShell(ctx.shell);
-  const command = renderTemplate(tool.run, params, v => quoteArg(v, shell.kind));
+  const filled = {...params};
+  const dropped = new Set<string>();
+  for (const p of toolParams(tool)) {
+    if (filled[p.name] !== undefined || !p.optional) continue;
+    if (p.default !== undefined) filled[p.name] = p.default;
+    else dropped.add(p.name);
+  }
+  // An optional parameter with no value and no default leaves no argument behind, not an empty one.
+  const run = tool.run.replace(/\{(\w+)\}/g, (m, key: string) => (dropped.has(key) ? '' : m));
+  const command = renderTemplate(run, filled, v => quoteArg(v, shell.kind));
   const r = await runShell(command, {
     cwd: tool.cwd ? path.resolve(ctx.root, tool.cwd) : ctx.root,
     env: {...process.env, ...ctx.env, ...tool.env},
@@ -22,4 +31,4 @@ export const runTool = async (ctx: StandContext, name: string, tool: ToolConfig,
   return {code: r.code, ms: r.ms, output: clipMiddle(out, maxChars), timedOut: r.timedOut};
 };
 
-export const describeTool = (name: string, tool: ToolConfig) => ({name, description: tool.description ?? tool.run, params: tool.params ?? {}});
+export const describeTool = (name: string, tool: ToolConfig) => ({name, description: tool.description ?? tool.run, params: toolParams(tool)});
