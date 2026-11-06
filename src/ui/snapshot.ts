@@ -338,7 +338,7 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
   const hits = snap.nodes.map((n, i) => ({n, i})).filter(({n, i}) => match(n, i));
   if (!hits.length) {
     const prompt = permissionPrompt(snap);
-    throw new Error(`nothing matches "${sel}"${prompt ? ` — a permission request is on top: "${prompt}"` : ''}`);
+    throw new Error(`nothing matches "${sel}"${prompt ? ` — a permission request is on top: "${prompt}"` : missHint(snap, sel)}`);
   }
   // Android lists a dialog's window first, so reading order already puts it ahead. An Apple runner lists an app's
   // alert after the screen it covers and the shell's alert after the app: a button there that repeats a row behind
@@ -406,6 +406,85 @@ export const matches = (snap: Snapshot, selector: string) => {
   } catch {
     return false;
   }
+};
+
+const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+/** Words of a name, an id split at its separators and its camel case too (`applyCode`, `apply-code`). */
+const wordsOf = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+const distance = (a: string, b: string): number => {
+  let prev = Array.from({length: b.length + 1}, (_, k) => k);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let k = 1; k <= b.length; k++) cur[k] = Math.min(prev[k]! + 1, cur[k - 1]! + 1, prev[k - 1]! + (a[i - 1] === b[k - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length]!;
+};
+
+/** How alike two names are, 0 to 1: shared words, one inside the other, or few edits apart. */
+export const similarity = (a: string, b: string): number => {
+  const x = norm(a).slice(0, 80);
+  const y = norm(b).slice(0, 80);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  const wx = new Set(wordsOf(x));
+  const wy = new Set(wordsOf(y));
+  const all = new Set([...wx, ...wy]).size;
+  const shared = all ? [...wx].filter(w => wy.has(w)).length / all : 0;
+  const inside = x.includes(y) || y.includes(x) ? 0.5 + (0.5 * Math.min(x.length, y.length)) / Math.max(x.length, y.length) : 0;
+  const edits = 1 - distance(x, y) / Math.max(x.length, y.length);
+  return Math.max(shared, inside, edits);
+};
+
+export type Candidate = {index: number; ref: string; line: string; selector?: string; score: number};
+
+/**
+ * What on screen looks most like what a selector asked for, best first: a renamed id, reworded text, a label that
+ * moved into the text. Only nodes with a line, only when they are alike enough to be worth a look — a hint for the
+ * one who reads the error, never a node to act on in the selector's place.
+ */
+export const closest = (snap: Snapshot, selector: string, limit = 3): Candidate[] => {
+  const sel = selector.trim();
+  if (/^@e\d+$/.test(sel) || /^\d+\s*,\s*\d+$/.test(sel)) return [];
+  const m = /^(id|text|label)~?=(.*)$/s.exec(sel);
+  const field = m?.[1] ?? 'any';
+  const want = (m ? m[2]! : sel).replace(/^["']|["']$/g, '');
+  if (!want.trim()) return [];
+  const out: Candidate[] = [];
+  for (const [index, ref] of snap.refOf) {
+    const n = snap.nodes[index]!;
+    const named: [string, string | undefined][] = [['id', n.id], ['text', n.t ?? snap.shown?.get(index)], ['label', n.d]];
+    // The field asked for counts in full, the others a little less: an id renamed is likelier than a text gone.
+    const score = Math.max(...named.map(([f, v]) => (v ? similarity(want, v) * (field === 'any' || f === field ? 1 : 0.8) : 0)));
+    if (score < 0.5) continue;
+    const line = snap.lines.find(l => l.startsWith(`${ref} `)) ?? ref;
+    const best = selectorFor(snap, index);
+    out.push({index, ref, line, score: score + (interactive(n) ? 0.01 : 0), ...(/^\d+,\d+$/.test(best) ? {} : {selector: best})});
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, limit);
+};
+
+/** A Compose view without a single id under it: Compose reports test tags only when a root opts in. */
+const composeWithoutIds = (snap: Snapshot): boolean => {
+  const compose = snap.nodes.flatMap((n, i) => (/ComposeView$/.test(n.c) ? [i] : []));
+  if (!compose.length) return false;
+  const under = (i: number) => {
+    for (let k = snap.nodes[i]!.p, seen = 0; k >= 0 && seen < 256; k = snap.nodes[k]!.p, seen++) if (compose.includes(k)) return true;
+    return false;
+  };
+  return !snap.nodes.some((n, i) => n.id && under(i));
+};
+
+/** The end of a "nothing matches" error: the closest nodes on screen, or why an id cannot be there at all. */
+export const missHint = (snap: Snapshot, selector: string): string => {
+  const parts: string[] = [];
+  if (/^id~?=/.test(selector.trim()) && composeWithoutIds(snap)) {
+    parts.push('this screen is Jetpack Compose and shows no ids: Compose reports a testTag as an id only under Modifier.semantics { testTagsAsResourceId = true } on a root composable');
+  }
+  const near = closest(snap, selector);
+  if (near.length) parts.push(`closest: ${near.map(c => `${c.line}${c.selector ? ` → ${c.selector}` : ''}`).join('; ')}`);
+  return parts.length ? ` — ${parts.join('; ')}` : '';
 };
 
 /** The best selector to record for a node: id, then exact text, then label, then its centre. */

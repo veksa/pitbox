@@ -2,7 +2,7 @@ import {describe, expect, it} from 'vitest';
 import {fillRoute, parseFlow, tokenize, validateFlow} from './flows/flow.ts';
 import {runFlow, type FlowHost} from './flows/run.ts';
 import type {DeviceUi} from './ui/device.ts';
-import {buildSnapshot, diffSnapshots, resolveTarget, selectorFor, type UiNode, type UiWindow} from './ui/snapshot.ts';
+import {buildSnapshot, closest, diffSnapshots, resolveTarget, selectorFor, type UiNode, type UiWindow} from './ui/snapshot.ts';
 
 const windows: UiWindow[] = [
   {type: 'system', title: '', pkg: 'com.android.systemui'},
@@ -136,6 +136,29 @@ describe('snapshot', () => {
     expect(resolveTarget(nb, 'About this device').node?.c).toBe('Button');
     expect(resolveTarget(nb, 'text="about this device"').node?.c).toBe('Button');
     expect(() => resolveTarget(snap, 'text=Nope')).toThrow(/nothing matches/);
+  });
+
+  it('names the closest controls when a selector matches nothing, and nothing when none is alike', () => {
+    expect(() => resolveTarget(snap, 'id=getStarted')).toThrow('closest: @e2 button "Get started" #get-started → id=get-started');
+    expect(() => resolveTarget(snap, 'text="Get started now"')).toThrow(/closest: @e2 button "Get started"/);
+    // A label the agent remembered as text.
+    expect(closest(snap, 'text=Serch')[0]).toMatchObject({ref: '@e4', selector: 'label="Search"'});
+    expect(closest(snap, 'id=checkout')).toEqual([]);
+    expect(() => resolveTarget(snap, 'id=checkout')).toThrow(/^nothing matches "id=checkout"$/);
+    expect(closest(snap, '@e9')).toEqual([]);
+  });
+
+  it('says a Compose screen hides its test tags when an id selector misses there', () => {
+    const compose = buildSnapshot(windows, [
+      {p: -1, w: 1, c: 'AndroidComposeView', b: [0, 0, 1080, 2400]},
+      {p: 0, w: 1, c: 'View', b: [0, 100, 1080, 200], t: 'Sign in', f: 'c'},
+    ]);
+    expect(() => resolveTarget(compose, 'id=sign-in')).toThrow(/testTagsAsResourceId = true.*closest: @e1 button "Sign in"/);
+    const tagged = buildSnapshot(windows, [
+      {p: -1, w: 1, c: 'AndroidComposeView', b: [0, 0, 1080, 2400]},
+      {p: 0, w: 1, c: 'View', b: [0, 100, 1080, 200], t: 'Sign in', id: 'sign-in-button', f: 'c'},
+    ]);
+    expect(() => resolveTarget(tagged, 'id=sign-in')).toThrow(/^nothing matches "id=sign-in" — closest: @e1 button "Sign in" #sign-in-button → id=sign-in-button$/);
   });
 
   it('records stable selectors: id, then unique text, then label', () => {

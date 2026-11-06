@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
@@ -634,7 +634,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
           ? ` — a system dialog is on top: "${dialog}" (doctor fix=true dismisses it)`
           : permission
             ? ` — a permission request is on top: "${permission}" (press its Allow or Deny, or grant it before: settings grant=<permission>)`
-            : '';
+            : opts.gone ? '' : missHint(snap, selector);
         throw new Error(`timed out after ${Math.round((opts.timeoutMs ?? 10_000) / 1000)}s waiting for ${opts.gone ? `"${selector}" to go` : `"${selector}"`}${why}`);
       }
       await new Promise(r => setTimeout(r, 300));
