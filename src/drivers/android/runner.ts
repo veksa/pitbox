@@ -23,6 +23,16 @@ export const runnerApk = (): string => {
 
 type Pending = {resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout};
 
+/**
+ * The shell command that starts the runner on the device, detached. `--no-hidden-api-checks` lets the
+ * instrumentation reach the platform's hidden APIs; `am` has the option from Android 9 (API 28) on and
+ * refuses to start at all with it before, so older devices start without it.
+ */
+export function instrumentCommand(sdk: number): string {
+  const hidden = !Number.isFinite(sdk) || sdk >= 28 ? ' --no-hidden-api-checks' : '';
+  return `rm -f ${RUNNER_OUT}; nohup am instrument -w -r${hidden} -e port ${DEVICE_PORT} ${RUNNER_PACKAGE}/.RunnerInstrumentation > ${RUNNER_OUT} 2>&1 &`;
+}
+
 export class AndroidRunner {
   readonly serial: string;
   readonly #driver: AndroidDriver;
@@ -89,7 +99,9 @@ export class AndroidRunner {
     await this.#driver.shell(this.serial, `am force-stop ${RUNNER_PACKAGE}`);
     // Started on the device under nohup: the UiAutomation connection lives in the `am` process, so a runner tied
     // to this daemon's adb session would die with it and take every other daemon's connection along.
-    await this.#driver.shell(this.serial, `rm -f ${RUNNER_OUT}; nohup am instrument -w -r --no-hidden-api-checks -e port ${DEVICE_PORT} ${RUNNER_PACKAGE}/.RunnerInstrumentation > ${RUNNER_OUT} 2>&1 &`);
+    // Unread (an empty answer), the level is unknown and the option stays, as before.
+    const sdk = Number((await this.#driver.shell(this.serial, 'getprop ro.build.version.sdk').catch(() => '')).trim()) || Number.NaN;
+    await this.#driver.shell(this.serial, instrumentCommand(sdk));
     const deadline = Date.now() + 60_000;
     let output = '';
     while (Date.now() < deadline) {

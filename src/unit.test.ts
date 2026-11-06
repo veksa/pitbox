@@ -6,6 +6,7 @@ import {failed, parseArgs, toCall} from './cli.ts';
 import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
+import {instrumentCommand} from './drivers/android/runner.ts';
 import {parseProbe, probePort} from './stand/health.ts';
 import {pickReply} from './stand/llmMock.ts';
 import {orderServices, restartOrder, stopOrder} from './stand/services.ts';
@@ -455,5 +456,17 @@ describe('the npm package', () => {
     const shipped = (p: string) => files.some(f => f === p || f.startsWith(`${p}/`) || p.startsWith(`${f}/`));
     const missing = fs.readdirSync('runners/apple').filter(e => !e.startsWith('.')).map(e => `runners/apple/${e}`).filter(p => !shipped(p));
     expect(missing).toEqual([]);
+  });
+});
+
+describe('android runner start', () => {
+  it('passes --no-hidden-api-checks only where am takes it (API 28 and later)', () => {
+    expect(instrumentCommand(26)).not.toContain('--no-hidden-api-checks');
+    expect(instrumentCommand(27)).not.toContain('--no-hidden-api-checks');
+    expect(instrumentCommand(28)).toContain('--no-hidden-api-checks');
+    expect(instrumentCommand(36)).toContain('--no-hidden-api-checks');
+    // An unreadable level keeps the option, as before.
+    expect(instrumentCommand(Number.NaN)).toContain('--no-hidden-api-checks');
+    expect(instrumentCommand(26)).toMatch(/^rm -f \S+; nohup am instrument -w -r -e port \d+ dev\.pitbox\.runner\/\.RunnerInstrumentation > \S+ 2>&1 &$/);
   });
 });
