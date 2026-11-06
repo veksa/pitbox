@@ -249,10 +249,13 @@ export const suggestFix = (step: Step, error: string, snap: Snapshot): string | 
   return step.text.replace(sel, best.selector);
 };
 
-export const runFlow = async (host: FlowHost, source: string, params: Record<string, string> = {}, depth = 0): Promise<FlowResult> => {
+export const runFlow = async (host: FlowHost, source: string, params: Record<string, string> = {}, depth = 0, from = 0): Promise<FlowResult> => {
   const t0 = Date.now();
   const notes: string[] = [];
-  const steps = parseFlow(source, params);
+  const all = parseFlow(source, params);
+  // Resuming at a line (after a failed step was fixed on the screen it failed on) skips what came before it.
+  const steps = from > 0 ? all.filter(s => s.line >= from) : all;
+  if (from > 0 && !steps.length) return {ok: false, steps: 0, ms: 0, failed: {line: from, step: 'from', error: `no step at or after line ${from}`}, notes};
   const errors = validateFlow(steps);
   if (errors.length) return {ok: false, steps: 0, ms: 0, failed: {line: 0, step: 'validate', error: errors.join('; ')}, notes};
   let done = 0;

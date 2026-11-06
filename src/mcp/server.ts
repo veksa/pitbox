@@ -146,8 +146,8 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Flows — run in the daemon: one call, one verdict.
   tool(
     'run',
-    'Run a flow (file name or inline steps) in the daemon: one verdict; on failure the line, error, a suggested fix, crashes and screen. matrix: once per config variant.',
-    {flow: opt.str(), steps: opt.str(), params, matrix: opt.bool(), device},
+    'Run a flow (file name or inline steps) in the daemon: one verdict; on failure the line, error, a suggested fix, crashes and screen. from: start at that line. matrix: once per config variant.',
+    {flow: opt.str(), steps: opt.str(), params, from: opt.num(), matrix: opt.bool(), device},
     a => (a.matrix ? 'matrix' : 'run'),
   );
   tool('goto', 'Open a screen by a config route.', {route: z.string(), params, device}, 'goto');

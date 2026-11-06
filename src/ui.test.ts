@@ -300,8 +300,12 @@ describe('flows', () => {
     expect(none.failed?.fix).toBeUndefined();
   });
 
-  it('notes a press that changed nothing', async () => {
-    const {host} = fakeHost([['Home']]);
+  it('resumes a flow at a line and notes a press that changed nothing', async () => {
+    const {host, calls} = fakeHost([['Welcome', 'Next'], ['Home']]);
+    const r = await runFlow(host, 'open!\npress text=Next\n\nexpect text=Welcome', {}, 0, 3);
+    expect(r).toMatchObject({ok: true, steps: 1});
+    expect(calls).toEqual([]);
+    expect((await runFlow(host, 'open', {}, 0, 9)).failed?.error).toBe('no step at or after line 9');
     const ui = await host.ui();
     host.ui = async () => ({...ui, press: async () => ({diff: {changed: false}, note: 'the tap closed the keyboard'})}) as unknown as DeviceUi;
     const quiet = await runFlow(host, 'press text=Home');

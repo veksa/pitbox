@@ -60,7 +60,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   media [selector]              is it playing? motion and brightness of a region, compared on the device
 
 flows
-  run <flow> [param=value…] | run --steps "press id=a"   run a flow in the daemon, get one verdict
+  run <flow> [param=value…] [--from line] | run --steps "press id=a"   run a flow in the daemon, get one verdict
   matrix <flow> [param=value…]  run a flow over the config's variants (devices, font scale, dark, locale)
   goto <route> [param=value…] · as <user>
   record start | record stop [name]
@@ -226,7 +226,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'shot':
       return {method: 'uiShot', params: {device, name: rest[0], scale: flags.scale}};
     case 'run':
-      return {method: 'run', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
+      return {method: 'run', params: {device, flow: rest[0], steps: flags.steps, from: flags.from, params: kv(rest.slice(1))}};
     case 'matrix':
       return {method: 'matrix', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
     case 'goto':

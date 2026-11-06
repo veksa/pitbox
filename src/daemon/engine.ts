@@ -1403,7 +1403,7 @@ export class Engine {
       const device = str(p, 'device');
       const source = str(p, 'steps') ?? this.#loadFlow(req(p, 'flow'));
       const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).map(([k, v]) => [k, String(v)]));
-      return runFlow(this.#flowHost(device), source, params);
+      return runFlow(this.#flowHost(device), source, params, 0, num(p, 'from') ?? 0);
     },
 
     matrix: async (p: Params) => {
