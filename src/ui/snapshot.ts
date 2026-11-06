@@ -471,17 +471,25 @@ export const onlyClosedKeyboard = (before: Snapshot, after: Snapshot): boolean =
   if (!closed && !blurred) return false;
   // A window the keyboard had shrunk grows back: what shows up where the keyboard was (more rows of a list) is
   // the screen coming back, not the tap's doing.
-  const imeNodes = before.nodes.filter(n => before.windows[n.w]?.type === 'ime');
-  const imeTop = imeNodes.length ? Math.min(...imeNodes.map(n => n.b[1])) : Infinity;
+  // Its keys, not its window: an input method's window can span the whole screen (Gboard's does), which would
+  // make all of the screen "where the keyboard was".
+  const screen = Math.max(0, ...before.nodes.map(n => n.b[3]));
+  const imeTop = keyboardTop(before, screen) ?? Infinity;
   const key = (n: UiNode) => `${n.c}|${n.id ?? ''}|${n.t ?? ''}|${n.d ?? ''}|${n.h ?? ''}|${(n.f ?? '').replace(/[FA]/g, '')}`;
   const left = new Map<string, number>();
   for (const n of before.nodes) if (before.windows[n.w]?.type !== 'ime') left.set(key(n), (left.get(key(n)) ?? 0) + 1);
-  for (const n of after.nodes) {
+  // Rows shown where the keyboard was belong to a list that scrolls; anything else new there (a note under the
+  // control that was pressed, "Saved") is what the tap did.
+  const inScroller = (i: number): boolean => {
+    for (let k = after.nodes[i]!.p; k >= 0; k = after.nodes[k]!.p) if (has(after.nodes[k]!, 's')) return true;
+    return false;
+  };
+  for (const [i, n] of after.nodes.entries()) {
     if (after.windows[n.w]?.type === 'ime') continue;
     const k = key(n);
     const count = left.get(k) ?? 0;
     if (count > 0) left.set(k, count - 1);
-    else if (n.b[1] < imeTop) return false;
+    else if (n.b[1] < imeTop || !inScroller(i)) return false;
   }
   return [...left.values()].every(c => c === 0);
 };

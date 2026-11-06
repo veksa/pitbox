@@ -228,6 +228,20 @@ describe('apple driver', () => {
     // The window grows back where the keyboard was and shows more rows: still only the keyboard.
     const grown = buildSnapshot([app], [list, {...field, f: 'e'}, greet, {p: 0, w: 0, c: 'Text', b: [16, 700, 386, 740], t: 'Row 12'}]);
     expect(onlyClosedKeyboard(up, grown)).toBe(true);
+    // Something new where the keyboard was, outside any list (a note under the pressed control): the tap's doing.
+    const form = {p: -1, w: 0, c: 'View', b: [0, 0, 402, 874]} as const;
+    const save = {p: 0, w: 0, c: 'Button', b: [16, 540, 386, 580], f: 'c', id: 'save'} as const;
+    const editing = buildSnapshot([app, {type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'}], [form, {...field, p: 0}, save, {p: -1, w: 1, c: 'Keyboard', b: [0, 583, 402, 874]}]);
+    const noted = buildSnapshot([app], [form, {...field, p: 0, f: 'e'}, save, {p: 0, w: 0, c: 'Text', b: [16, 600, 386, 620], t: 'Saved just now'}]);
+    expect(onlyClosedKeyboard(editing, noted)).toBe(false);
+    // An input method whose window spans the whole screen, its keys at its foot (Android's Gboard): the keys mark
+    // where the keyboard was, so a note under the pressed control is still the tap's doing.
+    const gboard = buildSnapshot(
+      [app, {type: 'ime', title: 'keyboard', pkg: 'com.google.android.inputmethod.latin'}],
+      [list, {...field, p: 0}, {...save, p: 0}, {p: -1, w: 1, c: 'FrameLayout', b: [0, 40, 402, 874]}, {p: 3, w: 1, c: 'Key', b: [0, 650, 402, 874], t: 'return', f: 'c'}],
+    );
+    const saved = buildSnapshot([app], [list, {...field, p: 0, f: 'e'}, {...save, p: 0}, {p: 0, w: 0, c: 'Text', b: [16, 590, 386, 610], t: 'Saved just now'}]);
+    expect(onlyClosedKeyboard(gboard, saved)).toBe(false);
     // No keyboard on screen (a hardware one), only the field's focus taken: the tap did not reach the control.
     const focused = buildSnapshot([app], [list, field, greet]);
     expect(onlyClosedKeyboard(focused, closed)).toBe(true);
