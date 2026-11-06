@@ -437,6 +437,13 @@ export const similarity = (a: string, b: string): number => {
   return Math.max(shared, inside, edits);
 };
 
+/**
+ * Ids Android gives the containers of every window (`android:id/content`, the action bar's): the runner reports ids
+ * without their package, so these read like an app's own, and every screen has them. Never a suggestion: a check on
+ * one passes on any screen.
+ */
+const FRAMEWORK_IDS = new Set(['content', 'action_bar_root', 'action_bar_container', 'action_bar', 'action_mode_bar_stub', 'decor_content_parent', 'statusBarBackground', 'navigationBarBackground']);
+
 export type Candidate = {index: number; ref: string; line: string; selector?: string; score: number};
 
 /**
@@ -454,6 +461,7 @@ export const closest = (snap: Snapshot, selector: string, limit = 3): Candidate[
   const out: Candidate[] = [];
   for (const [index, ref] of snap.refOf) {
     const n = snap.nodes[index]!;
+    if (n.id && FRAMEWORK_IDS.has(n.id) && !n.t && !n.d && !interactive(n)) continue;
     const named: [string, string | undefined][] = [['id', n.id], ['text', n.t ?? snap.shown?.get(index)], ['label', n.d]];
     // The field asked for counts in full, the others a little less: an id renamed is likelier than a text gone.
     const score = Math.max(...named.map(([f, v]) => (v ? similarity(want, v) * (field === 'any' || f === field ? 1 : 0.8) : 0)));
@@ -503,6 +511,7 @@ export const outcomeStep = (before: Snapshot, after: Snapshot): string | undefin
     const all = [selectorFor(snap, i), ...(text ? [`text=${JSON.stringify(text)}`] : []), ...(n.d ? [`label=${JSON.stringify(n.d)}`] : [])];
     return [...new Set(all)].filter(sel => {
       if (/^\d+,\d+$/.test(sel) || (!sel.startsWith('id=') && /\d/.test(sel))) return false;
+      if (sel.startsWith('id=') && FRAMEWORK_IDS.has(sel.slice(3))) return false;
       // Proved against the screen it names: the selector finds this node and nothing in its place.
       try {
         return resolveTarget(snap, sel).index === i;

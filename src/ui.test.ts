@@ -146,6 +146,9 @@ describe('snapshot', () => {
     expect(closest(snap, 'id=checkout')).toEqual([]);
     expect(() => resolveTarget(snap, 'id=checkout')).toThrow(/^nothing matches "id=checkout"$/);
     expect(closest(snap, '@e9')).toEqual([]);
+    // A window's own container is on every screen: never offered for a list that went missing.
+    const root = buildSnapshot(windows, [{p: -1, w: 1, c: 'FrameLayout', b: [0, 0, 1080, 2400], id: 'content'}, {p: 0, w: 1, c: 'TextView', b: [0, 0, 500, 80], t: 'Title'}]);
+    expect(closest(root, 'id=content_list')).toEqual([]);
   });
 
   it('says a Compose screen hides its test tags when an id selector misses there', () => {
