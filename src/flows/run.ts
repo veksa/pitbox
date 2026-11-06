@@ -239,13 +239,21 @@ const missedSelector = (error: string): string | undefined => /^(?:nothing match
 
 /**
  * The failed step with its selector replaced by the control on screen most like it, when one stands out from the
- * rest. Only a suggestion: a step is never run against a control it did not name.
+ * rest and the new selector finds it on that screen. Only a suggestion: a step is never run against a control it
+ * did not name.
  */
 export const suggestFix = (step: Step, error: string, snap: Snapshot): string | undefined => {
   const sel = missedSelector(error);
   if (!sel || !step.text.includes(sel)) return undefined;
   const [best, next] = closest(snap, sel, 2);
   if (!best?.selector || (next && best.score - next.score < 0.1)) return undefined;
+  // Checked on the screen the flow stopped at, without acting: the new selector finds that control and no other
+  // one before it (a case or spacing twin, an alert on top).
+  try {
+    if (resolveTarget(snap, best.selector).index !== best.index) return undefined;
+  } catch {
+    return undefined;
+  }
   return step.text.replace(sel, best.selector);
 };
 
