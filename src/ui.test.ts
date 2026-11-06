@@ -855,3 +855,30 @@ describe('back where the device has no back key (iOS)', () => {
     expect(r.note).toMatch(/swiped in from the left edge/);
   });
 });
+
+describe('the step an action answers with', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const tree: UiNode[] = [
+    {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400]},
+    {p: 0, w: 0, c: 'Button', b: [40, 100, 1040, 200], t: 'Sign in', id: 'sign-in', f: 'c'},
+    {p: 0, w: 0, c: 'EditText', b: [40, 300, 1040, 380], h: 'Email', id: 'email', f: 'ce'},
+  ];
+  const ui = async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const runner = {
+      call: async (cmd: string) => (cmd === 'tree' ? {windows: app, nodes: tree} : cmd === 'info' ? {width: 1080, height: 2400} : cmd === 'text' ? {set: true} : {idle: true}),
+      stop: async () => undefined,
+    };
+    return new DeviceUi('dev', runner as never);
+  };
+
+  it('names the selector a flow would use when the action got a ref or plain words, and stays quiet otherwise', async () => {
+    const d = await ui();
+    await d.snapshot();
+    expect((await d.press('@e1')).step).toBe('press id=sign-in');
+    expect((await d.press('Sign in')).step).toBe('press id=sign-in');
+    expect((await d.press('id=sign-in')).step).toBeUndefined();
+    expect((await d.fill('@e2', 'a@example.test')).step).toBe('fill id=email "a@example.test"');
+    expect((await d.fill('id=email', 'a@example.test')).step).toBeUndefined();
+  }, 30_000);
+});

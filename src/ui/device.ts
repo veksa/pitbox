@@ -13,7 +13,7 @@ import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matc
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
 
-export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
+export type ActResult = {action: string; target?: string; /** The flow step that repeats the action, when it differs from what the action was given. */ step?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
 export type UiHooks = {
   /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
@@ -87,9 +87,18 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return this.#size;
   }
 
-  record(line: string) {
+  /**
+   * Adds a step to the recording. `chosen` is the selector the step names when the action picked it (from a ref,
+   * plain words or a point): the action's answer then shows the step, so an agent writes flows from what it did.
+   */
+  record(line: string, chosen?: string) {
     this.recording?.push(line);
+    if (chosen !== undefined && chosen !== this.#asked) this.#step = line;
   }
+
+  /** The selector the current action was given, and the step to show in its answer. */
+  #asked?: string;
+  #step?: string;
 
   /** System offers declined and overlays closed on the way (iOS "Save Password?", React Native's warnings toast), told in the next press's note. */
   declined: string[] = [];
@@ -185,6 +194,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   /** Resolves against the last snapshot for refs, against a fresh one for everything else. */
   async #target(selector: string) {
+    this.#asked = selector.trim();
     const ref = /^@e\d+$/.test(selector.trim());
     let snap = ref && this.last ? this.last : await this.snapshot();
     // Right after text went in, the keyboard can show up a moment after the screen looked settled; a tap taken
@@ -289,7 +299,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async #end(since: number, note?: string) {
     const c = await this.crashesSince(since);
     const notes = [note, ...(this.runner.notices?.splice(0) ?? [])].filter(Boolean);
-    return {...(notes.length ? {note: notes.join('; ')} : {}), ...(c.length ? {crashes: c} : {})};
+    return {...(notes.length ? {note: notes.join('; ')} : {}), ...(c.length ? {crashes: c} : {}), ...(this.#step ? {step: this.#step} : {})};
   }
 
   /** Tells the crash source which apps were on screen just before the input: the snapshot the action used. */
@@ -299,6 +309,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   #begin() {
     this.phases = {};
+    this.#asked = undefined;
+    this.#step = undefined;
     this.#trace = this.#hooks.beforeAction?.();
     return Date.now();
   }
@@ -311,8 +323,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
     await this.runner.call(kind, {x: at.x, y: at.y, ...aim(target.node, snap)});
     t = this.#phase('input', t);
-    if (target.index !== undefined) this.record(`${kind === 'tap' ? 'press' : kind} ${selectorFor(snap, target.index)}`);
-    else this.record(`${kind === 'tap' ? 'press' : kind} ${target.x},${target.y}`);
+    const chosen = target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`;
+    this.record(`${kind === 'tap' ? 'press' : kind} ${chosen}`, chosen);
     let settled = await this.#settle(snap);
     let note: string | undefined = at.coveredBy
       ? at.x === target.x && at.y === target.y
@@ -371,7 +383,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       r = await this.runner.call<{set: boolean}>('text', {text, ...(node && (node.f ?? '').includes('e') ? {bounds: node.b} : {})});
     }
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
-    this.record(`fill ${target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`} ${quote(text)}`);
+    const chosen = target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`;
+    this.record(`fill ${chosen} ${quote(text)}`, chosen);
     this.#typed = true;
     const settled = await this.#settle(snap);
     return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
@@ -452,10 +465,10 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       const steps = Math.max(1, Math.min(opts.steps ?? 3, 50));
       // One notch per event, as a wheel sends them; negative scrolls the content down.
       for (let i = 0; i < steps; i++) await this.runner.call('mouse', {action: 'wheel', x, y, amount: opts.direction === 'up' ? 1 : -1});
-      this.record(`mouse wheel ${opts.direction ?? 'down'} ${steps}${label ? ` ${label}` : ''}`);
+      this.record(`mouse wheel ${opts.direction ?? 'down'} ${steps}${label ? ` ${label}` : ''}`, label || undefined);
     } else {
       await this.runner.call('mouse', {action, x, y});
-      this.record(`mouse ${action} ${label}`);
+      this.record(`mouse ${action} ${label}`, label);
     }
     return {action: `mouse ${action}`, target: label || undefined, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
