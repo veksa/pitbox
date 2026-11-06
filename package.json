@@ -1,6 +1,6 @@
 {
   "name": "@veksa/pitbox",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Run, drive and debug apps on emulators, simulators and devices from one MCP server — fast and token-lean",
   "license": "MIT",
   "author": "Aleksandr Khizhnyi <mendler88@gmail.com>",
