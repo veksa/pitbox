@@ -117,7 +117,8 @@ describe('mac apps', () => {
     expect(await macPermissions.check({} as DoctorContext)).toEqual([]);
   });
 
-  it('talks to the runner in JSON lines: the app, the selected window and Mac key codes in every request', async () => {
+  // The stand-in runner is a shebang script, which Windows cannot start; the Mac runner exists only on macOS.
+  it.skipIf(process.platform === 'win32')('talks to the runner in JSON lines: the app, the selected window and Mac key codes in every request', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-mac-runner-'));
     // A stand-in runner that answers with what it was asked.
     const fake = path.join(dir, 'runner.mjs');
@@ -141,7 +142,7 @@ describe('mac apps', () => {
     }
   });
 
-  it('follows the window in front once an action closes the window it followed, and says so', async () => {
+  it.skipIf(process.platform === 'win32')('follows the window in front once an action closes the window it followed, and says so', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-mac-runner-'));
     // A stand-in runner for an app with two windows, where ⌘W closes the selected one.
     const fake = path.join(dir, 'runner.mjs');
