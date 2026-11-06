@@ -62,7 +62,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 ## Writing and fixing flows
 
 - **Write a flow while walking the path.** An action given a ref or plain words answers with the step a flow
-  would use (`step: press id=sign-in`); copy those lines into the flow file. An action given a selector that is
+  would use and the check that proves it (`step: press id=sign-in` / `expect id=home`); copy those lines into the
+  flow file. An action given a selector that is
   already a step prints none.
 - **A selector that misses names what is there instead:** `nothing matches "id=apply" — closest: @e31 button
   "Apply code" #apply-code → id=apply-code`. On a Compose screen with no ids at all it says that Compose hides its

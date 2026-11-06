@@ -42,7 +42,8 @@ and, when one of them stands out, the step rewritten for it:
   fix? line 7: press id=apply-code
 ```
 
-The fix is a suggestion, never applied: a step only ever acts on the control it names. The failed screen stays
+The fix is offered only when its selector finds that control on the failed screen, and it is a suggestion, never
+applied: a step only ever acts on the control it names. The failed screen stays
 as it was and its refs are live, so the step can be tried there (`press @e31`), the file patched, and the rest of
 the flow run from the broken line with `pitbox run checkout --from 7` (MCP: `from: 7`). A `press` that passed but
 changed nothing on screen is named in the notes of the run: it may have passed the wrong way.
@@ -146,8 +147,12 @@ pitbox record stop checkout          # saves flows/checkout.flow
 ```
 
 Recorded steps use `id=`, then unique `text=`, then `label=`; coordinates only when nothing else identifies the
-node. Without recording, an action given a ref, plain words or a point answers with the step that repeats it
-(`step: press id=sign-in`), so a flow can be written from the actions that just worked.
+node. Each press is followed by the check that proves it worked: a control that appeared (`expect id=receipt`),
+or, when nothing appeared, one that went away (`expect gone text="Enter a code"`) — ids first, never a text with
+digits in it (a count or a time differs next run), never the keyboard. So a replayed press that no longer has its
+effect fails at once instead of at a later step. Without recording, an action given a ref, plain words or a point
+answers with the step that repeats it and that check (`step: press id=sign-in` / `expect id=home`), so a flow can
+be written from the actions that just worked.
 
 ## Examples
 
