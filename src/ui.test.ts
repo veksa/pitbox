@@ -300,6 +300,14 @@ describe('flows', () => {
     expect(none.failed?.fix).toBeUndefined();
   });
 
+  it('notes a press that changed nothing', async () => {
+    const {host} = fakeHost([['Home']]);
+    const ui = await host.ui();
+    host.ui = async () => ({...ui, press: async () => ({diff: {changed: false}, note: 'the tap closed the keyboard'})}) as unknown as DeviceUi;
+    const quiet = await runFlow(host, 'press text=Home');
+    expect(quiet.notes).toEqual(['line 1 (press text=Home): no change on screen — the tap closed the keyboard']);
+  });
+
   it('rejects a budget it cannot read before running anything', async () => {
     const {host, calls} = fakeHost([['Home']]);
     const r = await runFlow(host, 'perf\nexpect perf speed<3');

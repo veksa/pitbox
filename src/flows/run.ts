@@ -102,7 +102,11 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'doubletap':
       {
         const r = await (await host.ui()).press(a.join(' '), s.cmd === 'press' ? 'tap' : s.cmd);
-        if (r?.note) notes.push(`line ${s.line} (${s.text}): ${r.note}`);
+        // A press that changed nothing passed, but it may have passed the wrong way: the control took no tap, or
+        // the screen already showed what the next check looks for.
+        const quiet = r?.diff && !r.diff.changed ? 'no change on screen' : undefined;
+        const note = [quiet, r?.note].filter(Boolean).join(' — ');
+        if (note) notes.push(`line ${s.line} (${s.text}): ${note}`);
       }
       return;
     case 'press?': {
