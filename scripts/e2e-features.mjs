@@ -124,9 +124,23 @@ export const featureChecks = async ({pitbox, device, dir, platform, bin}) => {
     const text = fs.existsSync(recorded) ? fs.readFileSync(recorded, 'utf8') : '';
     const replay = on(['run', 'e2e-recorded']);
     check('a recorded session becomes a flow that replays', /saved .*e2e-recorded\.flow/.test(saved.out) && /fill id=name "Rec"/.test(text) && /press id=greet/.test(text) && replay.code === 0);
+    check('a recorded press is followed by the check of its outcome', /press id=greet\nexpect (id=greeting|text="Hello, Rec")/.test(text), text);
   } finally {
     fs.rmSync(recorded, {force: true});
   }
+
+  // ---- writing and fixing flows ----
+  fresh();
+  const byWords = on(['press', 'greet']);
+  head(byWords.out, 3);
+  check('an action given plain words answers with its step and outcome', /step: press id=greet\n\s+expect (id=greeting|text="Hello, )/.test(byWords.out), byWords.out);
+  const miss = on(['press', 'id=gret']);
+  check('a selector that misses names the closest control', /nothing matches "id=gret" — closest: @e\d+ .*#greet → id=greet/.test(miss.out), miss.out);
+  const broken = steps('open!\nwait id=title 30\npress id=gret');
+  head(broken.out, 3);
+  check('a broken flow suggests the fixed step', broken.code !== 0 && /fix\? line 3: press id=greet/.test(broken.out), broken.out);
+  const resumed = on(['run', '--steps', 'press id=gret\nfill id=name "Bo"\npress id=greet\nexpect text="Hello, Bo"', '--from', '2']);
+  check('a flow resumes from a line', resumed.code === 0, resumed.out);
   steps('open!\nwait id=title 30\ntool reset\npress id=fetch\nwait text~="#1" 10');
   const save = on(['state', 'save', 'e2e']);
   head(save.out, 1);
