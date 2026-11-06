@@ -696,6 +696,44 @@ describe('a tap that only closed the keyboard', () => {
   });
 });
 
+describe('a tap whose control closes the keyboard itself', () => {
+  it('is not pressed again when what it did shows a moment later', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let keyboard = true;
+    let saved = false;
+    const calls: string[] = [];
+    const save: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 100, 400, 150], id: 'save', t: 'Save', f: 'c'};
+    // Its keys have labels, so the keyboard going is a change of the screen.
+    const keys: UiNode = {p: -1, w: 1, c: 'Key', b: [0, 300, 400, 500], t: 'return', f: 'c'};
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'tap') {
+          calls.push(cmd);
+          // The control takes the tap, closes the keyboard at once and shows that it saved after a moment.
+          keyboard = false;
+          setTimeout(() => (saved = true), 450);
+        }
+        // The keyboard going down is a stream of events: the runner is quiet only once it is down.
+        if (cmd === 'idle') {
+          await new Promise(r => setTimeout(r, 300));
+          return {idle: true};
+        }
+        if (cmd === 'tree') {
+          const nodes = [save, ...(saved ? [{p: -1, w: 0, c: 'Text', b: [0, 160, 400, 200], t: 'Saved'} as UiNode] : []), ...(keyboard ? [keys] : [])];
+          return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}, ...(keyboard ? [{type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'}] : [])], nodes};
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).press('id=save');
+    expect(calls).toEqual(['tap']);
+    expect(saved).toBe(true);
+    expect(r.note ?? '').not.toMatch(/pressed again/);
+  });
+});
+
 describe('focus map', () => {
   it('tells apart cells that share one id', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

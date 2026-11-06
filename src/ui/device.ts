@@ -10,6 +10,9 @@ import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
 import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
+/** How long a press that only closed the keyboard waits for a late effect before it presses again. */
+const LATE_EFFECT_MS = 600;
+
 export type ActResult = {action: string; target?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
 export type UiHooks = {
@@ -316,6 +319,13 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         ? `the target is under ${at.coveredBy}: the tap went to it`
         : `tapped ${at.x},${at.y}: the centre is under ${at.coveredBy}`
       : undefined;
+    // A control can close the keyboard itself and show what it did a moment later (a save that answers after
+    // the screen settles): looked at once more before pressing again, so a control that got the tap is never
+    // pressed twice (a message sent twice).
+    if (this.last && onlyClosedKeyboard(snap, this.last)) {
+      await new Promise(r => setTimeout(r, LATE_EFFECT_MS));
+      settled = await this.#settle(snap);
+    }
     // A list that spends the first tap on the keyboard (React Native's default) closed it and nothing else
     // changed: the control did not get the tap. Pressed once more, where the control is now.
     if (this.last && onlyClosedKeyboard(snap, this.last)) {
