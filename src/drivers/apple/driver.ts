@@ -113,6 +113,20 @@ export const pickSimulator = (sims: Simulator[], selector: string): Simulator | 
 
 export const isAppleBundle = (file: string) => /\.(app|ipa)\/?$/i.test(file);
 
+/** How long `simctl list` may take before it is asked again. */
+const LIST_TIMEOUT_MS = 60_000;
+
+/** Why `simctl list` gave no list, and what to do; undefined when it did. */
+export const listFailure = (r: {code: number | null; stderr: string; timedOut: boolean}): {message: string; hint: string} | undefined => {
+  if (r.code === 0 && !r.timedOut) return undefined;
+  if (r.timedOut)
+    return {
+      message: `simctl list did not answer in ${LIST_TIMEOUT_MS / 1000}s, twice`,
+      hint: 'CoreSimulator is busy (a simulator booting, a runtime being installed): try again once it settles',
+    };
+  return {message: `simctl list failed: ${r.stderr.trim()}`, hint: 'is Xcode installed and its license accepted (`sudo xcodebuild -license accept`)?'};
+};
+
 export class AppleDriver {
   readonly xcrun: string;
 
@@ -143,8 +157,12 @@ export class AppleDriver {
   async simulators(): Promise<Simulator[]> {
     if (this.kept && Date.now() - this.kept.at < 1500) return this.kept.sims;
     const sims = (async () => {
-      const r = await this.simctl(['list', 'devices', '-j'], {timeoutMs: 15_000});
-      if (r.code !== 0) throw new AppleError(`simctl list failed: ${r.stderr.trim()}`, 'is Xcode installed and its license accepted (`sudo xcodebuild -license accept`)?');
+      // Right after a boot or a runtime's install CoreSimulator can take tens of seconds to list its devices (a CI
+      // machine most of all): waited for, and asked once more when it ran out of time.
+      let r = await this.simctl(['list', 'devices', '-j'], {timeoutMs: LIST_TIMEOUT_MS});
+      if (r.timedOut) r = await this.simctl(['list', 'devices', '-j'], {timeoutMs: LIST_TIMEOUT_MS});
+      const failed = listFailure(r);
+      if (failed) throw new AppleError(failed.message, failed.hint);
       return parseSimulators(r.stdout).filter(s => s.available);
     })();
     this.kept = {at: Date.now(), sims};

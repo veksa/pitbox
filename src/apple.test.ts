@@ -6,7 +6,7 @@ import {sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
-import {AppleDriver, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp} from './drivers/apple/driver.ts';
+import {AppleDriver, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp, listFailure} from './drivers/apple/driver.ts';
 
 vi.mock('./drivers/apple/fold.ts', () => ({foldTool: async () => '/tmp/fold'}));
 
@@ -342,5 +342,15 @@ describe('apple driver', () => {
     fs.mkdirSync(path.join(dev, 'Applications', 'Simulator.app'), {recursive: true});
     expect(simulatorWindowApp(dev)).toBe(path.join(dev, 'Applications', 'Simulator.app'));
     fs.rmSync(xcode, {recursive: true, force: true});
+  });
+});
+
+describe('simctl list', () => {
+  it('says CoreSimulator is busy when the list timed out, not that Xcode is missing', () => {
+    expect(listFailure({code: 0, stderr: '', timedOut: false})).toBeUndefined();
+    const busy = listFailure({code: null, stderr: '', timedOut: true});
+    expect(busy?.message).toMatch(/did not answer/);
+    expect(busy?.hint).toMatch(/CoreSimulator is busy/);
+    expect(listFailure({code: 1, stderr: 'xcrun: error: unable to find utility "simctl"', timedOut: false})?.hint).toMatch(/license/);
   });
 });
