@@ -105,6 +105,7 @@ export const fmtFlow = (r: FlowResult): string => {
   return [
     `✗ flow failed at line ${f.line}: ${f.step}`,
     `  ${f.error}`,
+    ...(f.fix ? [`  fix? ${f.fix}`] : []),
     `  after ${r.steps} passing steps, ${seconds(r.ms)}`,
     ...(f.crashes ?? []).flatMap(c => [`  ! ${broken(c)}: ${c.summary}`, ...c.lines.slice(0, 8).map(l => `      ${l}`)]),
     ...(f.screenshot ? [`  screenshot: ${f.screenshot}`] : []),

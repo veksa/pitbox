@@ -2,7 +2,7 @@
 // what is on screen, so the caller can act without taking another snapshot.
 
 import type {DeviceUi} from '../ui/device.ts';
-import {matches, resolveTarget} from '../ui/snapshot.ts';
+import {closest, matches, resolveTarget, type Snapshot} from '../ui/snapshot.ts';
 import {checkBudgets, parseBudget, type PerfData} from './budget.ts';
 import {kvArgs, parseFlow, unquote, validateFlow, type Step} from './flow.ts';
 import {seconds as fmtSeconds} from '../util/text.ts';
@@ -32,7 +32,7 @@ export type FlowResult = {
   ok: boolean;
   steps: number;
   ms: number;
-  failed?: {line: number; step: string; error: string; screen?: string[]; screenshot?: string; crashes?: {kind: string; summary: string; lines: string[]}[]};
+  failed?: {line: number; step: string; error: string; /** The step with the selector that broke swapped for the one control on screen most like it: a suggestion to check, never applied. */ fix?: string; screen?: string[]; screenshot?: string; crashes?: {kind: string; summary: string; lines: string[]}[]};
   notes: string[];
 };
 
@@ -230,6 +230,21 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
   }
 };
 
+/** The selector a step's error says matched nothing, or never showed up in time. */
+const missedSelector = (error: string): string | undefined => /^(?:nothing matches|timed out after \d+s waiting for) "(.*?)"(?= — |$)/.exec(error)?.[1];
+
+/**
+ * The failed step with its selector replaced by the control on screen most like it, when one stands out from the
+ * rest. Only a suggestion: a step is never run against a control it did not name.
+ */
+export const suggestFix = (step: Step, error: string, snap: Snapshot): string | undefined => {
+  const sel = missedSelector(error);
+  if (!sel || !step.text.includes(sel)) return undefined;
+  const [best, next] = closest(snap, sel, 2);
+  if (!best?.selector || (next && best.score - next.score < 0.1)) return undefined;
+  return step.text.replace(sel, best.selector);
+};
+
 export const runFlow = async (host: FlowHost, source: string, params: Record<string, string> = {}, depth = 0): Promise<FlowResult> => {
   const t0 = Date.now();
   const notes: string[] = [];
@@ -253,7 +268,10 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
           const ui = await host.ui();
           const crashes = await ui.crashesSince(t0, true);
           if (crashes.length) failed.crashes = crashes;
-          failed.screen = (await ui.snapshot()).lines.slice(0, 40);
+          const snap = await ui.snapshot();
+          failed.screen = snap.lines.slice(0, 40);
+          const fix = suggestFix(s, failed.error, snap);
+          if (fix) failed.fix = `line ${s.line}: ${fix}`;
           failed.screenshot = await host.screenshot(`failed-line-${s.line}`);
         } catch {
           // the device itself may be the problem

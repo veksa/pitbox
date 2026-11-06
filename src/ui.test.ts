@@ -288,6 +288,18 @@ describe('flows', () => {
     expect(over.failed?.error).toMatch(/^over budget: janky 7\.5% ✗ < 5%; renders:Row 41 ✗ <= 40\nframes 100 · janky 7\.5%/);
   });
 
+  it('suggests the step with the closest control when its selector matches nothing, and never runs it', async () => {
+    const {host, calls} = fakeHost([['Welcome', 'Apply code']]);
+    const r = await runFlow(host, 'expect text=Welcome\npress text="Apply"\nexpect text=Done');
+    expect(r).toMatchObject({ok: false, steps: 1, failed: {line: 2, fix: 'line 2: press text="Apply code"'}});
+    expect(calls).toEqual([]);
+    // Two alike controls: no suggestion rather than a guess.
+    const two = await runFlow(fakeHost([['Apply code', 'Apply coupon']]).host, 'press text=Apply');
+    expect(two.failed?.fix).toBeUndefined();
+    const none = await runFlow(fakeHost([['Welcome']]).host, 'press text=Checkout');
+    expect(none.failed?.fix).toBeUndefined();
+  });
+
   it('rejects a budget it cannot read before running anything', async () => {
     const {host, calls} = fakeHost([['Home']]);
     const r = await runFlow(host, 'perf\nexpect perf speed<3');
