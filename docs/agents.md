@@ -74,6 +74,22 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - **`no change on screen` in a passing run's notes** marks a press that did nothing visible. Follow each press
   that matters with an `expect` of its outcome.
 
+## Bug bash
+
+Many explorations at once, each finding proven before it is reported:
+
+1. Read the app's routes (and the branch's diff, on a branch). Write 5–10 charters: one area, one sentence, one
+   posture — a first-time user, numbers and copy, edge input, state after a relaunch, error paths (`net
+   action=fail`, `llm action=fail`).
+2. Run each charter in a short-lived subagent with its own device (`device=`), so screens never pile up in the
+   main context. It reports findings as text: what it did, what it saw, what it expected.
+3. Drop findings with a known cause: a limit of the tools, the local stand, the seed data, the intended design.
+4. Write each remaining finding as a flow under `flows/bugbash/` that expects the correct behaviour, and run it.
+   A finding is a bug only when its flow fails on the expectation (not on a selector that missed).
+5. Report confirmed bugs with their flow and failure screenshot first, then what could not be checked locally,
+   then the dropped findings with their reasons. Once a bug is fixed its flow passes; move it next to the other
+   flows as a regression check.
+
 ## Checking instead of looking
 
 - `inspect what=media target=…` — is a video playing (motion between frames, not black).
