@@ -100,6 +100,10 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
    * with text, a description, an id, or an interaction.
    */
   private fun tree(all: Boolean): JSONObject {
+    // Before Android 10 the client's node cache can keep a subtree as it was when a view in it was hidden
+    // or moved (a screen that comes back over another one): its nodes stay out of later trees. Setting the
+    // service info again clears that cache, so each tree is read anew.
+    if (Build.VERSION.SDK_INT < 29) ui.serviceInfo = ui.serviceInfo
     val nodes = JSONArray()
     val windows = JSONArray()
     val paint = ArrayList<String>()
@@ -541,5 +545,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 17
+  const val VERSION = 18
 }
