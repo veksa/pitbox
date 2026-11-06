@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
@@ -353,6 +353,14 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         settled = await this.#settle(snap);
         note = 'the first tap only closed the keyboard or took the focus off the field: pressed again';
       } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
+    }
+    // What the press did, as the check that follows it in a recorded flow and in the step the answer shows.
+    if ((this.recording || this.#step) && this.last) {
+      const outcome = outcomeStep(snap, this.last);
+      if (outcome) {
+        this.recording?.push(outcome);
+        if (this.#step) this.#step += `\n${outcome}`;
+      }
     }
     // A system offer declined while the press settled (the sign-in it answered brought it up).
     const declined = this.declined.splice(0);

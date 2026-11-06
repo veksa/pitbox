@@ -487,6 +487,37 @@ export const missHint = (snap: Snapshot, selector: string): string => {
   return parts.length ? ` — ${parts.join('; ')}` : '';
 };
 
+/**
+ * The check that proves an action did what it did, as a flow step: a control that appeared (`expect id=receipt`),
+ * or when nothing appeared, one that went away (`expect gone id=dialog`). Only selectors that name one node by id,
+ * text or label, only the app's own windows (not a keyboard that came up), and no text with digits in it: a count,
+ * a time or a price differs on the next run.
+ */
+export const outcomeStep = (before: Snapshot, after: Snapshot): string | undefined => {
+  const stable = (snap: Snapshot, i: number): string | undefined => {
+    if (snap.windows[snap.nodes[i]!.w]?.type !== 'app') return undefined;
+    const sel = selectorFor(snap, i);
+    if (/^\d+,\d+$/.test(sel) || (!sel.startsWith('id=') && /\d/.test(sel))) return undefined;
+    // Proved against the screen it names: the selector finds this node and nothing in its place.
+    try {
+      return resolveTarget(snap, sel).index === i ? sel : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const pick = (snap: Snapshot, other: Snapshot) => {
+    const found = [...snap.refOf.keys()].flatMap(i => {
+      const sel = stable(snap, i);
+      return sel && !matches(other, sel) ? [sel] : [];
+    });
+    return found.find(s => s.startsWith('id=')) ?? found[0];
+  };
+  const appeared = pick(after, before);
+  if (appeared) return `expect ${appeared}`;
+  const gone = pick(before, after);
+  return gone ? `expect gone ${gone}` : undefined;
+};
+
 /** The best selector to record for a node: id, then exact text, then label, then its centre. */
 export const selectorFor = (snap: Snapshot, index: number): string => {
   const n = snap.nodes[index]!;

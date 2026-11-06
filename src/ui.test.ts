@@ -906,3 +906,51 @@ describe('the step an action answers with', () => {
     expect((await d.fill('id=email', 'a@example.test')).step).toBeUndefined();
   }, 30_000);
 });
+
+describe('the outcome a recorded press is checked by', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const ime: UiWindow = {type: 'ime', title: '', pkg: 'com.example.keyboard'};
+  const form: UiNode[] = [
+    {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400]},
+    {p: 0, w: 0, c: 'Button', b: [40, 100, 1040, 200], t: 'Apply', id: 'apply', f: 'c'},
+    {p: 0, w: 0, c: 'TextView', b: [40, 300, 1040, 380], t: 'Enter a code'},
+  ];
+
+  it('is a control that appeared, an id first, never a count or a keyboard key', async () => {
+    const {outcomeStep} = await import('./ui/snapshot.ts');
+    const before = buildSnapshot(app, form);
+    const after = buildSnapshot([...app, ime], [
+      ...form,
+      {p: 0, w: 0, c: 'TextView', b: [40, 400, 1040, 460], t: '3 items, 10% off'},
+      {p: 0, w: 0, c: 'TextView', b: [40, 500, 1040, 560], t: 'Code applied'},
+      {p: 0, w: 0, c: 'View', b: [40, 600, 1040, 660], id: 'discount'},
+      {p: -1, w: 1, c: 'Key', b: [0, 2000, 100, 2100], t: 'q', f: 'c'},
+    ]);
+    expect(outcomeStep(before, after)).toBe('expect id=discount');
+    expect(outcomeStep(before, buildSnapshot(app, [...form, {p: 0, w: 0, c: 'TextView', b: [40, 500, 1040, 560], t: 'Code applied'}]))).toBe('expect text="Code applied"');
+  });
+
+  it('is a control that went away when nothing appeared, and nothing when the screen only moved', async () => {
+    const {outcomeStep} = await import('./ui/snapshot.ts');
+    const before = buildSnapshot(app, form);
+    expect(outcomeStep(before, buildSnapshot(app, form.slice(0, 2)))).toBe('expect gone text="Enter a code"');
+    expect(outcomeStep(before, buildSnapshot(app, form))).toBeUndefined();
+  });
+
+  it('follows the press in a recording', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let pressed = false;
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'tap') pressed = true;
+        if (cmd === 'tree') return {windows: app, nodes: pressed ? [...form, {p: 0, w: 0, c: 'TextView', b: [40, 500, 1040, 560], t: 'Code applied'}] : form};
+        return cmd === 'info' ? {width: 1080, height: 2400} : {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    ui.recording = [];
+    await ui.press('Apply');
+    expect(ui.recording).toEqual(['press id=apply', 'expect text="Code applied"']);
+  }, 30_000);
+});

@@ -93,7 +93,7 @@ export const fmtAct = (r: ActResult): string => {
   // A slow action says where its time went, so the next turn knows whether the app or the tool was slow.
   const slow = r.ms > 3000 && r.phases ? ` · slow: ${Object.entries(r.phases).filter(([, v]) => v >= 100).map(([k, v]) => `${k} ${v}`).join(', ')}` : '';
   // No trace id: `trace` takes the last action's, and the id is ~25 tokens on every action. `--json` keeps it.
-  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${slow}${r.step ? `\nstep: ${r.step}` : ''}`;
+  const head = `${r.action}${r.target ? ` ${r.target}` : ''} · ${r.ms} ms${r.idle ? '' : ' · UI still changing'}${slow}${r.step ? `\nstep: ${r.step.replace(/\n/g, '\n      ')}` : ''}`;
   const broke = (r.crashes ?? []).flatMap(c => [`! ${broken(c)}: ${c.summary}`, ...c.lines.slice(0, c.kind === 'js-error' ? 6 : 4).map(l => `    ${l}`)]);
   if (!r.diff.changed) return [head, ...broke, r.note ? `no change on screen — ${r.note}` : 'no change on screen'].join('\n');
   return [head, ...broke, ...(r.note ? [`note: ${r.note}`] : []), ...(r.diff.full ? ['screen:', ...r.diff.lines] : r.diff.lines)].join('\n');
