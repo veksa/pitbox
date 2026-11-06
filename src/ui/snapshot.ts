@@ -494,21 +494,27 @@ export const missHint = (snap: Snapshot, selector: string): string => {
  * a time or a price differs on the next run.
  */
 export const outcomeStep = (before: Snapshot, after: Snapshot): string | undefined => {
-  const stable = (snap: Snapshot, i: number): string | undefined => {
-    if (snap.windows[snap.nodes[i]!.w]?.type !== 'app') return undefined;
-    const sel = selectorFor(snap, i);
-    if (/^\d+,\d+$/.test(sel) || (!sel.startsWith('id=') && /\d/.test(sel))) return undefined;
-    // Proved against the screen it names: the selector finds this node and nothing in its place.
-    try {
-      return resolveTarget(snap, sel).index === i ? sel : undefined;
-    } catch {
-      return undefined;
-    }
+  // A node's selectors, best first: the recorded one, then its text and its label — a status line keeps its id
+  // and changes its text ("#greeting" becomes "Hello, Ada"), and the text is then what tells the screens apart.
+  const options = (snap: Snapshot, i: number): string[] => {
+    if (snap.windows[snap.nodes[i]!.w]?.type !== 'app') return [];
+    const n = snap.nodes[i]!;
+    const text = n.t ?? snap.shown?.get(i);
+    const all = [selectorFor(snap, i), ...(text ? [`text=${JSON.stringify(text)}`] : []), ...(n.d ? [`label=${JSON.stringify(n.d)}`] : [])];
+    return [...new Set(all)].filter(sel => {
+      if (/^\d+,\d+$/.test(sel) || (!sel.startsWith('id=') && /\d/.test(sel))) return false;
+      // Proved against the screen it names: the selector finds this node and nothing in its place.
+      try {
+        return resolveTarget(snap, sel).index === i;
+      } catch {
+        return false;
+      }
+    });
   };
   const pick = (snap: Snapshot, other: Snapshot) => {
     const found = [...snap.refOf.keys()].flatMap(i => {
-      const sel = stable(snap, i);
-      return sel && !matches(other, sel) ? [sel] : [];
+      const sel = options(snap, i).find(s => !matches(other, s));
+      return sel ? [sel] : [];
     });
     return found.find(s => s.startsWith('id=')) ?? found[0];
   };

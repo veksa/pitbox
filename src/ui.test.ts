@@ -930,6 +930,13 @@ describe('the outcome a recorded press is checked by', () => {
     expect(outcomeStep(before, buildSnapshot(app, [...form, {p: 0, w: 0, c: 'TextView', b: [40, 500, 1040, 560], t: 'Code applied'}]))).toBe('expect text="Code applied"');
   });
 
+  it('is the new text of a control that kept its id', async () => {
+    const {outcomeStep} = await import('./ui/snapshot.ts');
+    const status = (t?: string): UiNode => ({p: 0, w: 0, c: 'TextView', b: [40, 500, 1040, 560], id: 'greeting', ...(t ? {t} : {})});
+    expect(outcomeStep(buildSnapshot(app, [...form, status()]), buildSnapshot(app, [...form, status('Hello, Ada')]))).toBe('expect text="Hello, Ada"');
+    expect(outcomeStep(buildSnapshot(app, [...form, status('Hello, Ada')]), buildSnapshot(app, [...form, status('Hello, Bob')]))).toBe('expect text="Hello, Bob"');
+  });
+
   it('is a control that went away when nothing appeared, and nothing when the screen only moved', async () => {
     const {outcomeStep} = await import('./ui/snapshot.ts');
     const before = buildSnapshot(app, form);
