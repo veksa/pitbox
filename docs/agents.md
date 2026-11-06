@@ -59,6 +59,21 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - **Cars:** `device action=car value=night`, `value="drive 20"` (apps not made for driving get blocked),
   `value=park`, `value="rotary cw"`.
 
+## Writing and fixing flows
+
+- **Write a flow while walking the path.** An action given a ref or plain words answers with the step a flow
+  would use (`step: press id=sign-in`); copy those lines into the flow file. An action given a selector that is
+  already a step prints none.
+- **A selector that misses names what is there instead:** `nothing matches "id=apply" — closest: @e31 button
+  "Apply code" #apply-code → id=apply-code`. On a Compose screen with no ids at all it says that Compose hides its
+  test tags until a root sets `testTagsAsResourceId`.
+- **A broken flow comes back with `fix?`** — the failed line with the closest control's selector, when one stands
+  out. Check it on the screen the flow stopped at (its refs are live), patch the file, and go on with
+  `run flow=… from=<line>` instead of running the flow from the start. Never take a fix without looking: a
+  renamed control and a missing feature fail the same way.
+- **`no change on screen` in a passing run's notes** marks a press that did nothing visible. Follow each press
+  that matters with an `expect` of its outcome.
+
 ## Checking instead of looking
 
 - `inspect what=media target=…` — is a video playing (motion between frames, not black).

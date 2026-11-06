@@ -28,8 +28,24 @@ wait id=home"                        # inline, no file
 pitbox run smoke --device Pixel_8    # on a given device
 ```
 
-Over MCP: `run` with `flow`, `steps`, `params`, `device`; `matrix: true` runs it once per variant (see
+Over MCP: `run` with `flow`, `steps`, `params`, `device`, `from`; `matrix: true` runs it once per variant (see
 [config](config.md#matrix)).
+
+## When a flow breaks
+
+A step whose selector matches nothing fails with the controls on screen that look most like what it asked for,
+and, when one of them stands out, the step rewritten for it:
+
+```
+✗ flow failed at line 7: press id=apply
+  nothing matches "id=apply" — closest: @e31 button "Apply code" #apply-code → id=apply-code
+  fix? line 7: press id=apply-code
+```
+
+The fix is a suggestion, never applied: a step only ever acts on the control it names. The failed screen stays
+as it was and its refs are live, so the step can be tried there (`press @e31`), the file patched, and the rest of
+the flow run from the broken line with `pitbox run checkout --from 7` (MCP: `from: 7`). A `press` that passed but
+changed nothing on screen is named in the notes of the run: it may have passed the wrong way.
 
 ## Syntax
 
@@ -130,7 +146,8 @@ pitbox record stop checkout          # saves flows/checkout.flow
 ```
 
 Recorded steps use `id=`, then unique `text=`, then `label=`; coordinates only when nothing else identifies the
-node.
+node. Without recording, an action given a ref, plain words or a point answers with the step that repeats it
+(`step: press id=sign-in`), so a flow can be written from the actions that just worked.
 
 ## Examples
 
