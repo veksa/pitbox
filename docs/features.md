@@ -39,7 +39,8 @@ compact text.
   window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets and desktops; a
   watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and
   panel controls; the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
-  controller; TV remote and media keys.
+  controller; TV remote and media keys; the app's home-screen widgets added, removed and listed on phones and
+  tablets (`widget`).
 
 ## UI automation
 
