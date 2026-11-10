@@ -65,7 +65,7 @@ describe('the Android widget picker', () => {
       {p: 1, w: 0, c: 'TextView', b: [20, 1000, 300, 1050], id: 'widget_name', t: 'Note'},
       {p: 1, w: 0, c: 'TextView', b: [320, 1000, 520, 1050], id: 'widget_dims', t: '2 × 1'},
     ];
-    expect(pickerEntries(snap(old))).toEqual([{index: 1, name: 'Note', size: '2x1'}]);
+    expect(pickerEntries(snap(old))).toEqual([{index: 2, name: 'Note', size: '2x1'}]);
   });
 
   it('finds the app\'s header by its title, not by the search text', () => {
@@ -116,6 +116,7 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
   let screen: 'home' | 'menu' | 'picker' | 'expanded' | 'chosen' | 'drag' = 'home';
   let placed = false;
   let held = false;
+  let carrying = false;
   const calls: string[] = [];
   const at = (b: Bounds, x: number, y: number) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
   const WIDGET: Bounds = [60, 900, 1020, 1400];
@@ -125,6 +126,7 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
     const homeNodes: UiNode[] = [root, {p: 0, w: 0, c: 'TextView', b: [60, 1500, 260, 1750], t: 'MyApp', d: 'MyApp', f: 'cl'}];
     if (placed) homeNodes.push({p: 0, w: 0, c: 'FrameLayout', b: WIDGET, d: 'Note'});
     if (screen === 'drag') homeNodes.push({p: 0, w: 0, c: 'Button', b: REMOVE, id: 'delete_target_text', t: 'Remove', f: 'c'});
+    if (screen === 'drag' && carrying) homeNodes.push({p: 0, w: 0, c: 'View', b: [60, 900, 600, 1400], d: 'Move to row 2 column 1 in Home screen 1 of 1'});
     if (screen === 'home' || screen === 'drag') return {windows: launcher, nodes: homeNodes};
     if (screen === 'menu') return {windows: launcher, nodes: [...homeNodes, {p: 0, w: 0, c: 'Button', b: [300, 1000, 800, 1100], f: 'c'}, {p: 2 + Number(placed), w: 0, c: 'TextView', b: [320, 1020, 780, 1080], t: 'Widgets', id: 'bubble_text'}]};
     const picker: UiNode[] = [
@@ -154,12 +156,13 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
       if (cmd === 'text') return {set: true};
       if (cmd === 'touch') {
         if (a.phase === 'down') held = at(WIDGET, x, y) || (screen === 'chosen' && at([0, 600, 540, 1100], x, y));
-        if (a.phase === 'move' && held && screen === 'chosen') screen = 'home';
+        if (a.phase === 'move' && held && screen === 'chosen') [screen, carrying] = ['drag', true];
         else if (a.phase === 'move' && held && placed) screen = 'drag';
         if (a.phase === 'up') {
           if (screen === 'drag' && at(REMOVE, x, y)) placed = false;
-          else if (held && !placed && screen === 'home') placed = true;
+          else if (carrying) placed = true;
           held = false;
+          carrying = false;
           screen = 'home';
         }
       }

@@ -63,13 +63,18 @@ export const pickerEntries = (snap: Pick<Snapshot, 'nodes'>): PickerEntry[] => {
   });
   snap.nodes.forEach(n => {
     if (n.id !== 'widget_name' || !n.t) return;
-    // The cell: the nearest ancestor that holds the size too.
+    // The cell: the nearest ancestor that holds the size too; pressed and dragged by its preview when it has one.
+    let size: string | undefined;
     for (let k = n.p, hops = 0; k >= 0 && hops < 6; k = snap.nodes[k]!.p, hops++) {
-      const dims = snap.nodes.find(m => m.id === 'widget_dims' && m.t && inAncestry(snap.nodes, m, k));
-      if (!dims) continue;
-      const wh = /(\d+)\s*[×x]\s*(\d+)/.exec(dims.t!);
-      if (wh) add(k, n.t, `${wh[1]}x${wh[2]}`);
-      break;
+      const dims = size ? undefined : snap.nodes.find(m => m.id === 'widget_dims' && m.t && inAncestry(snap.nodes, m, k));
+      const wh = dims && /(\d+)\s*[×x]\s*(\d+)/.exec(dims.t!);
+      if (wh) size = `${wh[1]}x${wh[2]}`;
+      if (!size) continue;
+      const preview = snap.nodes.findIndex(m => /^widget_preview/.test(m.id ?? '') && inAncestry(snap.nodes, m, k));
+      if (preview >= 0 || hops >= 3) {
+        add(preview >= 0 ? preview : k, n.t, size);
+        break;
+      }
     }
   });
   return out;
@@ -212,7 +217,13 @@ const launcherPkg = (snap: Snapshot) => snap.windows.find(w => w.type === 'app')
 /** The home screen of a Launcher3-family launcher, or the reason there is none to drive. */
 const androidHome = async (ui: DeviceUi): Promise<{snap: Snapshot; workspace: Bounds; pkg: string}> => {
   await ui.key(['home']);
-  const {snap, hit} = await until(ui, 3000, s => idOf(s, 'workspace'));
+  let {snap, hit} = await until(ui, 3000, s => idOf(s, 'workspace'));
+  // Launcher3 keeps its workspace out of the accessibility tree for a moment after a drag or an undo bar: its
+  // own frame (`launcher`, `drag_layer`) is there, and the page comes back.
+  if (hit === undefined && snap.nodes.some(n => n.id === 'launcher' || n.id === 'drag_layer')) {
+    await ui.key(['home']);
+    ({snap, hit} = await until(ui, 6000, s => idOf(s, 'workspace')));
+  }
   if (hit === undefined) {
     throw new Error(`launcher ${launcherPkg(snap)} is not supported: ${LAUNCHER3}, and this one shows no Launcher3 workspace on the home screen`);
   }
@@ -321,22 +332,50 @@ const dragPreview = async (ui: DeviceUi, name: string, size: string): Promise<{x
   const from = tapPoint(snap, entry.index);
   const touch = (phase: 'down' | 'move' | 'up', x = 0, y = 0) => ui.runner.call('touch', {phase, x, y});
   await touch('down', from.x, from.y);
+  let finger = {x: from.x + 12, y: from.y + 12};
   try {
     await sleep(1200);
-    await touch('move', from.x + 12, from.y + 12);
-    const home = await until(ui, 2500, s => idOf(s, 'workspace') ?? undefined);
-    const ws = home.hit === undefined ? undefined : home.snap.nodes[home.hit]!.b;
-    const spot = ws && freeSpot(home.snap, ws);
-    if (!ws || !spot) throw new Error(`holding the "${name}" preview did not bring up a home page with room for it\nhint: this picker places widgets in a way pitbox does not drive; add it by hand`);
-    for (let k = 1; k <= 4; k++) await touch('move', Math.round(from.x + ((spot.x - from.x) * k) / 4), Math.round(from.y + ((spot.y - from.y) * k) / 4));
-    await sleep(700);
-    await touch('up', spot.x, spot.y);
-    return spot;
+    await touch('move', finger.x, finger.y);
+    // The picker gives way to the home page with the widget under the finger and a Cancel target on top. The
+    // workspace leaves the accessibility tree while something is dragged over it: the launcher's own root is the page.
+    const drag = await until(ui, 2500, s => (dragging(s) ? true : undefined));
+    if (!drag.hit) throw new Error(`holding the "${name}" preview did not start dragging it\nhint: this picker places widgets in a way pitbox does not drive; add it by hand`);
+    // Launcher3 says where the widget would land ("Move to row 2 column 1 in Home screen 1 of 1") once the cells
+    // under the finger can take it: dropped there, where the launcher chose. Otherwise the finger moves to the
+    // emptiest spot of the page and waits for that answer there.
+    const hint = (x: Snapshot) => (x.nodes.some(n => /^move to row \d+/i.test(n.d ?? '')) ? true : undefined);
+    let ready = await until(ui, 1500, hint);
+    if (!ready.hit) {
+      const page = ready.snap.nodes[idOf(ready.snap, 'workspace') ?? idOf(ready.snap, 'drag_layer') ?? 0]!.b;
+      // What hangs under the finger is the widget itself, not something on the page.
+      const under = (n: UiNode) => n.b[0] <= finger.x && finger.x <= n.b[2] && n.b[1] <= finger.y && finger.y <= n.b[3];
+      const spot = freeSpot({windows: ready.snap.windows, nodes: ready.snap.nodes.map(n => (under(n) && !n.id ? {...n, b: [0, 0, 0, 0] as Bounds} : n))}, page);
+      if (!spot) throw new Error(`no room on the home page for the "${name}" widget`);
+      for (let k = 1; k <= 4; k++) await touch('move', Math.round(finger.x + ((spot.x - finger.x) * k) / 4), Math.round(finger.y + ((spot.y - finger.y) * k) / 4));
+      finger = spot;
+      ready = await until(ui, 2000, hint);
+      if (!ready.hit) throw new Error(`the home page has no room the launcher accepts for the "${name}" widget\nhint: make room on the first home page, or add it by hand`);
+    }
+    await sleep(300);
+    await touch('up', finger.x, finger.y);
+    return finger;
   } catch (e) {
-    await touch('up').catch(() => undefined);
+    // Dropped on Cancel when it is there, so nothing lands where the finger happened to be.
+    const s = await ui.snapshot().catch(() => undefined);
+    const cancel = s && idOf(s, 'delete_target_text');
+    if (s && cancel !== undefined) {
+      const c = centre(s.nodes[cancel]!.b);
+      await touch('move', c.x, c.y).catch(() => undefined);
+      await sleep(400);
+      await touch('up', c.x, c.y).catch(() => undefined);
+    } else await touch('up', finger.x, finger.y).catch(() => undefined);
     throw e;
   }
 };
+
+/** A widget or an item is being dragged over the home screen: the drop targets are up, or the launcher says where it would go. */
+export const dragging = (s: Pick<Snapshot, 'nodes'>) =>
+  s.nodes.some(n => n.id === 'delete_target_text' || n.id === 'drop_target_bar' || /^move to row \d+/i.test(n.d ?? ''));
 
 /** After the widget went in: its own setup screen, or the widget on the home screen (resize frame closed). */
 const androidPlaced = async (ui: DeviceUi, w: WidgetOp, launcher: string, extra: Done): Promise<Done> => {
@@ -344,15 +383,22 @@ const androidPlaced = async (ui: DeviceUi, w: WidgetOp, launcher: string, extra:
   const r = await until(ui, 8000, s => {
     const front = s.windows.find(x => x.type === 'app');
     if (front && front.pkg !== launcher && !/systemui/.test(front.pkg)) return 'setup';
+    // Launcher3 leaves a fresh widget in its resize frame, which can hide the widget from the tree: back
+    // closes it, as a tap elsewhere would.
+    if (idOf(s, 'widget_resize_frame') !== undefined) return 'frame';
     return homeWidget(s, name) !== undefined ? 'home' : undefined;
   });
+  if (r.hit === 'frame') {
+    await ui.key(['back']);
+    const after = await until(ui, 3000, s => (homeWidget(s, name) !== undefined ? true : undefined));
+    if (!after.hit) throw new Error(`no "${name}" widget on the home screen after adding it (its resize frame was up)`);
+    return {widget: name, ...extra, on: 'home'};
+  }
   if (r.hit === 'setup') {
     const front = r.snap.windows.find(x => x.type === 'app')!;
     return {widget: name, ...extra, setup: front.pkg, note: `the widget opened its setup screen (${front.pkg}): finish it, and the widget goes on the home screen`};
   }
   if (r.hit !== 'home') throw new Error(`no "${name}" widget on the home screen after adding it\nhint: the home screen may be full, or the widget's label differs from its name in the picker`);
-  // Launcher3 leaves a fresh widget in its resize frame; back closes it, as a tap elsewhere would.
-  if (idOf(r.snap, 'widget_resize_frame') !== undefined) await ui.key(['back']);
   return {widget: name, ...extra, on: 'home'};
 };
 
