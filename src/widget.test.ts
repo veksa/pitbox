@@ -205,4 +205,9 @@ describe('a widget on a Launcher3 home screen', () => {
     };
     await expect(widget(new DeviceUi('dev', runner as never), 'android', parseWidget('add Note'))).rejects.toThrow(/launcher com\.example\.launcher is not supported/);
   }, 20_000);
+
+  it('is refused on an iOS simulator until that path is checked', async () => {
+    const runner = {call: async () => ({}), stop: async () => undefined};
+    await expect(widget(new DeviceUi('sim', runner as never), 'ios', parseWidget('add Note'))).rejects.toThrow(/not supported on iOS simulators yet/);
+  });
 });

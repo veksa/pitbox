@@ -1,6 +1,7 @@
 // Home-screen widgets of the app under test: added from the launcher's own widget picker and removed the way a
 // person does it, through the device's UI session — by elements of the launcher's tree, never by fixed points.
-// Android: Launcher3 and the launchers built on it (AOSP Launcher3, Pixel Launcher). iOS and iPadOS: SpringBoard.
+// Android: Launcher3 and the launchers built on it (AOSP Launcher3, Pixel Launcher). iOS and iPadOS (SpringBoard):
+// written, refused until it is checked on a simulator.
 // Everything else is refused with the launcher's name instead of being tapped at blindly.
 
 import type {DeviceUi} from './device.ts';
@@ -621,7 +622,9 @@ export type WidgetPlatform = 'android' | 'ios';
 export const widget = (ui: DeviceUi, platform: WidgetPlatform, w: WidgetOp): Promise<Done> =>
   asOneStep(ui, stepLine(w), async () => {
     const t0 = Date.now();
-    if (platform === 'ios' && w.size && !IOS_SIZES.includes(w.size)) throw new Error(`size on iOS is one of ${IOS_SIZES.join(', ')}`);
+    // The SpringBoard path below is written but not yet checked on a simulator: refused until it is.
+    if (platform === 'ios') throw new Error('widget is not supported on iOS simulators yet: pitbox drives Android launchers (Launcher3, Pixel Launcher) for now');
+    if (w.size && IOS_SIZES.includes(w.size)) throw new Error(`size ${w.size} is an iOS size: on Android it is the picker's cells, like 4x2`);
     if (platform === 'android' && w.size && !/^\d+x\d+$/.test(w.size)) throw new Error('size on Android is the picker\'s cells, like 4x2');
     const r =
       platform === 'android'
