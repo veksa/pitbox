@@ -287,15 +287,25 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     if (sizes(entries, name).length) throw new Error(`no ${w.size} size of the "${name}" widget (it comes in ${sizes(entries, name).join(', ')})`);
     throw new Error(`no widget "${name}" in the picker for "${app}"${offered.length ? ` (it shows: ${offered.join(', ')})` : ''}\nhint: name the app with app=<label> as the picker lists it`);
   }
-  await ui.press(point(snap, entry.index));
-  // Android 15 and later: a tap on a widget shows an Add button. Older pickers place by dragging only.
-  const add = await until(ui, 2500, s => idOf(s, 'widget_add_button'));
+  // Android 15 and later: a tap on a widget shows an Add button. Older pickers place by dragging only. A first tap
+  // can go to the search field instead (it gives up focus, the keyboard leaves): the widget is tapped again.
+  let add: {snap: Snapshot; hit?: number} = {snap};
+  let current = snap;
+  for (let tries = 0; tries < 2 && add.hit === undefined; tries++) {
+    const now = pickEntry(pickerEntries(current), name, entry.size);
+    if (!now) break;
+    await ui.press(point(current, now.index));
+    add = await until(ui, 2500, s => idOf(s, 'widget_add_button'));
+    current = add.snap;
+  }
   let via = 'add button';
   let at: {x: number; y: number} | undefined;
   if (add.hit !== undefined) await ui.press(point(add.snap, add.hit));
-  else {
+  else if (pickEntry(pickerEntries(current), name, entry.size)) {
     via = 'drag';
     at = await dragPreview(ui, name, entry.size);
+  } else if (homeWidget(current, name) === undefined && current.windows.find(x => x.type === 'app')?.pkg === pkg && idOf(current, 'workspace') === undefined) {
+    throw new Error(`a tap on the "${name}" widget in the picker showed no Add button and the widget left the list\nscreen:\n${current.lines.slice(0, 15).join('\n')}`);
   }
   return androidPlaced(ui, w, pkg, {size: entry.size, via, ...(at ? {at: `${at.x},${at.y}`} : {})});
 };
