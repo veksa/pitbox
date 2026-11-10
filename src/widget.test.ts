@@ -79,7 +79,7 @@ describe('the Android widget picker', () => {
 describe('the Android home screen', () => {
   const home: UiNode[] = [
     {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400], id: 'workspace', f: 's'},
-    {p: 0, w: 0, c: 'FrameLayout', b: [60, 200, 1020, 700], d: 'Notes'},
+    {p: 0, w: 0, c: 'FrameLayout', b: [60, 200, 1020, 700], d: 'Notes', f: 'l'},
     {p: 1, w: 0, c: 'FrameLayout', b: [80, 220, 1000, 680], d: 'Pinned list'},
     {p: 1, w: 0, c: 'Button', b: [100, 300, 400, 400], d: 'New note', f: 'c'},
     {p: 0, w: 0, c: 'TextView', b: [60, 1500, 260, 1750], t: 'Notes', d: 'Notes', f: 'cl'},

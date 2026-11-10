@@ -98,7 +98,7 @@ export const homeWidgets = (snap: Pick<Snapshot, 'nodes'>, workspace: Bounds): s
   const out: string[] = [];
   const found: UiNode[] = [];
   for (const n of snap.nodes) {
-    if (n.t || !n.d || n.id || !inside(n.b, workspace) || interactive(n)) continue;
+    if (n.t || !n.d || n.id || !inside(n.b, workspace)) continue;
     // A widget spans at least two cells: an icon's own label sits on a small button.
     if (area(n.b) < area(workspace) * 0.03 || area(n.b) > area(workspace) * 0.8) continue;
     if (/^(home|at a glance)$/i.test(n.d) || ENTRY.test(n.d)) continue;
