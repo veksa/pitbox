@@ -19,6 +19,7 @@
 //   expect perf janky<5 js<300 renders:Row<=40   stop measuring and check the numbers against budgets
 //   tool sql query="select 1" contains "1"
 //   state signed-in              restore a named stand state (device snapshot + backend)
+//   widget add "Clock" app="MyApp" size=4x2 | widget remove "Clock"   (home-screen widgets)
 //   device Pixel_8               the following steps run on another device (several devices in one flow)
 //   visual home mask id=player   compare with a stored baseline (stored on the first run)
 //   sleep 500
@@ -107,7 +108,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'press?', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'wait', 'expect', 'perf', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'press?', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'widget', 'wait', 'expect', 'perf', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -144,6 +145,9 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'xr':
       case 'car':
         need(1);
+        break;
+      case 'widget':
+        if (!['add', 'remove', 'list'].includes(s.args[0] ?? '') || (s.args[0] !== 'list' && s.args.length < 2)) errors.push(`line ${s.line}: widget add|remove <name> [app=<label>] [size=…] or widget list [app]`);
         break;
       case 'mouse':
         if (!['right', 'hover', 'wheel'].includes(s.args[0] ?? '') || (s.args[0] !== 'wheel' && s.args.length < 2)) errors.push(`line ${s.line}: mouse right|hover <selector> or mouse wheel up|down [steps] [selector]`);

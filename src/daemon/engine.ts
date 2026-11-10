@@ -30,6 +30,7 @@ import type {PerfData} from '../flows/budget.ts';
 import {formatResult} from '../format.ts';
 import {fillRoute} from '../flows/flow.ts';
 import {DeviceUi, type UiHooks} from '../ui/device.ts';
+import {parseWidget, widget} from '../ui/widget.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
@@ -1358,6 +1359,15 @@ export class Engine {
     wear: async (p: Params) => {
       const [op, ...args] = req(p, 'value').split(/\s+/);
       return this.#reshape(str(p, 'device'), 'wear', (a, serial) => a.wear(serial, op!, args));
+    },
+    widget: async (p: Params) => {
+      const w = parseWidget(req(p, 'value'), {app: str(p, 'app'), size: str(p, 'size')});
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') {
+        const kind = (await t.s.simulators()).find(s => s.udid === t.id)?.kind;
+        if (kind !== 'phone' && kind !== 'tablet' && kind !== 'foldable') throw new Error(`widget is for phones and tablets: ${kind ?? 'this device'} has no home screen widgets pitbox drives`);
+      }
+      return widget(await this.ui(str(p, 'device')), t.platform === 'apple' ? 'ios' : 'android', w);
     },
     window: async (p: Params) => {
       const mac = await this.#macTarget(str(p, 'device'));

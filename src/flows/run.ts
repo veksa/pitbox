@@ -21,7 +21,7 @@ export type FlowHost = {
   visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
   screenshot: (name?: string, full?: boolean) => Promise<string>;
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
-  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car', value: string) => Promise<unknown>;
+  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car' | 'widget', value: string) => Promise<unknown>;
   /** Starts a perf window (`reset`), or ends it with the numbers and their text as `perf` prints it. */
   perf: (reset: boolean, trace?: boolean) => Promise<{data: PerfData; text: string}>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
@@ -77,6 +77,10 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'xr':
     case 'car':
       await host.reshape(s.cmd, words(a));
+      return;
+    case 'widget':
+      // The tokens as written: a quoted name stays one name, app= and size= stay apart.
+      await host.reshape('widget', a.join(' '));
       return;
     case 'touchpad':
       await (await host.ui()).touchpad(a[0] as 'forward' | 'back' | 'up' | 'down' | 'tap');
