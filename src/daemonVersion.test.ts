@@ -86,6 +86,24 @@ describe('a daemon in use', () => {
     expect(await gone(c.info.pid)).toBe(true);
   }, 60_000);
 
+  it('starts one daemon when several clients find none at once', async () => {
+    const config = project();
+    const clients = await Promise.all(Array.from({length: 4}, () => connect({config})));
+    // Every daemon that started says so in the project's daemon log, also one no client ended up using.
+    const log = path.join(path.dirname(config), '.pitbox', 'daemon.log');
+    const started = () => [...fs.readFileSync(log, 'utf8').matchAll(/^pitbox daemon (\d+) on /gm)].map(m => Number(m[1]));
+    await new Promise(r => setTimeout(r, 1500));
+    const pids = started();
+    try {
+      expect(new Set(clients.map(c => c.info.pid)).size).toBe(1);
+      expect(pids).toEqual([clients[0]!.info.pid]);
+    } finally {
+      await clients[0]!.call(DAEMON_STOP, {by: 'user'}).catch(() => undefined);
+      for (const pid of pids) if (pid !== clients[0]!.info.pid) process.kill(pid);
+      for (const pid of pids) await gone(pid);
+    }
+  }, 60_000);
+
   it('lets an idle one go', async () => {
     const c = await connect({config: project()});
     await c.call(DAEMON_STOP, {});

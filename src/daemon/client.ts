@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
 import {isAlive, startHidden} from '../util/proc.ts';
-import {listLeases} from '../lease/lease.ts';
+import {listLeases, withLockAsync} from '../lease/lease.ts';
 import {busyReason, compareVersions, IDLE_MS, type ActivityReport} from './activity.ts';
 import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
 
@@ -163,6 +163,18 @@ export const connect = async (opts: {config?: string; cwd?: string; busyWaitMs?:
   }
 
   fs.mkdirSync(stateDir, {recursive: true});
+  // One client starts the daemon at a time. Two clients finding none at once (the MCP server and a script, two
+  // commands in parallel) would otherwise start two daemons of one project, both taking the project's devices as
+  // their own and both installing and starting the device runner over each other's.
+  return withLockAsync(path.join(stateDir, 'daemon'), async () => {
+    const started = readInfo(stateDir);
+    if (started && started.version === VERSION && (await ping(started))) return new DaemonClient(started);
+    return startDaemon(file, stateDir);
+  }, 60_000);
+};
+
+/** Starts the project's daemon in the background and waits until it answers. */
+const startDaemon = async (file: string, stateDir: string): Promise<DaemonClient> => {
   const logFile = path.join(stateDir, 'daemon.log');
   const t0 = Date.now();
   let exited = false;

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {leaseKey, machineLock} from '../../lease/lease.ts';
 import type {AndroidDriver} from './driver.ts';
 import {AndroidError} from './driver.ts';
 
@@ -20,6 +21,9 @@ export const runnerApk = (): string => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(here, '..', '..', '..', 'runners', 'android', 'pitbox-runner.apk');
 };
+
+/** A runner of this version or a newer one: newer runners serve older hosts. */
+const usable = (v?: number) => v !== undefined && v >= RUNNER_VERSION;
 
 type Pending = {resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout};
 
@@ -52,14 +56,27 @@ export class AndroidRunner {
     return !!this.#socket && !this.#socket.destroyed;
   }
 
-  async #installedVersion(): Promise<number | undefined> {
-    const out = await this.#driver.shell(this.serial, `dumpsys package ${RUNNER_PACKAGE} | grep versionCode`).catch(() => '');
+  /** The runner's version on the device and when it was last installed; both undefined when it is not there. */
+  async #installed(): Promise<{version?: number; updated?: string}> {
+    const out = await this.#driver.shell(this.serial, `dumpsys package ${RUNNER_PACKAGE} | grep -E 'versionCode|lastUpdateTime'`).catch(() => '');
     const v = /versionCode=(\d+)/.exec(out)?.[1];
-    return v ? Number(v) : undefined;
+    return {version: v ? Number(v) : undefined, updated: /lastUpdateTime=([^\n]+)/.exec(out)?.[1]?.trim()};
   }
 
-  async #ensureInstalled(force = false) {
-    if (!force && (await this.#installedVersion()) === RUNNER_VERSION) return;
+  /**
+   * Installs the runner unless this version or a newer one is there; called with the device's runner lock held.
+   * A newer runner stays (it serves older hosts: protocol changes only add), so two versions of pitbox do not
+   * replace each other in turn. `force` (the package manager lists a runner whose APK is gone) installs anyway,
+   * unless another process installed it after `seen` was read.
+   */
+  async #ensureInstalled(force: boolean, seen: {version?: number; updated?: string}) {
+    const now = await this.#installed();
+    if (usable(now.version) && (!force || now.updated !== seen.updated)) return false;
+    await this.#install(force);
+    return true;
+  }
+
+  async #install(force: boolean) {
     if (force) await this.#driver.adb(['uninstall', RUNNER_PACKAGE], this.serial, {timeoutMs: 60_000}).catch(() => undefined);
     const apk = runnerApk();
     if (!fs.existsSync(apk)) throw new AndroidError(`runner APK missing: ${apk}`, 'build it with `yarn build-runner`');
@@ -90,12 +107,27 @@ export class AndroidRunner {
     }
   }
 
+  /**
+   * Connects to the device's runner, installing and starting it when needed. Installing replaces the package and
+   * starting force-stops it: either kills a runner another daemon is connected to, mid-call. Two daemons reaching a
+   * fresh device at once (two projects, a second daemon of one project, two versions of pitbox) would each install
+   * and start in turn and cut the other off, so both happen under one lock per device across processes, and what is
+   * on the device is read again under it: the second finds the first's runner and connects to it.
+   */
   async #attempt(reinstall: boolean) {
     this.#teardown();
-    await this.#ensureInstalled(reinstall);
+    const seen = await this.#installed();
     // A runner another pitbox daemon started (one per project) is used as it is: restarting it would cut that
     // daemon off mid-call.
-    if (!reinstall && (await this.#connect())) return;
+    if (!reinstall && usable(seen.version) && (await this.#connect())) return;
+    await machineLock(`runner-${leaseKey('android', this.serial)}`, async () => {
+      const installed = await this.#ensureInstalled(reinstall, seen);
+      if ((!reinstall || !installed) && (await this.#connect())) return;
+      await this.#launch();
+    });
+  }
+
+  async #launch() {
     await this.#driver.shell(this.serial, `am force-stop ${RUNNER_PACKAGE}`);
     // Started on the device under nohup: the UiAutomation connection lives in the `am` process, so a runner tied
     // to this daemon's adb session would die with it and take every other daemon's connection along.
@@ -126,11 +158,14 @@ export class AndroidRunner {
     const connected = await new Promise<boolean>(resolve => {
       const s = net.connect(this.#hostPort!, '127.0.0.1', () => resolve(true));
       s.setNoDelay(true);
+      // Only the current connection's end fails the calls: a probe socket given up on closes later.
       s.on('error', e => {
         resolve(false);
-        this.#fail(e);
+        if (this.#socket === s) this.#fail(e);
       });
-      s.on('close', () => this.#fail(new Error('runner connection closed')));
+      s.on('close', () => {
+        if (this.#socket === s) this.#fail(new Error('runner connection closed'));
+      });
       s.on('data', (d: Buffer) => this.#onData(d));
       this.#socket = s;
     });
