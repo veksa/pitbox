@@ -782,7 +782,7 @@ const iosGalleryApp = async (ui: DeviceUi, app: string): Promise<{snap: Snapshot
     const bottom = Math.min(lb[3], height);
     const x = Math.round((lb[0] + lb[2]) / 2);
     const before = rows.map(r => snap.nodes[r]!.t).join('|');
-    await ui.swipe(`${x},${Math.round(lb[1] + (bottom - lb[1]) * 0.8)},${x},${Math.round(lb[1] + (bottom - lb[1]) * 0.25)}`);
+    await ui.swipe(`${x},${Math.round(lb[1] + (bottom - lb[1]) * 0.8)},${x},${Math.round(lb[1] + (bottom - lb[1]) * 0.35)}`, 800);
     snap = await iosSnap(ui);
     const list2 = idOf(snap, GALLERY);
     if (list2 === undefined) break;
