@@ -124,7 +124,7 @@ describe('android verdicts', () => {
   it('lists the posted notifications of one app', () => {
     const list = parseNotifications(DUMP, 'com.example.app');
     expect(list).toHaveLength(2);
-    expect(list[0]).toEqual({key: '0|com.example.app|0|FCM-Notification:12|10213', id: 0, tag: 'FCM-Notification:12', channel: 'fcm_fallback_notification_channel', importance: 3, title: 'Hello (again)', text: 'Body text', updated: 2000, summary: false});
+    expect(list[0]).toEqual({key: '0|com.example.app|0|FCM-Notification:12|10213', pkg: 'com.example.app', id: 0, tag: 'FCM-Notification:12', channel: 'fcm_fallback_notification_channel', importance: 3, title: 'Hello (again)', text: 'Body text', updated: 2000, summary: false});
     expect(list[1]!.summary).toBe(true);
     expect(parseNotifications(DUMP)).toHaveLength(3);
     expect(parseNotifications('nothing here')).toEqual([]);
@@ -138,33 +138,42 @@ describe('android verdicts', () => {
   });
 });
 
-// The expanded shade over the app: the app's own window shows the same name (a chat with Ann) under the shade.
+// The expanded shade over the app: another app's notification with the same title above the app's own, and the
+// app's own window showing the same name (a chat with Ann) under the shade.
+type B4 = [number, number, number, number];
 const SHADE = {
   windows: [{type: 'system', title: '', pkg: 'com.android.systemui'}, {type: 'app', title: '', pkg: 'com.example.app'}],
   nodes: [
-    {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400] as [number, number, number, number]},
-    {p: 0, w: 0, c: 'TextView', b: [40, 40, 200, 90] as [number, number, number, number], t: '12:00'},
-    {p: 0, w: 0, c: 'FrameLayout', b: [0, 300, 1080, 520] as [number, number, number, number], f: 'cl'},
-    {p: 2, w: 0, c: 'TextView', b: [180, 330, 400, 380] as [number, number, number, number], id: 'title', t: 'Ann'},
-    {p: 2, w: 0, c: 'TextView', b: [180, 390, 900, 440] as [number, number, number, number], id: 'text', t: 'Are you there?'},
-    {p: -1, w: 1, c: 'TextView', b: [100, 1500, 300, 1560] as [number, number, number, number], t: 'Ann'},
+    {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400] as B4},
+    {p: 0, w: 0, c: 'TextView', b: [40, 40, 200, 90] as B4, t: '12:00'},
+    {p: 0, w: 0, c: 'FrameLayout', b: [0, 100, 1080, 280] as B4, f: 'cl'},
+    {p: 2, w: 0, c: 'TextView', b: [180, 130, 400, 180] as B4, id: 'title', t: 'Ann'},
+    {p: 2, w: 0, c: 'TextView', b: [180, 190, 900, 240] as B4, id: 'text', t: 'Lunch?'},
+    {p: 0, w: 0, c: 'FrameLayout', b: [0, 300, 1080, 520] as B4, f: 'cl'},
+    {p: 5, w: 0, c: 'TextView', b: [180, 330, 400, 380] as B4, id: 'title', t: 'Ann'},
+    {p: 5, w: 0, c: 'TextView', b: [180, 390, 900, 440] as B4, id: 'text', t: 'Are you there?'},
+    {p: -1, w: 1, c: 'TextView', b: [100, 1500, 300, 1560] as B4, t: 'Ann'},
   ],
 };
 
+const record = (pkg: string, id: number, title: string, text: string, at: number) =>
+  `    NotificationRecord(0x${id}: pkg=${pkg} user=UserHandle{0} id=${id} tag=t importance=4 key=0|${pkg}|${id}|t|1: Notification(channel=messages flags=AUTO_CANCEL vis=PRIVATE))\n          extras={\n                android.title=String (${title})\n                android.text=String (${text})\n          }\n      mUpdateTimeMs=${at}\n`;
+
 describe('push tap on android', () => {
-  it('finds the notification in the shade, not the same name in the app behind it', () => {
-    const r = shadeRow(SHADE, 'Ann');
+  it("finds the app's notification in the shade by its title and text, not another app's or the app behind", () => {
+    const r = shadeRow(SHADE, {title: 'Ann', text: 'Are you there?'});
     expect(r?.text.b).toEqual([180, 330, 400, 380]);
-    expect(r?.row?.b).toEqual([0, 300, 1080, 520]);
-    expect(shadeRow(SHADE, 'are you')?.text.b).toEqual([180, 390, 900, 440]);
-    expect(shadeRow(SHADE, 'Bob')).toBeUndefined();
-    expect(shadeRow({...SHADE, windows: [{type: 'app', title: '', pkg: 'com.example.app'}, SHADE.windows[1]!]}, 'Ann')).toBeUndefined();
+    expect(r?.row.b).toEqual([0, 300, 1080, 520]);
+    expect(shadeRow(SHADE, {text: 'are you there?'})?.text.b).toEqual([180, 390, 900, 440]);
+    expect(shadeRow(SHADE, {title: 'Ann', text: 'Bye'})).toBeUndefined();
+    expect(shadeRow(SHADE, {})).toBeUndefined();
+    expect(shadeRow({...SHADE, windows: [{type: 'app', title: '', pkg: 'com.example.app'}, SHADE.windows[1]!]}, {title: 'Ann'})).toBeUndefined();
   });
 
-  /** A device whose shade opens the app when its row gets `opensOn` (a tap or an accessibility click). */
-  const device = (opensOn: 'tap' | 'node-action' | 'nothing') => {
-    const s = {front: false, shade: false, calls: [] as string[]};
-    const dump = `  Notification List:\n    NotificationRecord(0x1: pkg=com.example.app user=UserHandle{0} id=1 tag=t importance=4 key=0|com.example.app|1|t|1: Notification(channel=messages flags=AUTO_CANCEL vis=PRIVATE))\n          extras={\n                android.title=String (Ann)\n          }\n      mUpdateTimeMs=5\n  Notification attention state:\n`;
+  /** A device whose shade opens the app when the app's row gets `opensOn` (a tap on it, or an accessibility click). */
+  const device = (opensOn: 'tap' | 'node-action' | 'nothing', opts: {twin?: boolean; blindAfterTap?: boolean} = {}) => {
+    const s = {front: false, shade: false, blind: false, calls: [] as string[]};
+    const dump = `  Notification List:\n${record('com.other.app', 2, 'Ann', opts.twin ? 'Are you there?' : 'Lunch?', 9)}${record('com.example.app', 1, 'Ann', 'Are you there?', 5)}  Notification attention state:\n`;
     const a = {
       shell: async (_serial: string, cmd: string) => {
         s.calls.push(cmd.split(' ').slice(0, 3).join(' '));
@@ -182,8 +191,18 @@ describe('push tap on android', () => {
     const runner = {
       call: async (cmd: string, args: Record<string, unknown> = {}) => {
         s.calls.push(cmd);
-        if (cmd === 'tree') return s.shade ? SHADE : {windows: [SHADE.windows[1]], nodes: [{...SHADE.nodes[5], w: 0}]};
-        if (cmd === 'tap' && opensOn === 'tap' && args.y === 355) open();
+        if (cmd === 'tree') {
+          if (s.blind) throw new Error('runner gone');
+          return s.shade ? SHADE : {windows: [SHADE.windows[1]], nodes: [{...SHADE.nodes[8], w: 0}]};
+        }
+        if (cmd === 'tap') {
+          if (opensOn === 'tap' && args.y === 355) open();
+          if (opts.blindAfterTap) {
+            // The app comes up, but the shade stays and its tree can no longer be read.
+            s.front = true;
+            s.blind = true;
+          }
+        }
         if (cmd === 'node-action' && opensOn === 'node-action') open();
         return {};
       },
@@ -198,7 +217,7 @@ describe('push tap on android', () => {
     return {s, center};
   };
 
-  it('opens the shade, taps the notification by its title and lands in the app', {timeout: 20_000}, async () => {
+  it("taps the app's own notification, not another app's above it with the same title, and lands in the app", {timeout: 20_000}, async () => {
     const {s, center} = device('tap');
     const r = await center.tap({});
     expect(r).toMatchObject({tapped: 'Ann', state: 'foreground', ok: true});
@@ -220,7 +239,20 @@ describe('push tap on android', () => {
     expect(r.ok).toBe(false);
     expect(r.note).toMatch(/did not come to the front/);
     expect(s.shade).toBe(false);
-    await expect(center.tap({title: 'Bob'})).rejects.toThrow(/no notification "Bob" in the shade \(it shows: "12:00"/);
+    // Only the app's notifications are candidates: another app's text is not one.
+    await expect(center.tap({title: 'Lunch'})).rejects.toThrow(/com\.example\.app has no notification showing "Lunch" \(its notifications: "Ann"\)/);
+  });
+
+  it("refuses a notification another app shows word for word: the shade cannot tell the rows apart", async () => {
+    const {center} = device('tap', {twin: true});
+    await expect(center.tap({})).rejects.toThrow(/com\.other\.app shows a notification with the same title and text/);
+  });
+
+  it('takes a screen it could not read as unknown, not as the notification gone', {timeout: 20_000}, async () => {
+    const {center} = device('nothing', {blindAfterTap: true});
+    const r = await center.tap({});
+    expect(r.ok).toBe(false);
+    expect(r.note).toMatch(/could not be read/);
   });
 });
 

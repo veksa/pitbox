@@ -311,53 +311,82 @@ export class PushCenter {
    * app's latest.
    */
   async #tapAndroid(a: AndroidDriver, serial: string, app: string, ui: DeviceUi, given?: string) {
-    let title = given;
-    if (!title) {
-      const posted = (await notifications(a, serial, app)).filter(n => !n.summary).sort((x, y) => y.updated - x.updated);
-      if (!posted.length) throw new Error(`${app} has no notification in the shade`);
+    const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const posted = (await notifications(a, serial)).filter(n => !n.summary);
+    const mine = posted.filter(n => n.pkg === app).sort((x, y) => y.updated - x.updated);
+    if (!mine.length) throw new Error(`${app} has no notification in the shade`);
+    // Only the app's own notifications are candidates: the text to find in the shade is theirs, title and text.
+    let target: PostedNotification | undefined;
+    if (given) {
+      const g = norm(given);
+      target = mine.find(n => norm(n.title) === g) ?? mine.find(n => norm(n.title).includes(g) || norm(n.text).includes(g));
+      if (!target) throw new Error(`${app} has no notification showing "${given}" (its notifications: ${mine.slice(0, 5).map(n => JSON.stringify(n.title ?? n.text ?? '')).join(', ')})`);
+    } else {
       const ours = [...this.log].reverse().filter(r => r.platform === 'android' && r.device === serial && r.app === app && r.shown?.title).map(r => r.shown!.title!);
-      title = ours.find(o => posted.some(n => n.title === o)) ?? posted[0]!.title ?? posted[0]!.text;
-      if (!title) throw new Error('the latest notification has no title or text to tap');
+      target = ours.map(o => mine.find(n => n.title === o)).find(Boolean) ?? mine[0]!;
     }
+    if (!target.title && !target.text) throw new Error('the notification has no title or text to find it by in the shade');
+    const twin = posted.find(n => n.pkg !== app && norm(n.title) === norm(target.title) && norm(n.text) === norm(target.text));
+    if (twin) throw new Error(`${twin.pkg} shows a notification with the same title and text: the shade cannot tell which row is ${app}'s\nhint: push clear for the other app, or send this one with a distinct text`);
+    const title = target.title ?? target.text!;
     type Tree = Parameters<typeof shadeRow>[0];
-    const read = () => ui.runner.call<Tree>('tree').catch(() => ({windows: [], nodes: []}) as Tree);
+    // A tree the runner could not read is unknown, never an empty screen: it must not pass for "the notification is gone".
+    const read = () => ui.runner.call<Tree>('tree').catch(() => undefined);
     await a.shell(serial, 'cmd statusbar expand-notifications');
-    let tree = await read();
-    let found = shadeRow(tree, title);
-    for (const deadline = Date.now() + 3000; !found && Date.now() < deadline; ) {
+    let tree: Tree | undefined;
+    let found: ReturnType<typeof shadeRow>;
+    for (const deadline = Date.now() + 3000; ; ) {
+      tree = (await read()) ?? tree;
+      found = tree && shadeRow(tree, target);
+      if (found || Date.now() >= deadline) break;
       await sleep(300);
-      tree = await read();
-      found = shadeRow(tree, title);
     }
     ui.screenChanged();
     if (!found) {
-      const seen = shadeTitles(tree);
       await a.shell(serial, 'cmd statusbar collapse').catch(() => '');
-      throw new Error(`no notification "${title}" in the shade${seen.length ? ` (it shows: ${seen.map(x => JSON.stringify(x)).join(', ')})` : ''}`);
+      if (!tree) throw new Error('could not read the screen to find the notification in the shade: the device runner did not answer');
+      const seen = shadeTitles(tree);
+      throw new Error(`no notification "${title}" of ${app} in the shade${seen.length ? ` (it shows: ${seen.map(x => JSON.stringify(x)).join(', ')})` : ''}`);
     }
     const centre = (b: number[]) => ({x: Math.round((b[0]! + b[2]!) / 2), y: Math.round((b[1]! + b[3]!) / 2)});
-    const opened = async () => {
+    /** Opened: the app in front and the row off the screen; unknown when the last screen read failed. */
+    const opened = async (): Promise<'yes' | 'no' | 'unknown'> => {
+      let last: 'no' | 'unknown' = 'no';
       for (const deadline = Date.now() + 4000; Date.now() < deadline; ) {
         await sleep(400);
         const {state} = await appState(a, serial, app);
-        if (state === 'foreground' && !shadeRow(await read(), title!)) return true;
+        if (state !== 'foreground') {
+          last = 'no';
+          continue;
+        }
+        const now = await read();
+        if (!now) last = 'unknown';
+        else if (!shadeRow(now, target)) return 'yes';
+        else last = 'no';
       }
-      return false;
+      return last;
     };
     await ui.runner.call('tap', centre(found.text.b));
-    let ok = await opened();
+    let outcome = await opened();
     let note: string | undefined;
-    if (!ok && found.row) {
-      const again = shadeRow(await read(), title);
-      if (again?.row) await ui.runner.call('node-action', {window: again.row.w, bounds: again.row.b, action: 16}, 15_000).catch(() => undefined);
-      ok = await opened();
-      if (ok) note = 'the row took no tap: clicked through accessibility';
+    if (outcome !== 'yes') {
+      const again = await read();
+      const row = again ? shadeRow(again, target)?.row : undefined;
+      if (row) {
+        await ui.runner.call('node-action', {window: row.w, bounds: row.b, action: 16}, 15_000).catch(() => undefined);
+        outcome = await opened();
+        if (outcome === 'yes') note = 'the row took no tap: clicked through accessibility';
+      }
     }
     ui.screenChanged();
     const {state} = await appState(a, serial, app);
+    const ok = outcome === 'yes';
     if (!ok) {
       await a.shell(serial, 'cmd statusbar collapse').catch(() => '');
-      note = `the notification was tapped, but ${state === 'foreground' ? 'it stayed in the shade' : `the app did not come to the front (${state})`}: its tap opens nothing in the app, or opens another app`;
+      note =
+        outcome === 'unknown'
+          ? 'the notification was tapped and the app is in front, but the screen could not be read to confirm the notification left the shade'
+          : `the notification was tapped, but ${state === 'foreground' ? 'it stayed in the shade' : `the app did not come to the front (${state})`}: its tap opens nothing in the app, or opens another app`;
     }
     const snap = await ui.snapshot().catch(() => undefined);
     return {device: serial, app, tapped: title, state, screen: snap?.lines.slice(0, 12), note, ok};

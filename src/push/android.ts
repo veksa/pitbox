@@ -16,7 +16,7 @@ export const assertPackage = (pkg: string): string => {
 };
 
 /** A notification the app has posted, as `dumpsys notification --noredact` lists it. */
-export type PostedNotification = {key: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean};
+export type PostedNotification = {key: string; pkg: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean};
 
 const value = (line: string): string => {
   // `android.title=String (Hello)`, `android.text=SpannableString (Hi)`: the value is inside the parentheses.
@@ -39,7 +39,7 @@ export const parseNotifications = (dump: string, pkg?: string): PostedNotificati
     if (head) {
       cur = undefined;
       if (pkg && head[1] !== pkg) continue;
-      cur = {key: head[5]!, id: Number(head[2]), tag: head[3] === 'null' ? undefined : head[3], channel: head[6]!, importance: Number(head[4]), updated: 0, summary: /GROUP_SUMMARY/.test(head[7]!)};
+      cur = {key: head[5]!, pkg: head[1]!, id: Number(head[2]), tag: head[3] === 'null' ? undefined : head[3], channel: head[6]!, importance: Number(head[4]), updated: 0, summary: /GROUP_SUMMARY/.test(head[7]!)};
       out.push(cur);
       continue;
     }
@@ -69,7 +69,8 @@ export const appState = async (a: AndroidDriver, serial: string, pkg: string): P
   return {state, stopped: /stopped=true/.test(stopped)};
 };
 
-export const notifications = async (a: AndroidDriver, serial: string, pkg: string): Promise<PostedNotification[]> =>
+/** The posted notifications of `pkg`, or of every package without it. */
+export const notifications = async (a: AndroidDriver, serial: string, pkg?: string): Promise<PostedNotification[]> =>
   parseNotifications(await a.shell(serial, 'dumpsys notification --noredact', 15_000), pkg);
 
 /** Whether the app may post notifications: the runtime permission (Android 13+) and the user's switch. */
@@ -120,22 +121,48 @@ export const missingReceiver = async (a: AndroidDriver, serial: string, pkg: str
 /** The tree shape the device runner answers `tree` with: windows, and nodes with their window, parent and flags. */
 type ShadeTree = {windows: {pkg: string}[]; nodes: {p: number; w: number; b: [number, number, number, number]; t?: string; d?: string; f?: string}[]};
 
+type Box = {w: number; b: [number, number, number, number]};
+
 /**
- * A notification in the expanded shade, by the text it shows: the node with the title (exact first, then a part of
- * a text or a description) in a System UI window — never the app's own window behind the shade, which may show the
- * same name — and the clickable row it belongs to. Undefined when no notification in the shade shows the text.
+ * A notification in the expanded shade: a clickable row of a System UI window — never the app's own window behind
+ * the shade — whose texts include both the notification's title and its text, and the node to tap in it (the
+ * title, else the text). The texts come from the app's own posted notification (dumpsys), so a row of another app
+ * that shows only the same title is not taken. Undefined when no row shows them.
  */
-export const shadeRow = (tree: ShadeTree, title: string): {text: {w: number; b: [number, number, number, number]}; row?: {w: number; b: [number, number, number, number]}} | undefined => {
+export const shadeRow = (tree: ShadeTree, n: {title?: string; text?: string}): {text: Box; row: Box} | undefined => {
+  const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const title = norm(n.title);
+  const text = norm(n.text);
+  if (!title && !text) return undefined;
   const inShade = (i: number) => tree.windows[tree.nodes[i]!.w]?.pkg.startsWith('com.android.systemui') ?? false;
-  const want = title.trim().toLowerCase();
-  const all = tree.nodes.map((n, i) => ({n, i})).filter(({i}) => inShade(i));
-  const exact = all.find(({n}) => n.t?.trim().toLowerCase() === want);
-  const part = exact ?? all.find(({n}) => n.t?.toLowerCase().includes(want) || n.d?.toLowerCase().includes(want));
-  if (!part) return undefined;
-  let k = part.n.p;
-  while (k >= 0 && !(tree.nodes[k]!.f ?? '').includes('c')) k = tree.nodes[k]!.p;
-  const row = k >= 0 ? tree.nodes[k] : (part.n.f ?? '').includes('c') ? part.n : undefined;
-  return {text: {w: part.n.w, b: part.n.b}, row: row ? {w: row.w, b: row.b} : undefined};
+  const kids = new Map<number, number[]>();
+  tree.nodes.forEach((x, i) => kids.set(x.p, [...(kids.get(x.p) ?? []), i]));
+  const below = (i: number): number[] => {
+    const out: number[] = [];
+    for (const stack = [...(kids.get(i) ?? [])]; stack.length; ) {
+      const j = stack.shift()!;
+      out.push(j);
+      stack.push(...(kids.get(j) ?? []));
+    }
+    return out;
+  };
+  // Innermost rows first: a group's own row holds its children's texts too.
+  const rows = tree.nodes
+    .map((x, i) => ({x, i}))
+    .filter(({x, i}) => inShade(i) && (x.f ?? '').includes('c'))
+    .map(({x, i}) => ({x, i, sub: below(i)}))
+    .sort((r1, r2) => r1.sub.length - r2.sub.length);
+  for (const r of rows) {
+    const ids = [r.i, ...r.sub];
+    const texts = ids.map(j => norm(tree.nodes[j]!.t ?? tree.nodes[j]!.d));
+    const all = texts.join(' \n ');
+    if ((title && !all.includes(title)) || (text && !all.includes(text))) continue;
+    let k = title ? texts.indexOf(title) : -1;
+    if (k < 0) k = texts.findIndex(t => t.includes(title || text));
+    const node = tree.nodes[ids[Math.max(0, k)]!]!;
+    return {text: {w: node.w, b: node.b}, row: {w: r.x.w, b: r.x.b}};
+  }
+  return undefined;
 };
 
 /** The titles of the notifications the shade shows, for an error that says what was there instead. */
