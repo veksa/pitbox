@@ -21,7 +21,7 @@ import {isAlive} from '../util/proc.ts';
 export type Platform = 'android' | 'apple';
 
 /** Who asks: a daemon (`daemon:<root>`) or a shell lease (`as:<label>@<root>`). */
-export type Holder = {owner: string; label: string; pid?: number; pidStart?: string; root?: string};
+export type Holder = {owner: string; label: string; pid?: number; pidStart?: number; root?: string};
 
 export type Lease = Holder & {
   platform: Platform;
@@ -55,16 +55,29 @@ export const leaseDir = () => path.join(pitboxHome(), 'leases');
 export const leaseKey = (platform: Platform, device: string) => `${platform}-${device.replace(/[^\w.-]/g, '_')}`;
 const leaseFile = (platform: Platform, device: string) => path.join(leaseDir(), `${leaseKey(platform, device)}.json`);
 
-const startCache = new Map<number, {at: number; start?: string}>();
+const startCache = new Map<number, {at: number; start?: number}>();
 
-/** When a process started, as the system says (`ps -o lstart=`); undefined when it cannot tell (Windows, gone). */
-export const processStart = (pid: number): string | undefined => {
+/** `ps -o etime=` (`[[dd-]hh:]mm:ss`) → seconds; undefined for anything else. */
+export const parseElapsed = (out: string): number | undefined => {
+  const m = /^\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*$/.exec(out);
+  if (!m) return undefined;
+  return Number(m[1] ?? 0) * 86_400 + Number(m[2] ?? 0) * 3600 + Number(m[3]) * 60 + Number(m[4]);
+};
+
+/**
+ * When a process started, in epoch seconds: now minus its elapsed time (`ps -o etime=`, the same in every time zone
+ * and locale, unlike a printed start date). Undefined when the system cannot tell (Windows, the process is gone).
+ * Kept for a few seconds per pid: lease checks ask often, and a running process's start does not move.
+ */
+export const processStart = (pid: number): number | undefined => {
   const hit = startCache.get(pid);
-  if (hit && Date.now() - hit.at < 5000) return hit.start;
-  let start: string | undefined;
+  if (hit && Date.now() - hit.at < 10_000) return hit.start;
+  let start: number | undefined;
   if (process.platform !== 'win32') {
     try {
-      start = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore']}).trim() || undefined;
+      const out = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], {encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], env: {...process.env, LC_ALL: 'C'}});
+      const elapsed = parseElapsed(out);
+      start = elapsed === undefined ? undefined : Math.round(Date.now() / 1000) - elapsed;
     } catch {
       start = undefined;
     }
@@ -72,6 +85,13 @@ export const processStart = (pid: number): string | undefined => {
   startCache.set(pid, {at: Date.now(), start});
   return start;
 };
+
+/**
+ * Whether two start times are the same process's. Two readings of one process differ by the rounding of its elapsed
+ * time and of the clock (and on Linux by procps's drift of the boot time): a couple of seconds; a pid reused by
+ * another program started later than that.
+ */
+export const sameStart = (a: unknown, b: unknown): boolean => typeof a !== 'number' || typeof b !== 'number' || Math.abs(a - b) <= 3;
 
 /** How a holder's process is checked; tests stand in for it. */
 export const probe = {alive: isAlive, start: processStart};
@@ -97,9 +117,8 @@ const parse = (file: string): Lease | undefined => {
 /** Whether the lease's holder process still runs: the same pid started at the same moment. */
 const holderRuns = (l: Lease): boolean => {
   if (!l.pid || !probe.alive(l.pid)) return false;
-  if (!l.pidStart) return true;
-  const now = probe.start(l.pid);
-  return now === undefined || now === l.pidStart;
+  // A lease written before start times were numbers (or on a system that cannot tell) is judged by the pid alone.
+  return sameStart(l.pidStart, probe.start(l.pid));
 };
 
 /**
@@ -153,7 +172,7 @@ const writeWhole = (file: string, content: string) => {
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-type LockBody = {pid: number; start?: string; at: number};
+type LockBody = {pid: number; start?: number; at: number};
 
 const readLock = (lock: string): LockBody | undefined => {
   try {
@@ -174,44 +193,77 @@ const lockLeft = (b: LockBody | undefined, lock: string): boolean => {
   }
   if (Date.now() - b.at > LOCK_STALE_MS) return true;
   if (!probe.alive(b.pid)) return true;
-  const start = probe.start(b.pid);
-  return !!b.start && !!start && start !== b.start;
+  return !sameStart(b.start, probe.start(b.pid));
 };
 
 const lockBody = (): string => JSON.stringify({pid: process.pid, start: probe.start(process.pid), at: Date.now()} satisfies LockBody);
 
-/** Takes a lock file: placed whole with a link, which fails while another holds it. */
-const tryLock = (lock: string): boolean => {
-  fs.mkdirSync(path.dirname(lock), {recursive: true});
-  const tmp = `${aside(lock)}.tmp`;
-  fs.writeFileSync(tmp, lockBody());
-  try {
-    fs.linkSync(tmp, lock);
-    return true;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-  } finally {
-    fs.rmSync(tmp, {force: true});
-  }
-  // A lock left behind is moved aside under a name of its own (one process wins the rename) and removed only if
-  // it is the very lock judged left behind; a fresh lock moved by mistake goes back.
-  const seen = readLock(lock);
-  if (!lockLeft(seen, lock)) return false;
-  const moved = `${aside(lock)}.old`;
-  try {
-    fs.renameSync(lock, moved);
-  } catch {
-    return false;
-  }
-  const got = readLock(moved);
-  if (seen && (!got || got.pid !== seen.pid || got.at !== seen.at)) {
+/** A file system without hard links (FAT, exFAT, some network shares): locks are created with `wx` there instead. */
+let noLinks = false;
+
+/** Places `content` at `file` only if nothing is there: false when something is. */
+const placeNew = (file: string, content: string): boolean => {
+  if (!noLinks) {
+    const tmp = `${aside(file)}.tmp`;
+    fs.writeFileSync(tmp, content);
     try {
-      fs.linkSync(moved, lock);
-    } catch {
-      // a newer lock was placed meanwhile; it stands
+      fs.linkSync(tmp, file);
+      return true;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'EEXIST') return false;
+      if (code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP' && code !== 'ENOSYS' && code !== 'EXDEV') throw e;
+      noLinks = true;
+    } finally {
+      fs.rmSync(tmp, {force: true});
     }
   }
-  fs.rmSync(moved, {force: true});
+  // Without links the file is created empty and then written: a reader may see it empty for a moment, which reads
+  // as an unreadable lock, cleared only once it is old.
+  let fd: number;
+  try {
+    fd = fs.openSync(file, 'wx');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw e;
+  }
+  try {
+    fs.writeSync(fd, content);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return true;
+};
+
+/** A steal file left by a process that died in the middle of a steal (held for microseconds by a live one). */
+const STEAL_STALE_MS = 10_000;
+
+/**
+ * Takes a lock file: placed whole, which fails while another holds it. A lock left behind (its holder gone, or held
+ * past its age) is removed by one process at a time, under `<lock>.steal`, and only while it is still the very lock
+ * judged left behind; the caller then tries again.
+ */
+const tryLock = (lock: string): boolean => {
+  fs.mkdirSync(path.dirname(lock), {recursive: true});
+  if (placeNew(lock, lockBody())) return true;
+  const seen = readLock(lock);
+  if (!lockLeft(seen, lock)) return false;
+  const steal = `${lock}.steal`;
+  if (!placeNew(steal, String(process.pid))) {
+    try {
+      if (Date.now() - fs.statSync(steal).mtimeMs > STEAL_STALE_MS) fs.rmSync(steal, {force: true});
+    } catch {
+      // gone already
+    }
+    return false;
+  }
+  try {
+    const now = readLock(lock);
+    const same = seen ? !!now && now.pid === seen.pid && now.at === seen.at : !now && fs.existsSync(lock);
+    if (same && lockLeft(now, lock)) fs.rmSync(lock, {force: true});
+  } finally {
+    fs.rmSync(steal, {force: true});
+  }
   return false;
 };
 
@@ -219,11 +271,28 @@ const unlock = (lock: string) => {
   if (readLock(lock)?.pid === process.pid) fs.rmSync(lock, {force: true});
 };
 
+/** A lease folder pitbox cannot write: said with the way out instead of a bare errno. */
+const unwritable = (e: unknown): Error => {
+  const code = (e as NodeJS.ErrnoException).code;
+  if (code && ['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'ENOTDIR', 'EISDIR'].includes(code)) {
+    return new Error(`pitbox cannot write its device leases in ${leaseDir()} (${code})\nhint: set PITBOX_HOME to a writable folder (leases live in $PITBOX_HOME/leases)`);
+  }
+  return e as Error;
+};
+
+const tryLockOrSay = (lock: string): boolean => {
+  try {
+    return tryLock(lock);
+  } catch (e) {
+    throw unwritable(e);
+  }
+};
+
 /** Runs `fn` with `<file>.lock` held; waits up to `waitMs` for another holder. */
 export const withLock = <T>(file: string, fn: () => T, waitMs = 10_000): T => {
   const lock = `${file}.lock`;
   const end = Date.now() + waitMs;
-  while (!tryLock(lock)) {
+  while (!tryLockOrSay(lock)) {
     if (Date.now() > end) throw new Error(`${path.basename(file)} stays locked by pid ${readLock(lock)?.pid ?? '?'}`);
     sleepSync(5 + Math.random() * 20);
   }
@@ -238,11 +307,19 @@ export const withLock = <T>(file: string, fn: () => T, waitMs = 10_000): T => {
 export const withLockAsync = async <T>(file: string, fn: () => Promise<T>, waitMs = 180_000): Promise<T> => {
   const lock = `${file}.lock`;
   const end = Date.now() + waitMs;
-  while (!tryLock(lock)) {
+  while (!tryLockOrSay(lock)) {
     if (Date.now() > end) throw new Error(`${path.basename(file)} stays locked by pid ${readLock(lock)?.pid ?? '?'}`);
     await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
   }
-  const keep = setInterval(() => writeWhole(lock, lockBody()), LOCK_STALE_MS / 3);
+  // Kept fresh while the work runs — only while it is still this process's lock, and never at the cost of the
+  // daemon (a full disk, a folder gone read-only).
+  const keep = setInterval(() => {
+    try {
+      if (readLock(lock)?.pid === process.pid) writeWhole(lock, lockBody());
+    } catch {
+      // the next refresh tries again; at worst the lock ages out
+    }
+  }, LOCK_STALE_MS / 3);
   keep.unref();
   try {
     return await fn();
@@ -302,7 +379,11 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
       booted: opts.booted || undefined,
       created: opts.created || undefined,
     };
-    writeWhole(file, JSON.stringify(fresh, null, 1));
+    try {
+      writeWhole(file, JSON.stringify(fresh, null, 1));
+    } catch (e) {
+      throw unwritable(e);
+    }
     return {ok: true as const, lease: fresh, renewed: false, ...(current && why ? {replaced: {lease: current, why}} : {})};
   });
 };

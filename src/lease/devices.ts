@@ -98,27 +98,53 @@ export class DeviceLeases {
     throw new Error(`no device of this session is online:\n${lines.join('\n')}\nhint: ${hint}`);
   }
 
+  /** Beats a device must be missing from the lists, and for how long, before its lease goes. */
+  static readonly ABSENT_BEATS = 3;
+  static readonly ABSENT_MS = 90_000;
+  /** When a whole platform's list comes back empty (adb restarted, CoreSimulator restarting): much longer. */
+  static readonly EMPTY_LIST_MS = 5 * 60_000;
+  readonly #absent = new Map<string, {since: number; count: number}>();
+
   /**
-   * Drops the devices that went away (shut down elsewhere, or a serial now another emulator's) — their leases go —
-   * and renews the rest. `online` undefined: the device lists could not be read, only renew. `busy`: devices on
-   * their way up, not online yet. Returns the dropped devices.
+   * Renews the leases, and gives back the devices that went away for good: missing from the lists for several beats
+   * in a row and a while (a device that blinks out — adb restarted by another session, an emulator offline under
+   * load, a reboot, a USB reconnect — keeps its lease), or an emulator serial now another emulator's (at once).
+   * `online` lists every device the drivers report in any state (offline counts as present); undefined when the
+   * lists could not be read: then nothing is judged. `busy`: devices on their way up. Returns the dropped devices.
    */
-  beat(online?: Candidate[], busy: Set<string> = new Set()): Held[] {
+  beat(online?: Candidate[], busy: Set<string> = new Set(), now = Date.now()): Held[] {
     const lost: Held[] = [];
-    for (const [k, h] of this.#held) {
-      const here = online?.find(c => c.platform === h.platform && c.id === h.id);
-      const gone = online && !busy.has(h.id) && (!here || (h.instance && here.instance && h.instance !== here.instance));
+    const drop = (k: string, h: Held) => {
       const l = readLease(h.platform, h.id);
-      if (gone) {
-        if (l && l.owner === this.holder.owner && (!h.instance || l.instance === h.instance)) release(h.platform, h.id, this.isMine);
-        this.#held.delete(k);
-        lost.push(h);
-        continue;
-      }
+      if (l && l.owner === this.holder.owner && (!h.instance || !l.instance || l.instance === h.instance)) release(h.platform, h.id, this.isMine);
+      this.#held.delete(k);
+      this.#absent.delete(k);
+      lost.push(h);
+    };
+    for (const [k, h] of this.#held) {
+      if (online && !busy.has(h.id)) {
+        const here = online.find(c => c.platform === h.platform && c.id === h.id);
+        if (here && h.instance && here.instance && h.instance !== here.instance) {
+          drop(k, h);
+          continue;
+        }
+        if (!here) {
+          const a = this.#absent.get(k) ?? {since: now, count: 0};
+          a.count++;
+          this.#absent.set(k, a);
+          const wait = online.some(c => c.platform === h.platform) ? DeviceLeases.ABSENT_MS : DeviceLeases.EMPTY_LIST_MS;
+          if (a.count >= DeviceLeases.ABSENT_BEATS && now - a.since >= wait) {
+            drop(k, h);
+            continue;
+          }
+        } else this.#absent.delete(k);
+      } else if (online) this.#absent.delete(k);
+      const l = readLease(h.platform, h.id);
       if (heartbeat(h.platform, h.id, this.holder.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart})) continue;
       // A shell lease of this project that this daemon used: still ours, not renewed by us.
       if (l && this.isMine(l)) continue;
       this.#held.delete(k);
+      this.#absent.delete(k);
       lost.push(h);
     }
     return lost;

@@ -34,7 +34,7 @@ export const resolveDevice = async (selector: string): Promise<Resolved> => {
     const {AndroidDriver} = await import('../drivers/android/driver.ts');
     const online = (await new AndroidDriver().devices()).filter(d => d.state === 'device');
     const hit = online.find(d => d.serial === selector || d.avd === selector || d.model === selector);
-    if (hit) return {platform: 'android', id: hit.serial, name: hit.avd ?? hit.model, instance: hit.bootId};
+    if (hit) return {platform: 'android', id: hit.serial, name: hit.avd ?? hit.model, instance: hit.instance};
   } catch (e) {
     errors.push((e as Error).message.split('\n')[0]!);
   }
