@@ -26,8 +26,9 @@ stand
 
 android
   devices                       online devices, idle AVDs and simulators
-  boot [avd|simulator] [--wipe] [--headless]
-  shutdown [--device d]
+  boot [avd|simulator] [--wipe] [--headless]   leased to this session; a device another session holds is not touched: a free one of the same model, or a new instance, is booted instead
+  shutdown [--device d] [--force]   only a device this session holds; --force shuts down another's and names its holder
+  device lease [--device d] [--purpose text] · device release [--device d] [--keep]   hold a device for this session · give it back (one pitbox booted shuts down unless --keep)
   install <apk|app> [--replace] --replace uninstalls an app signed with another key first
   open [package|url] [--relaunch]
   stop-app | clear-app | uninstall [--pkg p]
@@ -94,6 +95,10 @@ support
   daemon status|stop|restart
   mcp                           MCP server on stdio
 
+leases (no daemon: for scripts and skills that drive a device with simctl or adb)
+  lease acquire <device> --as "<label>" [--ttl 30m] [--purpose text] [--pid n] [--wait 5m]   take a device or renew; exits 1 naming the holder when someone else has it
+  lease release <device> --as "<label>" [--force] · lease list
+
 global: --config <file>  --device <serial|avd>  --json`;
 
 type Args = {positional: string[]; flags: Record<string, string | boolean>};
@@ -108,7 +113,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -156,7 +161,12 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'boot':
       return {method: 'boot', params: {avd: rest[0], wipe: flags.wipe, headless: flags.headless}};
     case 'shutdown':
-      return {method: 'shutdown', params: common};
+      return {method: 'shutdown', params: {...common, force: flags.force}};
+    case 'device': {
+      if (rest[0] === 'lease') return {method: 'lease', params: {device: device ?? rest[1], purpose: flags.purpose}};
+      if (rest[0] === 'release') return {method: 'release', params: {device: device ?? rest[1], keep: flags.keep, force: flags.force}};
+      throw new Error('device lease [--device d] [--purpose text] | device release [--device d] [--keep]');
+    }
     case 'install':
       return {method: 'install', params: {...common, apk: rest[0], replace: flags.replace}};
     case 'open':
@@ -350,6 +360,13 @@ export const main = async () => {
     await startMcp({config});
     return;
   }
+  if (cmd === 'lease') {
+    const {leaseCommand} = await import('./lease/cli.ts');
+    const r = await leaseCommand(args.positional.slice(1), args.flags);
+    process.stdout.write(`${r.text}\n`);
+    if (r.failed) process.exitCode = 1;
+    return;
+  }
   if (cmd === 'daemon') {
     const running = await runningDaemon({config});
     if (sub === 'status' || !sub) {
@@ -357,12 +374,16 @@ export const main = async () => {
       return;
     }
     if (sub === 'stop' || sub === 'restart') {
-      if (running) await running.call(DAEMON_STOP).catch(() => undefined);
+      // A restart keeps the devices this project holds; a stop gives them back (and shuts down those it booted).
+      if (running) await running.call(DAEMON_STOP, {keepLeases: sub === 'restart'}).catch(() => undefined);
+      // Stopped means gone: devices it booted shut down first, and a script that boots next must not race that.
+      const {isAlive} = await import('./util/proc.ts');
+      const end = Date.now() + 120_000;
+      while (running && isAlive(running.info.pid) && Date.now() < end) await new Promise(r => setTimeout(r, 200));
       if (sub === 'stop') {
         process.stdout.write(running ? 'stopped\n' : 'not running\n');
         return;
       }
-      await new Promise(r => setTimeout(r, 300));
       const c = await connect({config});
       process.stdout.write(`running: pid ${c.info.pid}\n`);
       return;

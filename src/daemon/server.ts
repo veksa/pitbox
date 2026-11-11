@@ -23,10 +23,11 @@ export const serve = async (configFile?: string) => {
   const token = crypto.randomBytes(24).toString('hex');
 
   let shuttingDown = false;
-  const shutdown = async (code = 0) => {
+  /** `keepLeases`: a restart (a new version taking over) keeps the devices; the next daemon adopts them. */
+  const shutdown = async (code = 0, keepLeases = false) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await engine.stopAll().catch(() => undefined);
+    await engine.stopAll({keepLeases}).catch(() => undefined);
     try {
       const info = JSON.parse(fs.readFileSync(daemonFile(stateDir), 'utf8')) as DaemonInfo;
       if (info.pid === process.pid) fs.unlinkSync(daemonFile(stateDir));
@@ -49,7 +50,8 @@ export const serve = async (configFile?: string) => {
       method = body.method;
       if (method === DAEMON_STOP) {
         res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result: {stopping: true}}));
-        setTimeout(() => void shutdown(0), 50);
+        const keep = body.params?.keepLeases === true;
+        setTimeout(() => void shutdown(0, keep), 50);
         return;
       }
       const result = await engine.call(method, body.params ?? {});

@@ -95,7 +95,8 @@ const waitForBusy = async (info: DaemonInfo, waitMs: number): Promise<boolean> =
  * the note says they need `up` again.
  */
 const stopOutdated = async (info: DaemonInfo) => {
-  await new DaemonClient(info).call(DAEMON_STOP, {}, 5000).catch(() => undefined);
+  // The new daemon adopts the old one's device leases: the agent's simulator stays its own across the upgrade.
+  await new DaemonClient(info).call(DAEMON_STOP, {keepLeases: true}, 5000).catch(() => undefined);
   const end = Date.now() + 15_000;
   while (isAlive(info.pid)) {
     if (Date.now() > end) throw new Error(`pitbox daemon ${info.pid} runs version ${info.version}, this is ${VERSION}, and it did not stop; end the process and try again`);

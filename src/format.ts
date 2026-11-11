@@ -33,13 +33,16 @@ export const fmtServices = (services: ServiceState[]): string[] => {
   });
 };
 
-export type SimRow = {udid: string; name: string; os: string; kind?: string; state?: string};
+export type SimRow = {udid: string; name: string; os: string; kind?: string; state?: string; holder?: string};
 
-export const fmtDevices = (devices: AndroidDevice[], avds?: {name: string; kind: string}[], sims: SimRow[] = []): string[] => {
-  const out = devices.map(d => `${d.state === 'device' ? '✓' : '✗'} ${d.serial}${d.avd ? `  ${d.avd}` : ''}${d.kind ? ` (${d.kind})` : ''}${d.model ? `  ${d.model}` : ''}${d.state !== 'device' ? `  ${d.state}` : ''}`);
+/** A device row's lease: `[yours]`, `[held by "label" (…)]`. */
+const held = (d: {holder?: string}) => (d.holder ? `  [${d.holder}]` : '');
+
+export const fmtDevices = (devices: (AndroidDevice & {holder?: string})[], avds?: {name: string; kind: string}[], sims: SimRow[] = []): string[] => {
+  const out = devices.map(d => `${d.state === 'device' ? '✓' : '✗'} ${d.serial}${d.avd ? `  ${d.avd}` : ''}${d.kind ? ` (${d.kind})` : ''}${d.model ? `  ${d.model}` : ''}${d.state !== 'device' ? `  ${d.state}` : ''}${held(d)}`);
   const booted = sims.filter(s => !s.state || s.state === 'Booted');
   // Booted simulators are online devices too; the udid is there for names that repeat.
-  out.push(...booted.map(s => `✓ ${s.name}  ${s.os}${s.kind && s.kind !== 'phone' ? ` (${s.kind})` : ''}  ${s.udid}`));
+  out.push(...booted.map(s => `✓ ${s.name}  ${s.os}${s.kind && s.kind !== 'phone' ? ` (${s.kind})` : ''}  ${s.udid}${held(s)}`));
   if (!devices.length && !booted.length) out.push('no devices online');
   if (avds) {
     const running = new Set(devices.map(d => d.avd));
@@ -487,7 +490,12 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'tools':
       return (r as {name: string; description: string; params: {name: string; optional: boolean}[]}[]).map(t => `${t.name}(${t.params.map(p => (p.optional ? `${p.name}?` : p.name)).join(', ')}) — ${t.description}`).join('\n') || 'no tools configured';
     case 'boot':
-      return (x.already ? `${x.avd ?? x.name} already running as ${x.serial ?? x.udid}` : `${x.avd ?? x.name} booted as ${x.serial ?? x.udid} in ${seconds(x.ms as number)}`) + (x.note ? `\nnote: ${x.note}` : '');
+      return (
+        (x.already ? `${x.avd ?? x.name} already running as ${x.serial ?? x.udid}` : `${x.avd ?? x.name} booted as ${x.serial ?? x.udid} in ${seconds(x.ms as number)}`) +
+        (x.instead ? `\ninstead: ${x.instead}` : '') +
+        (x.note ? `\nnote: ${x.note}` : '') +
+        (x.warning ? `\nwarning: ${x.warning}` : '')
+      );
     case 'install':
       return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
     case 'open':
@@ -503,7 +511,11 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'screenshot':
       return `${x.file} (${Math.round((x.bytes as number) / 1024)} KB)`;
     case 'shutdown':
-      return x.gone ? `${x.serial ?? x.udid} shut down in ${seconds(x.ms as number)}` : `${x.serial ?? x.udid} still listed after ${seconds(x.ms as number)}`;
+      return (x.gone ? `${x.serial ?? x.udid} shut down in ${seconds(x.ms as number)}` : `${x.serial ?? x.udid} still listed after ${seconds(x.ms as number)}`) + (x.note ? `\nnote: ${x.note}` : '');
+    case 'lease':
+      return `${x.leased} (${x.id}) is held by "${x.label}"${x.booted ? ', booted by it' : ''}`;
+    case 'release':
+      return `released ${x.released}${x.gone !== undefined ? (x.gone ? `, shut down in ${seconds(x.ms as number)}` : ', still listed after shutdown') : ''}${x.note ? `\nnote: ${x.note}` : ''}`;
     case 'apps':
       return (x.packages as string[]).join('\n') || 'no third-party packages';
     default:

@@ -175,6 +175,16 @@ export const configSchema = z.object({
     })
     .optional(),
   /**
+   * Device leases (several sessions on one machine): every device this project's daemon drives is leased to it, and
+   * a device another session holds is never touched.
+   */
+  devices: z
+    .object({
+      /** Shut down the devices this daemon booted when it gives them back (`device release`, `down`, daemon stop). Default true. */
+      shutdownOnRelease: z.boolean().optional(),
+    })
+    .optional(),
+  /**
    * Web apps, driven in a browser through Playwright as devices named `web:<name>` (`web` alone when there is
    * one): `{admin: {url: 'http://localhost:3200'}}`.
    */

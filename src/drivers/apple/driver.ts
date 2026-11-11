@@ -10,7 +10,7 @@ import {tailLines} from '../../util/text.ts';
 
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
 
-export type Simulator = {udid: string; name: string; state: string; runtime: string; os: string; kind: SimKind; available: boolean};
+export type Simulator = {udid: string; name: string; state: string; runtime: string; os: string; kind: SimKind; available: boolean; deviceType?: string};
 
 /** One screen of a simulator; a foldable has two, and only one is lit at a time. */
 export type Display = {id: number; name: string; active: boolean; primary: boolean; width: number; height: number};
@@ -90,6 +90,7 @@ export const parseSimulators = (json: string): Simulator[] => {
       os: runtimeName(runtime),
       kind: simKind(runtime, d.deviceTypeIdentifier ?? d.name),
       available: d.isAvailable !== false,
+      ...(d.deviceTypeIdentifier ? {deviceType: d.deviceTypeIdentifier} : {}),
     })),
   );
 };
@@ -226,6 +227,20 @@ export class AppleDriver {
     if (!app) return 'no Simulator or DeviceHub app in this Xcode: the simulator runs without a window';
     const r = await run('open', ['-g', '-a', app, '--args', '-CurrentDeviceUDID', udid], {timeoutMs: 10_000});
     return r.code === 0 ? undefined : `could not open ${path.basename(app)}: ${r.stderr.trim().split('\n').pop()}`;
+  }
+
+  /**
+   * A new simulator of the same model and runtime as `like`, for a session that needs its own while another holds
+   * that one. Named `<name> (pitbox N)` so it is recognisable and found again by the next session.
+   */
+  async createLike(like: Simulator, name: string): Promise<Simulator> {
+    if (!like.deviceType) throw new AppleError(`cannot tell the model of ${like.name}`, 'create a simulator in Xcode › Devices and boot it by name');
+    this.forgetList();
+    const udid = (await this.#ok(['create', name, like.deviceType, like.runtime], 'create', 120_000)).trim();
+    this.forgetList();
+    const sim = (await this.simulators()).find(s => s.udid === udid);
+    if (!sim) throw new AppleError(`simctl created ${udid} but does not list it`);
+    return sim;
   }
 
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {

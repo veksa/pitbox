@@ -182,25 +182,38 @@ export class AndroidDriver {
     throw new AndroidError('several devices online', `pass a device: ${online.map(d => d.avd ?? d.serial).join(', ')}`);
   }
 
-  async boot(avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean; timeoutMs?: number} = {}): Promise<{serial: string; ms: number; already: boolean}> {
+  /**
+   * Boots an AVD, or answers the instance already running. `newInstance` starts another instance of an AVD that
+   * runs already (another session holds it): `-read-only`, so the two share the AVD's disk images and the new
+   * one's changes are dropped when it exits.
+   */
+  async boot(avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean; timeoutMs?: number; newInstance?: boolean} = {}): Promise<{serial: string; ms: number; already: boolean; readOnly?: boolean}> {
     const t0 = Date.now();
-    const running = (await this.devices()).find(d => d.avd === avd && d.state === 'device');
-    if (running) return {serial: running.serial, ms: 0, already: true};
+    const before = await this.devices();
+    const running = before.find(d => d.avd === avd && d.state === 'device');
+    const readOnly = !!opts.newInstance && before.some(d => d.avd === avd);
+    if (running && !opts.newInstance) return {serial: running.serial, ms: 0, already: true};
     if (!listAvds().includes(avd)) throw new AndroidError(`unknown AVD "${avd}"`, `available: ${listAvds().join(', ') || 'none'}`);
+    if (readOnly && opts.wipe) throw new AndroidError(`${avd} runs already: a second instance cannot wipe it`, 'boot another AVD to start clean');
     const emulator = findEmulator();
     if (!emulator) throw new AndroidError('emulator binary not found', 'install the Android Emulator SDK package');
-    clearStaleAvdLock(avd);
+    if (!readOnly) clearStaleAvdLock(avd);
     const args = ['-avd', avd, '-no-boot-anim', '-no-audio'];
+    if (readOnly) args.push('-read-only');
     if (opts.coldBoot !== false) args.push('-no-snapshot-load');
     if (opts.wipe) args.push('-wipe-data');
     if (opts.headless) args.push('-no-window');
     const pid = await launchHidden(emulator, args);
     const deadline = t0 + (opts.timeoutMs ?? 240_000);
+    // The instance this boot starts: not one that ran before it.
+    const earlier = new Set(before.filter(d => d.avd === avd).map(d => d.serial));
+    const mine = (list: AndroidDevice[]) => list.find(d => d.avd === avd && !earlier.has(d.serial));
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 2000));
-      const dev = (await this.devices()).find(d => d.avd === avd && d.state === 'device');
+      const all = await this.devices();
+      const dev = [mine(all)].find(d => d?.state === 'device');
       // An emulator that exits on its way up (a lock, the hypervisor, a broken image) leaves nothing to wait for.
-      if (!dev && pid && !isAlive(pid) && !(await this.devices()).some(d => d.avd === avd)) {
+      if (!dev && pid && !isAlive(pid) && !mine(await this.devices())) {
         throw new AndroidError(`the emulator for ${avd} exited ${Math.round((Date.now() - t0) / 1000)}s into its boot`, `start it by hand to see why: emulator -avd ${avd}`);
       }
       if (!dev) continue;
@@ -209,7 +222,7 @@ export class AndroidDriver {
         // An emulator for automation: the screen stays on and the swipe-away lock screen is gone, or it comes back
         // mid-run and every app is behind it.
         await this.shell(dev.serial, 'svc power stayon true; wm dismiss-keyguard').catch(() => '');
-        return {serial: dev.serial, ms: Date.now() - t0, already: false};
+        return {serial: dev.serial, ms: Date.now() - t0, already: false, ...(readOnly ? {readOnly} : {})};
       }
     }
     throw new AndroidError(`${avd} did not finish booting in ${Math.round((opts.timeoutMs ?? 240_000) / 1000)}s`, 'try `boot --wipe` if it hangs on the boot screen');
