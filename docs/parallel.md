@@ -42,9 +42,12 @@ left to each agent's discipline.
   deletes leftover ones that are shut down and held by nobody). pitbox records each simulator it creates
   (`$PITBOX_HOME/created-simulators.json`) and deletes only those, never one named like them by hand; cleaning runs
   under the lock that creates them, so a simulator created a moment ago and not leased yet is never taken for a
-  leftover. For Android: the instance of the AVD this session
-  holds, else a new one, started `-read-only` beside an instance that already runs (its changes go when it shuts
-  down); an emulator it started that it cannot lease is shut down again, not left running. Before a new
+  leftover. For Android: the instance of the AVD this session holds, else the AVD when nothing runs it. The
+  emulator starts a second instance of an AVD only when every instance runs `-read-only`, so beside an ordinary one
+  pitbox creates an AVD of its own for the session — `<avd>_pitbox_N`, a copy of the AVD's config with no data
+  (a first boot, as after a wipe), recorded and deleted on release like a created simulator; beside instances that
+  all run `-read-only` it starts another `-read-only` one (its changes go when it shuts down). An emulator it
+  started that it cannot lease is shut down again, not left running. Before a new
   device starts, pitbox looks at free memory and load and prints a warning when another device is likely to make
   the machine swap — never a refusal.
 - **Shutting down** works only on a device this session holds; `force` shuts down another's anyway and says whose
@@ -83,7 +86,7 @@ left to each agent's discipline.
 | | |
 |---|---|
 | `device action=list` · `pitbox devices` | every device with `[yours]`, `[held by "…" (pid, folder, for N min)]` or `[running, unleased]` |
-| `device action=clean` · `pitbox devices clean` | delete the shut-down simulators pitbox created for sessions that nobody holds |
+| `device action=clean` · `pitbox devices clean` | delete the shut-down simulators and AVDs pitbox created for sessions that nobody holds |
 | `device action=boot` · `pitbox boot [name]` | your own device: the named one, or a free twin / new instance |
 | `device action=lease value=<purpose>` · `pitbox device lease [--device d] [--purpose text]` | hold a device now (it is taken on first use anyway) |
 | `device action=release [keep=true]` · `pitbox device release [--keep]` | give it back; one pitbox booted shuts down unless `keep` |
