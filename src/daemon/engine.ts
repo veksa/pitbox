@@ -10,7 +10,7 @@ import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
-import {AndroidDriver, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
+import {AndroidDriver, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
@@ -658,6 +658,8 @@ export class Engine {
   static COPY_GRACE_MS = 15 * 60_000;
   /** How long a release waits for a copy's emulator to let go of it before leaving the deletion to a sweep. */
   static AVD_LET_GO_MS = 30_000;
+  /** How long a boot waits for this session's own emulator to come back online before answering about it. */
+  static OWN_OFFLINE_WAIT_MS = 60_000;
 
   /** Deletes a simulator pitbox created — only one on its list of created ones, under the lock that creates them. */
   async #deleteCreated(s: AppleDriver, udid: string) {
@@ -771,12 +773,22 @@ export class Engine {
   async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean}) {
     // This session's own: an instance of the AVD, or a copy pitbox made of it for this session (`boot` runs at the
     // start of every pass: it must not make a copy each time).
+    // Found by this session's leases, in any state: a copy offline for a moment is still this session's.
     const copyOf = (name?: string) => (name ? createdEntry(`android:${name}`)?.like : undefined);
-    const own = (await a.devices()).find(d => d.state === 'device' && (d.avd === avd || copyOf(d.avd) === avd) && this.#leases.holderOf('android', d.serial, d.instance)?.mine);
+    const ownLease = this.#leases.held().find(h => h.platform === 'android' && (h.name === avd || copyOf(h.name) === avd));
+    let own = ownLease ? (await a.devices()).find(d => d.serial === ownLease.id && (!ownLease.instance || !d.instance || d.instance === ownLease.instance)) : undefined;
+    if (own && own.state !== 'device') {
+      // Offline under load, or adb reconnecting: waited for a while, never replaced by another copy.
+      const end = Date.now() + Engine.OWN_OFFLINE_WAIT_MS;
+      while (Date.now() < end && own && own.state !== 'device') {
+        await new Promise(r => setTimeout(r, 1000));
+        own = (await a.devices()).find(d => d.serial === ownLease!.id) ?? own;
+      }
+    }
     if (own) {
-      this.#leases.claim('android', own.serial, {name: own.avd, instance: own.instance});
+      this.#leases.claim('android', own.serial, {name: own.avd ?? ownLease!.name, instance: own.instance});
       const forwards = await this.ensureForwards(true).catch(() => []);
-      return {serial: own.serial, ms: 0, already: true, avd: own.avd, forwards};
+      return {serial: own.serial, ms: 0, already: true, avd: own.avd ?? ownLease!.name, forwards, ...(own.state !== 'device' ? {note: `${own.serial} is ${own.state}: still this session's, not replaced`} : {})};
     }
     const warning = bootWarning('android', await this.#runningDevices());
     let launch: Launch | undefined;
@@ -787,8 +799,13 @@ export class Engine {
       // machine: two sessions booting one AVD at once would both find it free, and each take the other's emulator.
       await machineLock('android-boot', async () => {
         const all = await a.devices();
-        // Any state: an instance still starting, or offline, is an instance.
-        const running = all.filter(d => d.emulator && d.avd === avd);
+        // Any state: an instance still starting (seen by its discovery file before adb lists it), or offline.
+        const listed = all.filter(d => d.emulator && d.avd === avd);
+        const starting = a
+          .running()
+          .filter(e => e.avd === avd && !listed.some(d => d.serial === e.serial))
+          .map(e => ({serial: e.serial, state: 'starting', avd: e.avd, emulator: true, instance: e.instance}) as AndroidDevice);
+        const running = [...listed, ...starting];
         const first = running[0];
         const h = first ? this.#leases.holderOf('android', first.serial, first.instance) : undefined;
         const locker = a.lockedBy(avd);
@@ -803,7 +820,9 @@ export class Engine {
         // so shutting it down is quick and deleting it never waits on a snapshot being written.
         launch = await a.launch(twin ?? avd, {...opts, newInstance: newInstance && !twin, ...(twin ? {noSnapshot: true, timeoutMs: 600_000} : {})}, all);
         await a.untilListed(launch);
-      });
+        // Held for seconds per boot (until the new emulator writes its discovery file): a queue of boots waits its
+        // turn instead of being refused.
+      }, 15 * 60_000);
     } catch (e) {
       if (launch) await a.abort(launch);
       if (twin) await this.#deleteCreatedAvd(a, twin);
@@ -1063,7 +1082,7 @@ export class Engine {
     }
     try {
       const emus = this.android ? await this.android.devices() : [];
-      online.push(...emus.map(d => ({platform: 'android' as const, id: d.serial, instance: d.instance, offline: d.state === 'offline'})));
+      online.push(...emus.map(d => ({platform: 'android' as const, id: d.serial, name: d.avd, instance: d.instance, offline: d.state === 'offline'})));
     } catch {
       unread.add('android');
     }

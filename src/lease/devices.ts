@@ -149,7 +149,8 @@ export class DeviceLeases {
           }
         } else this.#absent.delete(k);
         // A lease taken while the emulator's instance was unknown gets it now.
-        if (here?.instance && !h.instance) h.instance = here.instance;
+        // Only from the same AVD: a reused port may already show another session's emulator.
+        if (here?.instance && !h.instance && here.name && here.name === h.name) h.instance = here.instance;
       } else if (online && !unread.has(h.platform)) this.#absent.delete(k);
       const l = readLease(h.platform, h.id);
       if (heartbeat(h.platform, h.id, this.holder.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart, ...(h.instance ? {instance: h.instance} : {})})) continue;

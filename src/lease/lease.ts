@@ -333,7 +333,7 @@ export const withLockAsync = async <T>(file: string, fn: () => Promise<T>, waitM
 };
 
 /** A machine-wide lock under the lease folder, for work no two sessions may do at once (naming a new simulator). */
-export const machineLock = <T>(name: string, fn: () => Promise<T>) => withLockAsync(path.join(leaseDir(), name), fn);
+export const machineLock = <T>(name: string, fn: () => Promise<T>, waitMs?: number) => withLockAsync(path.join(leaseDir(), name), fn, waitMs);
 
 export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; ttlMs?: number; instance?: string; now?: number};
 
