@@ -3,7 +3,7 @@ import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 import {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, type Bounds, type UiNode, type UiWindow} from './ui/snapshot.ts';
-import {dropHint, freeSpot, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
+import {appEntries, dropHint, freeSpot, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
 
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
@@ -45,6 +45,31 @@ describe('the Android widget picker', () => {
     {p: 0, w: 0, c: 'LinearLayout', b: [540, 600, 1080, 1100], d: 'Note widget, 2 wide by 2 high', f: 'c'},
     {p: 0, w: 0, c: 'LinearLayout', b: [0, 1100, 540, 1600], d: 'Note widget, 4 wide by 4 high', f: 'c'},
   ];
+
+  it('takes only the app\'s own widgets from an older picker that lists every app at once', () => {
+    const cell = (p: number, y: number, name: string, dims: string): UiNode[] => [
+      {p, w: 0, c: 'LinearLayout', b: [40, y, 500, y + 500], f: 'c'},
+      {p: -2, w: 0, c: 'ImageView', b: [40, y, 500, y + 400], id: 'widget_preview'},
+      {p: -2, w: 0, c: 'TextView', b: [40, y + 420, 300, y + 470], id: 'widget_name', t: name},
+      {p: -2, w: 0, c: 'TextView', b: [300, y + 420, 400, y + 470], id: 'widget_dims', t: dims},
+    ];
+    const nodes: UiNode[] = [{p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400], id: 'container'}];
+    const section = (title: string, y: number, cells: [string, string][]) => {
+      const c = nodes.push({p: 0, w: 0, c: 'LinearLayout', b: [0, y, 1080, y + 600], id: 'widgets_cell_list_container'}) - 1;
+      nodes.push({p: c, w: 0, c: 'TextView', b: [0, y, 1080, y + 100], id: 'section', t: title});
+      cells.forEach(([name, dims], k) => {
+        const at = nodes.length;
+        nodes.push(...cell(c, y + 100, name, dims).map((n, j) => (j ? {...n, p: at} : n)));
+        nodes[at]!.b = [40 + k * 500, y + 100, 500 + k * 500, y + 600];
+      });
+    };
+    section('Other app', 100, [['Clock', '2 × 2']]);
+    section('MyApp', 700, [['Clock', '4 × 2'], ['Note', '2 × 2']]);
+    expect(pickerEntries(snap(nodes))).toHaveLength(3);
+    expect(appEntries(snap(nodes), 'MyApp').map(e => `${e.name} ${e.size}`)).toEqual(['Clock 4x2', 'Note 2x2']);
+    expect(appEntries(snap(nodes), 'Missing app')).toEqual([]);
+    expect(appEntries(snap(picker), 'MyApp')).toHaveLength(3);
+  });
 
   it('reads each widget\'s name and size from its label', () => {
     expect(pickerEntries(snap(picker)).map(e => `${e.name} ${e.size}`)).toEqual(['Four notes 4x2', 'Note 2x2', 'Note 4x4']);

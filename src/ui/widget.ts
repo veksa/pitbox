@@ -94,6 +94,21 @@ export const pickerEntries = (snap: Pick<Snapshot, 'nodes'>): PickerEntry[] => {
   return out;
 };
 
+/** The sections of an older picker (Android 11 and earlier): one long list, each app's widgets under its name. */
+const sections = (snap: Pick<Snapshot, 'nodes'>) => snap.nodes.flatMap((n, i) => (n.id === 'widgets_cell_list_container' ? [i] : []));
+
+/** The section of an older picker titled by the app's name (its `section` view). */
+const appSection = (snap: Pick<Snapshot, 'nodes'>, app: string) =>
+  sections(snap).find(c => snap.nodes.some(m => m.id === 'section' && same(m.t, app) && inAncestry(snap.nodes, m, c)));
+
+/** The app's widgets the picker shows: in an older picker, which lists every app at once, only those under its name. */
+export const appEntries = (snap: Pick<Snapshot, 'nodes'>, app: string): PickerEntry[] => {
+  const all = pickerEntries(snap);
+  if (!sections(snap).length) return all;
+  const own = appSection(snap, app);
+  return own === undefined ? [] : all.filter(e => e.index === own || inAncestry(snap.nodes, snap.nodes[e.index]!, own));
+};
+
 const inAncestry = (nodes: UiNode[], n: UiNode, ancestor: number) => {
   for (let k = n.p, hops = 0; k >= 0 && hops < 64; k = nodes[k]!.p, hops++) if (k === ancestor) return true;
   return false;
@@ -160,6 +175,7 @@ export const freeSpot = (snap: Pick<Snapshot, 'nodes' | 'windows'>, region: Boun
 
 /** The header of an app's widgets in the picker (Launcher3 `widgets_list_header`, with its `app_title`). */
 export const pickerHeader = (snap: Pick<Snapshot, 'nodes'>, app: string): number | undefined => {
+  if (sections(snap).length) return appSection(snap, app);
   const headers = snap.nodes.flatMap((n, i) => (n.id === 'widgets_list_header' ? [i] : []));
   const titled = headers.find(h => snap.nodes.some(m => (m.id === 'app_title' || !m.id) && same(m.t, app) && inAncestry(snap.nodes, m, h)));
   if (titled !== undefined) return titled;
@@ -302,7 +318,7 @@ const androidAppWidgets = async (ui: DeviceUi, app: string, want?: (s: Snapshot)
     if ((await ui.snapshot()).windows.some(w => w.type === 'ime')) await ui.key(['back']);
     snap = (await until(ui, 2000, s => (pickerHeader(s, app) !== undefined || pickerEntries(s).length ? true : undefined))).snap;
   }
-  const shows = (s: Snapshot) => (want ? want(s) : pickerEntries(s).length > 0);
+  const shows = (s: Snapshot) => (want ? want(s) : appEntries(s, app).length > 0);
   if (!shows(snap)) {
     let header = pickerHeader(snap, app);
     if (header === undefined && search === undefined) {
@@ -310,12 +326,24 @@ const androidAppWidgets = async (ui: DeviceUi, app: string, want?: (s: Snapshot)
       snap = await scrollPicker(ui, s => pickerHeader(s, app) !== undefined || shows(s));
       header = pickerHeader(snap, app);
     }
+    // An older picker's app name is up, its widgets still below: its section is pulled up to the top of the list,
+    // slowly enough that the list stops where the finger does.
+    const title = header === undefined ? -1 : snap.nodes.findIndex(m => m.id === 'section' && inAncestry(snap.nodes, m, header!));
+    if (!shows(snap) && title >= 0) {
+      const t = snap.nodes[title]!.b;
+      const top = snap.nodes[idOf(snap, 'container') ?? 0]!.b[1];
+      const x = Math.round((t[0] + t[2]) / 2);
+      // Short of the very top: a list that runs on past the finger must not carry the app's name out of view.
+      await ui.swipe(`${x},${t[1]},${x},${top + (t[3] - t[1]) + 60}`, 900);
+      snap = (await until(ui, 2000, s => (shows(s) ? true : undefined))).snap;
+    }
     // The header opens the app's widgets; pressed while a search left only them showing, it would fold them away.
-    if (!shows(snap) && header !== undefined && !(search !== undefined && pickerEntries(snap).length && !twoPane(snap))) {
+    if (!shows(snap) && header !== undefined && !sections(snap).length && !(search !== undefined && pickerEntries(snap).length && !twoPane(snap))) {
       await ui.press(point(snap, header));
       snap = (await until(ui, 2000, s => (shows(s) ? true : undefined))).snap;
     }
-    if (!shows(snap)) snap = await scrollPicker(ui, shows);
+    // An older picker's section, pulled up, shows all its app has: the list below is other apps'.
+    if (!shows(snap) && !(sections(snap).length && header !== undefined)) snap = await scrollPicker(ui, shows);
   }
   return snap;
 };
@@ -344,8 +372,8 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const name = w.name!;
   const app = w.app ?? name;
   const {pkg} = await androidPicker(ui);
-  const snap = await androidAppWidgets(ui, app, s => pickEntry(pickerEntries(s), name, w.size) !== undefined);
-  const entries = pickerEntries(snap);
+  const snap = await androidAppWidgets(ui, app, s => pickEntry(appEntries(s, app), name, w.size) !== undefined);
+  const entries = appEntries(snap, app);
   const entry = pickEntry(entries, name, w.size);
   if (!entry) {
     await ui.key(['home']);
@@ -359,7 +387,7 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   let add: {snap: Snapshot; hit?: number} = {snap};
   let current = snap;
   for (let tries = 0; tries < 2 && add.hit === undefined; tries++) {
-    const now = pickEntry(pickerEntries(current), name, entry.size);
+    const now = pickEntry(appEntries(current, app), name, entry.size);
     if (!now) break;
     await ui.press(point(current, now.index));
     add = await until(ui, 2500, s => idOf(s, 'widget_add_button'));
@@ -368,9 +396,9 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   let via = 'add button';
   let at: {x: number; y: number} | undefined;
   if (add.hit !== undefined) await ui.press(point(add.snap, add.hit));
-  else if (pickEntry(pickerEntries(current), name, entry.size)) {
+  else if (pickEntry(appEntries(current, app), name, entry.size)) {
     via = 'drag';
-    at = await dragPreview(ui, name, entry.size);
+    at = await dragPreview(ui, app, name, entry.size);
   } else if (homeWidget(current, name) === undefined && current.windows.find(x => x.type === 'app')?.pkg === pkg && idOf(current, 'workspace') === undefined) {
     throw new Error(`a tap on the "${name}" widget in the picker showed no Add button and the widget left the list\nscreen:\n${current.lines.slice(0, 15).join('\n')}`);
   }
@@ -381,9 +409,9 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
  * Drags a widget's preview out of the picker onto the home screen, for a picker with no Add button: held until
  * the picker gives way to the home screen, then dropped on its emptiest spot.
  */
-const dragPreview = async (ui: DeviceUi, name: string, size: string): Promise<{x: number; y: number}> => {
+const dragPreview = async (ui: DeviceUi, app: string, name: string, size: string): Promise<{x: number; y: number}> => {
   const snap = await ui.snapshot();
-  const entry = pickEntry(pickerEntries(snap), name, size);
+  const entry = pickEntry(appEntries(snap, app), name, size);
   if (!entry) throw new Error(`the "${name}" widget left the picker before it could be dragged`);
   const from = tapPoint(snap, entry.index);
   const touch = (phase: 'down' | 'move' | 'up', x = 0, y = 0) => ui.runner.call('touch', {phase, x, y});
@@ -553,7 +581,7 @@ const androidList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   }
   await androidPicker(ui);
   const snap = await androidAppWidgets(ui, w.app);
-  const widgets = pickerEntries(snap).map(e => `${e.name} ${e.size}`);
+  const widgets = appEntries(snap, w.app).map(e => `${e.name} ${e.size}`);
   await ui.key(['home']);
   if (!widgets.length) throw new Error(`no widgets of "${w.app}" in the picker\nhint: name the app as the picker lists it`);
   return {app: w.app, widgets};
