@@ -525,6 +525,8 @@ export class WebRunner {
       this.#downloadsSeen = pending >= 0 ? pending : this.#downloads.length;
       return {downloads: this.#downloads.filter(match).slice(-(opts.limit ?? 10)), dir};
     }
+    // A wait that is not a number (`--wait name.pdf` took the name) would never time out.
+    if (!(opts.waitMs >= 0)) throw new WebError('the wait is not a number of seconds', 'downloads [name-regex] --wait 10');
     const t0 = Date.now();
     for (;;) {
       const fresh = this.#downloads.slice(this.#downloadsSeen).find(match);

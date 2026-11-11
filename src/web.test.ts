@@ -290,6 +290,7 @@ describe('web emulation', () => {
     while (!(await runner.downloads()).downloads.some(d => d.name === 'slow.zip') && Date.now() - t0 < 5000) await new Promise(r => setTimeout(r, 50));
     expect((await runner.downloads({grep: 'slow'})).downloads.at(-1)).toMatchObject({name: 'slow.zip', state: 'saving'});
     expect((await runner.downloads({waitMs: 10_000})).downloads[0]).toMatchObject({name: 'slow.zip', state: 'done'});
+    await expect(runner.downloads({waitMs: Number('slow.zip') * 1000})).rejects.toThrow(/the wait is not a number of seconds/);
   });
 
   it('keeps the profile on a relaunch and starts clean when asked', {timeout: 60_000}, async () => {
