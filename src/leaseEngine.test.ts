@@ -2,13 +2,14 @@
 // what `force` may do, the boot paths (a free simulator, a twin, a new simulator, a second emulator instance), a
 // reused emulator serial, and the push gateway's routing. Leases live in a temporary PITBOX_HOME (src/test-setup.ts).
 
+import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {Engine} from './daemon/engine.ts';
-import {AndroidDriver, avdDir, avdStamp, avdTaken, createAvdLike, deleteAvd, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
+import {AndroidDriver, avdDir, avdLocked, avdStamp, avdTaken, createAvdLike, deleteAvd, insideFolder, killTree, lockPid, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
 import {avdHome} from './drivers/android/sdk.ts';
 import type {Simulator} from './drivers/apple/driver.ts';
 import {isCreated, listCreated, recordCreated} from './lease/created.ts';
@@ -137,7 +138,11 @@ const session = async (name: string, drivers: {android?: FakeAndroid | null; app
   return Engine.create(path.join(dir, 'pitbox.config.json'), undefined, {android: (drivers.android ?? null) as never, apple: (drivers.apple ?? null) as never});
 };
 
-beforeEach(() => fs.rmSync(leaseDir(), {recursive: true, force: true}));
+beforeEach(() => {
+  fs.rmSync(leaseDir(), {recursive: true, force: true});
+  // The created-devices list lives beside the leases: each test starts with none.
+  fs.rmSync(path.join(path.dirname(leaseDir()), 'created-simulators.json'), {force: true});
+});
 afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, {recursive: true, force: true});
 });
@@ -381,6 +386,39 @@ describe('AVD copies', () => {
     expect(android.avdNames).toEqual(['Test_Phone_Lease', 'Test_Phone_Lease_pitbox_2']);
   });
 
+  it('never takes another emulator that took its copy\'s port, and does not wait for a copy that is gone', async () => {
+    Engine.OWN_OFFLINE_WAIT_MS = 5000;
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await b.methods.boot({avd: 'Test_Phone_Lease'});
+    // bob's copy died; an emulator of someone else came up on its port.
+    android.devs = android.devs.filter(d => d.serial !== 'emulator-5556');
+    android.avdNames.push('Other');
+    android.devs.push({serial: 'emulator-5556', state: 'offline', avd: 'Other', emulator: true, instance: 'pid:other'});
+    const t0 = Date.now();
+    const r = (await b.methods.boot({avd: 'Test_Phone_Lease'})) as {serial: string; already: boolean};
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(r).toMatchObject({serial: 'emulator-5558', already: false});
+    expect(android.devs.find(d => d.serial === 'emulator-5556')?.instance).toBe('pid:other');
+    expect(android.aborted).toEqual([]);
+  });
+
+  it('answers its own copy that only its discovery file shows while adb lists nothing', async () => {
+    Engine.OWN_OFFLINE_WAIT_MS = 50;
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await b.methods.boot({avd: 'Test_Phone_Lease'});
+    // adb restarting: an empty list for a moment; the emulators still run.
+    android.starting = android.running();
+    android.devs = [];
+    expect(await b.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({serial: 'emulator-5556', already: true, note: expect.stringMatching(/not listed by adb: still this session's/)});
+    expect(android.avdNames).toEqual(['Test_Phone_Lease', 'Test_Phone_Lease_pitbox_2']);
+  });
+
   it('counts an instance adb does not list yet (seen by its discovery file) as running', async () => {
     const android = new FakeAndroid();
     const b = await session('bob', {android});
@@ -526,12 +564,27 @@ esac
     };
     const calls = () => (fs.existsSync(path.join(dir, 'calls')) ? fs.readFileSync(path.join(dir, 'calls'), 'utf8').split('\n').filter(Boolean).length : 0);
     /** A discovery file, as an emulator writes it when it starts. */
-    const discover = (pid: number, port: number, avd: string, readOnly = false) => {
+    const discover = (pid: number, port: number, avd: string, opts: {readOnly?: boolean; launch?: string} = {}) => {
       alive.add(pid);
-      fs.writeFileSync(path.join(running, `pid_${pid}.ini`), `avd.id=${avd}\nport.serial=${port}\nport.adb=${port + 1}\navd.name=${avd}\ncmdline="/sdk/qemu" "-avd" "${avd}"${readOnly ? ' "-read-only"' : ''}\n`);
+      const extra = `${opts.readOnly ? ' "-read-only"' : ''}${opts.launch ? ` "-prop" "qemu.pitbox_launch=${opts.launch}"` : ''}`;
+      fs.writeFileSync(path.join(running, `pid_${pid}.ini`), `avd.id=${avd}\nport.serial=${port}\nport.adb=${port + 1}\navd.name=${avd}\ncmdline="/sdk/qemu" "-avd" "${avd}"${extra}\n`);
     };
     const kills = () => (fs.existsSync(path.join(dir, 'kills')) ? fs.readFileSync(path.join(dir, 'kills'), 'utf8').split('\n').filter(Boolean) : []);
-    return {driver: new AndroidDriver(bin, {runningDirs: [running], alive: pid => alive.has(pid)}), set, calls, discover, kills, alive};
+    /** Processes killed by pid: through the driver's stand-in, never a real kill. */
+    const killed: number[] = [];
+    /** Start times by pid (seconds since the epoch): a pid given to another process gets another one. */
+    const starts = new Map<number, number>();
+    const driver = new AndroidDriver(bin, {
+      runningDirs: [running],
+      alive: pid => alive.has(pid),
+      kill: pid => {
+        killed.push(pid);
+        alive.delete(pid);
+      },
+      start: pid => starts.get(pid) ?? 1000,
+      cacheMs: 0,
+    });
+    return {driver, set, calls, discover, kills, alive, killed, starts};
   };
   const line = (transport: number, state = 'device') => `emulator-5554          ${state} product:sdk model:sdk_phone device:emu transport_id:${transport}\n`;
 
@@ -572,7 +625,7 @@ esac
     expect(adb.calls()).toBe(3);
   });
 
-  const launchOf = (over: Partial<Launch>): Launch => ({avd: 'Copy', t0: Date.now(), deadline: Date.now() + 3000, timeoutMs: 3000, readOnly: false, earlier: new Set(), earlierInstances: new Set(), ...over});
+  const launchOf = (over: Partial<Launch>): Launch => ({avd: 'Copy', t0: Date.now(), deadline: Date.now() + 3000, timeoutMs: 3000, readOnly: false, earlier: new Set(), earlierInstances: new Set(), id: 'L1', starts: new Map(), ...over});
 
   it.skipIf(process.platform === 'win32')('names the AVD and process of an offline emulator from its discovery file, without its console', async () => {
     const adb = fakeAdb();
@@ -580,7 +633,7 @@ esac
     adb.discover(4100, 5554, 'Phone');
     expect((await adb.driver.devices())[0]).toMatchObject({serial: 'emulator-5554', state: 'offline', avd: 'Phone', instance: 'pid:4100'});
     expect(adb.calls()).toBe(0);
-    adb.discover(4200, 5556, 'Phone', true);
+    adb.discover(4200, 5556, 'Phone', {readOnly: true});
     expect(adb.driver.readOnly('pid:4200')).toBe(true);
     expect(adb.driver.readOnly('pid:4100')).toBe(false);
   });
@@ -589,13 +642,33 @@ esac
     const adb = fakeAdb();
     adb.set('');
     adb.discover(4100, 5554, 'Phone');
-    // The launcher runs (this test process stands in for it); its emulator is not up yet.
+    // The launcher runs (this test process stands in for it); its emulator is not up yet. Another tool starts an
+    // instance of the AVD meanwhile: not taken for this launch's, which is known by its marker.
     const l = launchOf({avd: 'Phone', pid: process.pid, earlierInstances: new Set(['pid:4100'])});
-    setTimeout(() => adb.discover(4300, 5556, 'Phone'), 300);
+    setTimeout(() => adb.discover(4250, 5558, 'Phone'), 100);
+    setTimeout(() => adb.discover(4300, 5556, 'Phone', {launch: 'L1'}), 300);
     const t0 = Date.now();
     await adb.driver.untilListed(l, 5000);
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(l.instance).toBe('pid:4300');
+  });
+
+  it.skipIf(process.platform === 'win32')('gives up on a launch that never shows, instead of letting it come up unaccounted for', async () => {
+    const adb = fakeAdb();
+    adb.set('');
+    const l = launchOf({avd: 'Phone', pid: process.pid});
+    await expect(adb.driver.untilListed(l, 1200)).rejects.toThrow(/did not show in 1s/);
+  });
+
+  it.skipIf(process.platform === 'win32')('never kills a pid that now belongs to another process', async () => {
+    const adb = fakeAdb();
+    adb.set('');
+    adb.discover(5100, 5556, 'Copy', {launch: 'L1'});
+    const l = launchOf({avd: 'Copy', starts: new Map([[5100, 1000]])});
+    // The emulator died and the system gave its pid to a newer process.
+    adb.starts.set(5100, 9000);
+    await adb.driver.abort(l);
+    expect(adb.killed).toEqual([]);
   });
 
   it.skipIf(process.platform === 'win32')('never takes the next emulator on a serial its launch gave up for its own, and never kills it', async () => {
@@ -607,6 +680,7 @@ esac
     await expect(adb.driver.untilBooted(l)).rejects.toThrow(/exited/);
     await adb.driver.abort(l);
     expect(adb.kills()).toEqual([]);
+    expect(adb.killed).toEqual([]);
     expect(adb.alive.has(5200)).toBe(true);
   });
 
@@ -615,17 +689,9 @@ esac
     adb.set('emulator-5556          offline transport_id:9\n');
     adb.discover(5100, 5556, 'Copy');
     const l = launchOf({avd: 'Copy', serial: 'emulator-5556', instance: 'pid:5100'});
-    // The process is gone by the time the kill is seen.
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
-      adb.alive.delete(5100);
-      return true;
-    });
-    try {
-      await adb.driver.abort(l);
-    } finally {
-      kill.mockRestore();
-    }
+    await adb.driver.abort(l);
     expect(adb.kills()).toEqual(['emulator-5556']);
+    expect(adb.killed).toEqual([5100]);
   });
 });
 
@@ -650,6 +716,42 @@ describe('android AVD files', () => {
     expect(avdHome()).toBe(path.join(home, 'emu', 'avd'));
     process.env.ANDROID_AVD_HOME = path.join(home, 'avds');
     expect(avdHome()).toBe(path.join(home, 'avds'));
+  });
+
+  it('reads an AVD lock as a file holding the pid (macOS, Linux) or a folder with a pid file (Windows)', () => {
+    const avds = path.join(home, 'avds');
+    fs.mkdirSync(path.join(avds, 'Phone.avd'), {recursive: true});
+    process.env.ANDROID_AVD_HOME = avds;
+    fs.writeFileSync(path.join(avds, 'Phone.ini'), `path=${path.join(avds, 'Phone.avd')}\n`);
+    const lock = path.join(avds, 'Phone.avd', 'hardware-qemu.ini.lock');
+    expect(lockPid('Phone')).toBeUndefined();
+    fs.writeFileSync(lock, '33417 ');
+    expect(lockPid('Phone')).toBe(33417);
+    fs.rmSync(lock);
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, 'pid'), '4242');
+    expect(lockPid('Phone')).toBe(4242);
+    // This test's own process holds no emulator: the lock does not count.
+    fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+    expect(avdLocked('Phone')).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('kills a process by pid', async () => {
+    const child = spawn('sleep', ['30'], {stdio: 'ignore'});
+    const gone = new Promise(r => child.on('exit', r));
+    killTree(child.pid!);
+    await gone;
+    expect(child.signalCode).toBe('SIGTERM');
+  });
+
+  it('tells a path inside a folder by whole parts, and without case on Windows', () => {
+    expect(insideFolder('/a/Phone.avd/sdcard.img', '/a/Phone.avd', false)).toBe(true);
+    expect(insideFolder('/a/Phone.avd', '/a/Phone.avd', false)).toBe(true);
+    expect(insideFolder('/a/Phone.avd2/sdcard.img', '/a/Phone.avd', false)).toBe(false);
+    expect(insideFolder('/a/phone.avd/sdcard.img', '/a/Phone.avd', false)).toBe(false);
+    expect(insideFolder('system-images/x/', '/a/Phone.avd', false)).toBe(false);
+    expect(insideFolder('C:\\Users\\me\\.android\\avd\\phone.AVD\\sdcard.img', 'C:\\Users\\Me\\.android\\avd\\Phone.avd', true)).toBe(true);
+    expect(insideFolder('C:\\Users\\me\\.android\\avd\\Phone.avd2\\x', 'C:\\Users\\me\\.android\\avd\\Phone.avd', true)).toBe(false);
   });
 
   it('copies an AVD from where its pointer says, never pointing back into it, and deletes only the copy', () => {
