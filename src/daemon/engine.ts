@@ -793,7 +793,7 @@ export class Engine {
         const h = first ? this.#leases.holderOf('android', first.serial, first.instance) : undefined;
         const locker = a.lockedBy(avd);
         const newInstance = running.length > 0 || !!locker;
-        why = h ? `${avd} runs for ${describeHolder(h.lease)}` : first ? `${avd} runs without a lease (another tool or an older pitbox may drive it): left alone` : newInstance ? `${avd} is starting for another session` : undefined;
+        why = h ? `${avd} runs for ${describeHolder(h.lease)}` : first ? `${avd} runs without a lease (still starting for another session, or another tool or an older pitbox drives it): left alone` : newInstance ? `${avd} is starting for another session` : undefined;
         // The emulator runs a second instance of an AVD only when every instance runs -read-only. Beside a writable
         // one (a normal boot, or one still starting) the session gets an AVD of its own: a copy of this one's config
         // with no data, deleted again when the session gives it back.
