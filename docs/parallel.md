@@ -14,11 +14,13 @@ left to each agent's discipline.
   cannot both get it. The folder must be writable (else pitbox says so and asks for a writable `PITBOX_HOME`); on a
   file system without hard links the lock files are created exclusively instead.
 - **An Android serial is not a device.** `emulator-5556` goes to the next emulator on that port; a lease names the
-  emulator process (`adb emu avd discoverypath`, `pid_<N>.ini`), not the kernel boot id — a quickboot snapshot
-  restores that — so a new emulator on a reused serial is free, and the session that held the old one neither
-  drives nor shuts down the new one. pitbox keeps the answer per adb connection (dropped when the device goes
-  offline); when the console gives none (it timed out, or an old emulator lacks the command) it asks again every
-  15 s, and a lease taken meanwhile gets the instance on a later beat.
+  emulator process, not the kernel boot id — a quickboot snapshot restores that — so a new emulator on a reused
+  serial is free, and the session that held the old one neither drives nor shuts down the new one. pitbox reads the
+  process and the AVD from the discovery file each emulator writes as it starts (`<temp>/avd/running/pid_<N>.ini`),
+  so it knows an emulator in any state, offline or not yet listed by adb, without asking its console. Without one it
+  asks the console (`adb emu avd name`, `adb emu avd discoverypath`) once per adb connection, and again every 15 s
+  while no answer came; a lease taken meanwhile gets the instance on a later beat, and only from an emulator of the
+  same AVD.
 - **The holder is the project's daemon.** Sessions of one project share its daemon, and so its devices; parallel
   sessions of one project work from separate worktrees (each has its own config folder, daemon and stand ports).
   The label others see is the project's folder name, plus `PITBOX_SESSION` when the agent's environment sets one
@@ -49,17 +51,21 @@ left to each agent's discipline.
   (running, starting or offline) runs `-read-only`, so beside an ordinary one pitbox creates an AVD of its own for
   the session: `<avd>_pitbox_N`, a copy of the AVD's config with no data (a first boot, as after a wipe; up to
   10 min) that never points into the original AVD's folder and boots `-no-snapshot`. Beside instances that all run
-  `-read-only` it starts another `-read-only` one (its changes go when it shuts down); on Windows pitbox does not
-  read another emulator's command line and always makes a copy. Boots of emulators take one machine-wide lock from
-  the decision until the new emulator shows in adb, so two sessions booting one AVD at once never take each other's
-  emulator; pitbox knows its emulator by the process it launched. An emulator that does not come up, or that it
-  cannot lease, is killed, and a copy made for it deleted. A copy is recorded with its folder's identity and
+  `-read-only` it starts another `-read-only` one (its changes go when it shuts down); whether an instance runs
+  `-read-only` comes from its discovery file (on every system) or its command line. Boots of emulators take one
+  machine-wide lock from the decision until the new emulator writes its discovery file or takes its AVD's lock —
+  a second or two — so two sessions booting one AVD at once never take each other's emulator, and boots of other
+  AVDs queue for those seconds instead of being refused. pitbox knows its emulator by its process: a serial its
+  launch gave up is never taken for its own, nor killed. An emulator that does not come up, or that it cannot
+  lease, is killed (on Windows with the processes the launcher started), and a copy made for it deleted. A second
+  `boot` answers the session's own emulator or copy even while it is offline. A copy is recorded with its folder's identity and
   deleted when the session gives it back; one whose emulator does not let go in time (the release says so), or one
   left by a daemon that died or a device that went away, is deleted by a later beat of any daemon (every 5 min)
   or `devices clean` — never while an emulator runs it or a live lease names it, never within 15 min of its
   creation, and never a folder someone made later under the same name. With `devices.deleteCreated: false` a copy
-  stays, and only `devices clean` deletes it. The AVD folder is found as the emulator finds it (`ANDROID_AVD_HOME`,
-  `ANDROID_EMULATOR_HOME`, `ANDROID_USER_HOME`, `ANDROID_PREFS_ROOT`, `ANDROID_SDK_HOME`). Before a new
+  stays, and only `devices clean` deletes it. The AVD folder is found as the emulator finds it: `ANDROID_AVD_HOME`, else
+  `avd` in `ANDROID_EMULATOR_HOME` or `ANDROID_USER_HOME`, else `.android/avd` in `ANDROID_PREFS_ROOT` or
+  `ANDROID_SDK_HOME`, else `~/.android/avd`. Before a new
   device starts, pitbox looks at free memory and load and prints a warning when another device is likely to make
   the machine swap — never a refusal.
 - **Shutting down** works only on a device this session holds; `force` shuts down another's anyway and says whose
