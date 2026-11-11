@@ -124,7 +124,7 @@ dev server by the address the Mac sees it at, so the dev server must listen beyo
 | Field | Meaning |
 |---|---|
 | `shutdownOnRelease` | shut down the devices this daemon booted when it gives them back (`device release`, `down`, `pitbox daemon stop`; never on a restart); default `true` |
-| `deleteCreated` | delete the simulators (`<name> (pitbox N)`) and AVDs (`<avd>_pitbox_N`) pitbox created for this session when it gives them back; default `true` |
+| `deleteCreated` | delete the simulators (`<name> (pitbox N)`) and AVD copies (`<avd>_pitbox_N`) pitbox created for this session when it gives them back (a copy whose emulator is slow to let go is deleted by a later sweep); `false` keeps them for `devices clean`; default `true` |
 
 Every device the daemon drives is leased to it; see [Working in parallel](parallel.md).
 

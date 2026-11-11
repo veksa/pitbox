@@ -16,7 +16,9 @@ left to each agent's discipline.
 - **An Android serial is not a device.** `emulator-5556` goes to the next emulator on that port; a lease names the
   emulator process (`adb emu avd discoverypath`, `pid_<N>.ini`), not the kernel boot id — a quickboot snapshot
   restores that — so a new emulator on a reused serial is free, and the session that held the old one neither
-  drives nor shuts down the new one. pitbox asks once per adb connection and asks again after the device went offline.
+  drives nor shuts down the new one. pitbox keeps the answer per adb connection (dropped when the device goes
+  offline); when the console gives none (it timed out, or an old emulator lacks the command) it asks again every
+  15 s, and a lease taken meanwhile gets the instance on a later beat.
 - **The holder is the project's daemon.** Sessions of one project share its daemon, and so its devices; parallel
   sessions of one project work from separate worktrees (each has its own config folder, daemon and stand ports).
   The label others see is the project's folder name, plus `PITBOX_SESSION` when the agent's environment sets one
@@ -42,12 +44,22 @@ left to each agent's discipline.
   deletes leftover ones that are shut down and held by nobody). pitbox records each simulator it creates
   (`$PITBOX_HOME/created-simulators.json`) and deletes only those, never one named like them by hand; cleaning runs
   under the lock that creates them, so a simulator created a moment ago and not leased yet is never taken for a
-  leftover. For Android: the instance of the AVD this session holds, else the AVD when nothing runs it. The
-  emulator starts a second instance of an AVD only when every instance runs `-read-only`, so beside an ordinary one
-  pitbox creates an AVD of its own for the session — `<avd>_pitbox_N`, a copy of the AVD's config with no data
-  (a first boot, as after a wipe), recorded and deleted on release like a created simulator; beside instances that
-  all run `-read-only` it starts another `-read-only` one (its changes go when it shuts down). An emulator it
-  started that it cannot lease is shut down again, not left running. Before a new
+  leftover. For Android: the instance of the AVD this session holds — or the copy of it pitbox made for the session
+  — else the AVD when nothing runs it. The emulator starts a second instance of an AVD only when every instance
+  (running, starting or offline) runs `-read-only`, so beside an ordinary one pitbox creates an AVD of its own for
+  the session: `<avd>_pitbox_N`, a copy of the AVD's config with no data (a first boot, as after a wipe; up to
+  10 min) that never points into the original AVD's folder and boots `-no-snapshot`. Beside instances that all run
+  `-read-only` it starts another `-read-only` one (its changes go when it shuts down); on Windows pitbox does not
+  read another emulator's command line and always makes a copy. Boots of emulators take one machine-wide lock from
+  the decision until the new emulator shows in adb, so two sessions booting one AVD at once never take each other's
+  emulator; pitbox knows its emulator by the process it launched. An emulator that does not come up, or that it
+  cannot lease, is killed, and a copy made for it deleted. A copy is recorded with its folder's identity and
+  deleted when the session gives it back; one whose emulator does not let go in time (the release says so), or one
+  left by a daemon that died or a device that went away, is deleted by a later beat of any daemon (every 5 min)
+  or `devices clean` — never while an emulator runs it or a live lease names it, never within 15 min of its
+  creation, and never a folder someone made later under the same name. With `devices.deleteCreated: false` a copy
+  stays, and only `devices clean` deletes it. The AVD folder is found as the emulator finds it (`ANDROID_AVD_HOME`,
+  `ANDROID_EMULATOR_HOME`, `ANDROID_USER_HOME`, `ANDROID_PREFS_ROOT`, `ANDROID_SDK_HOME`). Before a new
   device starts, pitbox looks at free memory and load and prints a warning when another device is likely to make
   the machine swap — never a refusal.
 - **Shutting down** works only on a device this session holds; `force` shuts down another's anyway and says whose
@@ -64,8 +76,9 @@ left to each agent's discipline.
   the time zone or language of the session reading it (on Windows only the pid is checked). Only a shell lease with
   no `--pid` expires by time. A daemon renews its leases every 30 s on a timer of its own and gives back the
   devices that went away — only after three beats and 90 s missing from the device list (5 min when the whole list
-  comes back empty, as when adb restarts); an `offline` device counts as present, and a device back in the list
-  starts the count again. A different emulator on the serial ends the lease at once.
+  comes back empty, as when adb restarts); an `offline` device counts as present for up to 10 min, a device back in
+  the list starts the count again, and a platform whose list could not be read is not judged. A different emulator
+  on the serial ends the lease at once.
 - **One version per project.** Sessions of one project share its daemon. A session with another pitbox version
   replaces the daemon only when it is newer and the daemon is idle; otherwise it uses the daemon as it is and says
   so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
@@ -86,7 +99,7 @@ left to each agent's discipline.
 | | |
 |---|---|
 | `device action=list` · `pitbox devices` | every device with `[yours]`, `[held by "…" (pid, folder, for N min)]` or `[running, unleased]` |
-| `device action=clean` · `pitbox devices clean` | delete the shut-down simulators and AVDs pitbox created for sessions that nobody holds |
+| `device action=clean` · `pitbox devices clean` | delete the shut-down simulators and AVD copies pitbox created for sessions that nobody holds (an AVD copy only 15 min after it was made) |
 | `device action=boot` · `pitbox boot [name]` | your own device: the named one, or a free twin / new instance |
 | `device action=lease value=<purpose>` · `pitbox device lease [--device d] [--purpose text]` | hold a device now (it is taken on first use anyway) |
 | `device action=release [keep=true]` · `pitbox device release [--keep]` | give it back; one pitbox booted shuts down unless `keep` |
