@@ -33,6 +33,8 @@ export type DoctorContext = {
   dismissDialog?: (serial: string) => Promise<string>;
   /** Whether the app that started pitbox may drive Mac apps (Accessibility) and take their images (Screen Recording). */
   macPermissions?: () => Promise<{accessibility: boolean; screen: boolean; host: string}>;
+  /** The daemon's pitbox version and the clients of another version that called it lately. */
+  daemonClients?: () => {version: string; strangers: {version: string; agoMs: number}[]};
 };
 
 export type Rule = {

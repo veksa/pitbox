@@ -5,6 +5,7 @@ import path from 'node:path';
 import {run, which} from '../util/proc.ts';
 import {tcpOpen} from '../util/net.ts';
 import {probePort} from '../stand/health.ts';
+import {IDLE_MS, UNVERSIONED} from '../daemon/activity.ts';
 import type {Finding, Rule} from './types.ts';
 import {allowCleartextInDebug, cleartextOf, detectProject} from '../init/project.ts';
 
@@ -387,4 +388,27 @@ export const macPermissions: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions];
+/**
+ * Two sessions on one project with different pitbox versions share one daemon: the daemon of one version serves
+ * the other's calls, so what the newer one adds is missing or behaves as the older one did, without an error.
+ */
+export const daemonVersions: Rule = {
+  id: 'daemon-versions',
+  title: 'every client of the daemon runs its version of pitbox',
+  check: async ctx => {
+    if (!ctx.daemonClients) return [];
+    const {version, strangers} = ctx.daemonClients();
+    if (!strangers.length) return [];
+    const who = strangers.map(c => (c.version === UNVERSIONED ? 'an older pitbox' : c.version)).join(', ');
+    return [
+      {
+        rule: 'daemon-versions',
+        severity: 'warn',
+        message: `the daemon runs pitbox ${version}, and clients of other versions (${who}) used it in the last ${IDLE_MS / 60_000} min: their calls get this version's behaviour`,
+        hint: 'run one pitbox version per project (the same package version for every agent and script), then `pitbox daemon restart` once nobody is mid-run',
+      },
+    ];
+  },
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions];

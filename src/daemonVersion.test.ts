@@ -11,6 +11,8 @@ import {Activity, busyReason, compareVersions, IDLE_MS, UNVERSIONED} from './dae
 import {connect, keepReason} from './daemon/client.ts';
 import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION} from './daemon/info.ts';
 import {leaseDir, processStart} from './lease/lease.ts';
+import {daemonVersions} from './doctor/rules.ts';
+import type {DoctorContext} from './doctor/types.ts';
 import {isAlive} from './util/proc.ts';
 
 const dirs: string[] = [];
@@ -192,5 +194,19 @@ describe('two versions on one project', () => {
     // A daemon that cannot report its clients is replaced only while it holds no device.
     expect(keepReason('1.0.0', '1.1.0', undefined, 0)).toBeUndefined();
     expect(keepReason('1.0.0', '1.1.0', undefined, 2)).toMatch(/holds 2 devices/);
+  });
+});
+
+describe('doctor', () => {
+  it('warns when clients of other versions share the daemon, and is quiet when every client runs its version', async () => {
+    const a = new Activity('1.1.0');
+    const ctx = {daemonClients: () => ({version: a.version, strangers: a.strangers()})} as unknown as DoctorContext;
+    a.begin('status', '1.1.0')();
+    expect(await daemonVersions.check(ctx)).toEqual([]);
+    a.begin('status', '1.0.0')();
+    a.begin('status', undefined)();
+    const [f] = await daemonVersions.check(ctx);
+    expect(f).toMatchObject({rule: 'daemon-versions', severity: 'warn'});
+    expect(f!.message).toMatch(/runs pitbox 1\.1\.0, and clients of other versions \(1\.0\.0, an older pitbox\)/);
   });
 });

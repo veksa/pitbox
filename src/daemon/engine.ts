@@ -1975,6 +1975,7 @@ export class Engine {
           },
           dismissDialog: async serial => (await (await this.ui(serial)).dismissSystemDialog()) ?? 'no dialog',
           macPermissions: this.config.mac && process.platform === 'darwin' ? () => this.#macRunner(Object.keys(this.config.mac!)[0]!).permissions() : undefined,
+          daemonClients: () => ({version: this.activity.version, strangers: this.activity.strangers()}),
         },
         {fix: bool(p, 'fix'), only: list(p, 'only'), extra},
       );

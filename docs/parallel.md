@@ -53,6 +53,9 @@ left to each agent's discipline.
   process is gone (after a minute's grace, in which a restarted daemon picks its devices up) the next session that
   needs the device takes it over. Only a shell lease with no `--pid` expires by time. A daemon renews its leases
   every 30 s on a timer of its own and gives back the devices that went away.
+- **One version per project.** Sessions of one project share its daemon. A session with another pitbox version
+  replaces the daemon only when it is newer and the daemon is idle; otherwise it uses the daemon as it is and says
+  so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
 - **Forwards follow leases.** The daemon applies `adb reverse` only on devices it holds, and removes only the
   ports it forwarded, never another stand's.
 - **The push gateway delivers only to this session's devices.** A gateway request goes to a device the session
