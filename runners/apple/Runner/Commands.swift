@@ -114,6 +114,19 @@ final class Commands {
       #endif
       return try image(cmd, req)
     case "relays": return ["relayed": [Int]()]
+    case "banners", "tapBanner":
+      // Notification banners: the shell draws them over whatever app is in front, so the tree of that app does
+      // not hold them. `tapBanner` taps the newest one whose text holds `text`.
+      #if os(iOS)
+      let banners = notificationBanners()
+      if cmd == "banners" { return ["banners": banners.map { $0.label }, "front": front(req).1] }
+      let text = req["text"] as? String ?? ""
+      guard let hit = banners.first(where: { text.isEmpty || $0.label.contains(text) }) else { return ["tapped": false] }
+      app(Self.shellId).coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: hit.frame.midX, dy: hit.frame.midY)).tap()
+      return ["tapped": true, "label": hit.label]
+      #else
+      return cmd == "banners" ? ["banners": [String](), "front": front(req).1] : ["tapped": false]
+      #endif
     case "foreground":
       // After a launch: wait until the app is in front, so the next tree is the app and not the shell.
       guard let id = req["app"] as? String, !id.isEmpty else { return ["foreground": false] }
@@ -197,6 +210,23 @@ final class Commands {
   private static let editable: Set<XCUIElement.ElementType> = [.textField, .secureTextField, .searchField, .textView]
   private static let checkable: Set<XCUIElement.ElementType> = [.switch, .toggle, .checkBox, .radioButton]
   private static let scrollable: Set<XCUIElement.ElementType> = [.scrollView, .table, .collectionView]
+
+  /// The shell's notification banners with their frames, newest first. Read from a snapshot of the shell: an
+  /// element query for them comes back empty while another app is in front.
+  private func notificationBanners() -> [(label: String, frame: CGRect)] {
+    guard let root = try? app(Self.shellId).snapshot() else { return [] }
+    var out: [(label: String, frame: CGRect)] = []
+    func visit(_ n: XCUIElementSnapshot, _ depth: Int) {
+      if depth > 80 { return }
+      if n.identifier == "NotificationShortLookView" {
+        out.append((n.label, n.frame))
+        return
+      }
+      for c in n.children { visit(c, depth + 1) }
+    }
+    visit(root, 0)
+    return out
+  }
 
   /// A system alert over the app; visionOS draws it as a plain element of its notifications process.
   private func systemAlert() -> XCUIElement {
