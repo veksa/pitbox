@@ -60,15 +60,21 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - **Cars:** `device action=car value=night`, `value="drive 20"` (apps not made for driving get blocked),
   `value=park`, `value="rotary cw"`.
 - **Home-screen widgets:** `device action=widget value="add <name> app=<label>"` puts the app's widget on the
-  home screen from the launcher's own picker (`size=4x2`
-  picks one size; without it the first one listed), `value="remove <name>"` takes it off,
-  `value="list <app>"` lists the widgets and sizes an app offers, `value=list` the widgets on the home pages.
-  `<name>` is the widget's name as the picker shows it; `app` is the app's label there (default: the name). A
-  widget with a setup screen answers with `setup: <package>` and a `note`: finish the screen with `press`, the
-  widget then lands on the home screen. Android: Launcher3 and the launchers built on it (AOSP Launcher3, Pixel
-  Launcher), Android 12 to 16 — a picker without an Add button (before Android 15) gets the preview dragged to
-  where the launcher says it fits; another launcher is refused by its package name, never tapped at. Not on iOS
-  simulators yet. The picker is read in English.
+  home screen from the launcher's own picker or SpringBoard's widget gallery, `value="remove <name>"` takes it off,
+  `value="list <app>"` lists the widgets and sizes an app offers, `value=list` the widgets on every home page.
+  `<name>` is the widget's name as the picker shows it; `app` is the app's label there (default: the name).
+  `size=` picks one size: `4x2` on Android, `small|medium|large|extra large` on iOS; without it the first one
+  listed. A home screen with two widgets of one name loses the first in reading order on `remove`. A widget with a
+  setup screen answers with `setup: <package>` and a `note`: finish the screen with `press`, the widget then lands
+  on the home screen (leaving it unfinished drops the widget).
+  Android 10 to 16 on Launcher3 and the launchers built on it (AOSP Launcher3, Pixel Launcher), phones, tablets and
+  open foldables, in any system language: a picker without an Add button (before Android 15) gets the preview
+  dragged onto the home page's emptiest spot. Another launcher, and the Android desktop shell, are refused by
+  name, never tapped at.
+  iOS and iPadOS simulators through SpringBoard, in any system language, iPads upright or turned 90°: SpringBoard
+  names a widget after its app, so `remove` and `list` go by the app's label, and a widget stack is never taken
+  apart or removed. A new widget goes on the last home page. Refused: an iPad turned 270° and the foldable iPhone,
+  whose SpringBoard tree does not match the screen.
   A typical answer is about 30 tokens (`widget: Clock · size: 4x2 · via: add button · on: home · ms: 9100`).
 
 ## Writing and fixing flows

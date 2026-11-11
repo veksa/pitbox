@@ -44,7 +44,7 @@ compact text.
   watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and
   panel controls; the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
   controller; TV remote and media keys; the app's home-screen widgets added, removed and listed on phones and
-  tablets (`widget`, Android).
+  tablets (`widget`: Android 10 to 16 on Launcher3 and Pixel Launcher, iOS and iPadOS simulators).
 
 ## UI automation
 
