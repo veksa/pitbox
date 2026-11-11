@@ -170,6 +170,18 @@ describe('runner version', () => {
   });
 });
 
+describe('the android runner tree', () => {
+  it('fetches nodes in batches the app does not cut short on a screen that keeps redrawing', () => {
+    const kotlin = fs.readFileSync('runners/android/src/main/kotlin/dev/pitbox/runner/Commands.kt', 'utf8');
+    // An interruptible batch stops whenever the app's UI thread has work waiting: with text streaming in, a tree
+    // then costs one call into the app per node and takes longer than the host waits.
+    expect(kotlin).toMatch(/val PREFETCH = [^\n]*FLAG_PREFETCH_UNINTERRUPTIBLE/);
+    expect(kotlin).toMatch(/val CHILD_PREFETCH = [^\n]*FLAG_PREFETCH_UNINTERRUPTIBLE/);
+    expect(kotlin).toMatch(/w\.getRoot\(PREFETCH\)/);
+    expect(kotlin).toMatch(/n\.getChild\(i, CHILD_PREFETCH\)/);
+  });
+});
+
 describe('cli and engine agree', () => {
   it('maps every command to an engine method, never to the daemon stop rpc', async () => {
     const {Engine} = await import('./daemon/engine.ts');

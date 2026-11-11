@@ -78,13 +78,18 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 
   /**
    * Every node is a call into the app's UI thread; when that thread is busy (video, animations) a node-by-node
-   * walk takes seconds. From Android 13 the whole subtree is prefetched in batches instead.
+   * walk takes seconds. From Android 13 the whole subtree is prefetched in batches instead. Uninterruptible: by
+   * default the app stops a batch as soon as its UI thread has other work waiting, and on a screen that redraws
+   * all the time (text streaming in) every batch stops after a node or two, so the walk falls back to one call per
+   * node and a tree takes longer than the host waits for it.
    */
   private fun rootOf(w: AccessibilityWindowInfo): AccessibilityNodeInfo? =
     if (Build.VERSION.SDK_INT >= 33) w.getRoot(PREFETCH) else w.root
 
   private companion object {
-    val PREFETCH = AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS or AccessibilityNodeInfo.FLAG_PREFETCH_ANCESTORS
+    val PREFETCH = AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS or AccessibilityNodeInfo.FLAG_PREFETCH_ANCESTORS or AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
+    /** A child that is not cached yet comes with the next batch of its subtree, fetched the same way. */
+    val CHILD_PREFETCH = AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
   }
 
   private fun windowType(w: AccessibilityWindowInfo?): String = when (w?.type) {
@@ -155,7 +160,7 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
       }
     }
     for (i in 0 until n.childCount) {
-      val child = n.getChild(i) ?: continue
+      val child = (if (Build.VERSION.SDK_INT >= 33) n.getChild(i, CHILD_PREFETCH) else n.getChild(i)) ?: continue
       // A parent paints before its children; fixed-width parts keep the string order numeric.
       val z = if (Build.VERSION.SDK_INT >= 24) child.drawingOrder else 0
       walk(child, index, window, all, out, depth + 1, "$key${"%05d%05d".format(z, i)}", paint)
