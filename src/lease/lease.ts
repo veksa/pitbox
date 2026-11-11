@@ -163,14 +163,33 @@ export const listLeases = (): (Lease & {stale?: string})[] => {
 const aside = (file: string) => `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
 
 /** Replaces a file whole: written aside and renamed in. */
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Errors Windows gives for a moment on a name another process has open, is deleting (a file in "delete pending"
+ * state keeps its name until the last handle closes) or is renaming: busy, not broken.
+ */
+const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const busy = (e: unknown) => process.platform === 'win32' && BUSY.has((e as NodeJS.ErrnoException).code ?? '');
+
 const writeWhole = (file: string, content: string) => {
   fs.mkdirSync(path.dirname(file), {recursive: true});
   const tmp = `${aside(file)}.tmp`;
   fs.writeFileSync(tmp, content);
-  fs.renameSync(tmp, file);
+  // Windows refuses a rename over a file another process is reading at that moment: retried briefly.
+  for (let i = 0; ; i++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      if (i >= 40 || !busy(e)) {
+        fs.rmSync(tmp, {force: true});
+        throw e;
+      }
+      sleepSync(5 + i * 5);
+    }
+  }
 };
-
-const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 type LockBody = {pid: number; start?: number; at: number};
 
@@ -201,7 +220,23 @@ const lockBody = (): string => JSON.stringify({pid: process.pid, start: probe.st
 /** A file system without hard links (FAT, exFAT, some network shares): locks are created with `wx` there instead. */
 let noLinks = false;
 
-/** Places `content` at `file` only if nothing is there: false when something is. */
+/**
+ * Whether hard links work in `dir`, tried on a name nobody else uses. An EPERM from linking onto a lock's name says
+ * nothing about the file system on Windows: it is also the answer while another process deletes that very file.
+ */
+const linksWork = (tmp: string): boolean => {
+  const probe = `${tmp}.probe`;
+  try {
+    fs.linkSync(tmp, probe);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(probe, {force: true});
+  }
+};
+
+/** Places `content` at `file` only if nothing is there: false when something is (or, on Windows, is going). */
 const placeNew = (file: string, content: string): boolean => {
   if (!noLinks) {
     const tmp = `${aside(file)}.tmp`;
@@ -212,7 +247,10 @@ const placeNew = (file: string, content: string): boolean => {
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === 'EEXIST') return false;
-      if (code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP' && code !== 'ENOSYS' && code !== 'EXDEV') throw e;
+      if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP' && code !== 'ENOSYS' && code !== 'EXDEV') throw e;
+      // The name is taken or on its way out (Windows): busy — when links themselves work.
+      if ((code === 'EPERM' || code === 'EACCES' || code === 'EBUSY') && linksWork(tmp)) return false;
+      if (code === 'EACCES' || code === 'EBUSY') throw e;
       noLinks = true;
     } finally {
       fs.rmSync(tmp, {force: true});
@@ -224,7 +262,7 @@ const placeNew = (file: string, content: string): boolean => {
   try {
     fd = fs.openSync(file, 'wx');
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST' || busy(e)) return false;
     throw e;
   }
   try {
