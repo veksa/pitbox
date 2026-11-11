@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {DeviceLeases, sessionLabel, UNLEASED} from './lease/devices.ts';
 import {leaseCommand} from './lease/cli.ts';
@@ -88,7 +88,8 @@ describe('leases', () => {
 
   it('reads the same start for a process whatever the reader\'s time zone and language', async () => {
     const lease = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lease', 'lease.ts');
-    const script = `import {processStart} from ${JSON.stringify(lease)}; process.stdout.write(String(processStart(${process.pid})));`;
+    // A file URL: on Windows an absolute path (`D:\\…`) is not an import specifier.
+    const script = `import {processStart} from ${JSON.stringify(pathToFileURL(lease).href)}; process.stdout.write(String(processStart(${process.pid})));`;
     const read = (env: NodeJS.ProcessEnv) =>
       new Promise<string>((resolve, reject) => {
         const child = spawn(process.execPath, ['--input-type=module', '-e', script], {env: {...process.env, ...env}});
@@ -209,6 +210,44 @@ describe('leases', () => {
     fs.rmSync(lock);
   });
 
+  it('takes an EPERM on a lock name as busy (Windows: the file is being deleted), not as a file system without links', () => {
+    const lock = path.join(leaseDir(), 'p.json.lock');
+    fs.mkdirSync(leaseDir(), {recursive: true});
+    const link = fs.linkSync;
+    let pending = 2;
+    const spy = vi.spyOn(fs, 'linkSync').mockImplementation((a, b) => {
+      if (String(b) === lock && pending-- > 0) throw Object.assign(new Error('operation not permitted'), {code: 'EPERM'});
+      link(a, b);
+    });
+    try {
+      expect(lockInternals.tryLock(lock)).toBe(false);
+      expect(lockInternals.usesLinks()).toBe(true);
+      expect(withLock(lock.slice(0, -'.lock'.length), () => 'ran', 2000)).toBe('ran');
+    } finally {
+      spy.mockRestore();
+      lockInternals.resetLinks();
+    }
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it('retries replacing a lease while Windows holds it open', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', {value: 'win32'});
+    const rename = fs.renameSync;
+    let refusals = 3;
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation((a, b) => {
+      if (String(b).endsWith('apple-U-WIN.json') && refusals-- > 0) throw Object.assign(new Error('operation not permitted'), {code: 'EPERM'});
+      rename(a, b);
+    });
+    try {
+      expect(acquire('apple', 'U-WIN', alice).ok).toBe(true);
+    } finally {
+      spy.mockRestore();
+      Object.defineProperty(process, 'platform', platform);
+    }
+    expect(readLease('apple', 'U-WIN')?.owner).toBe(alice.owner);
+  });
+
   it('locks with exclusive creation on a file system without hard links', () => {
     const lock = path.join(leaseDir(), 'w.json.lock');
     fs.mkdirSync(leaseDir(), {recursive: true});
@@ -255,7 +294,7 @@ describe('leases', () => {
   it('gives a device to exactly one of many processes racing for it, also over a stale lease', async () => {
     acquire('apple', 'RACE', {...alice, pid: DEAD_PID}, {now: Date.now() - 2 * DEAD_GRACE_MS});
     const lease = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lease', 'lease.ts');
-    const script = `import {acquire} from ${JSON.stringify(lease)};
+    const script = `import {acquire} from ${JSON.stringify(pathToFileURL(lease).href)};
       const r = acquire('apple', 'RACE', {owner: 'p:' + process.pid, label: 'p' + process.pid, pid: process.pid});
       process.stdout.write(r.ok ? 'won' : 'lost');`;
     const runs = Array.from({length: 8}, () =>
@@ -269,8 +308,8 @@ describe('leases', () => {
       }),
     );
     const results = await Promise.all(runs);
-    expect(results.filter(r => r === 'won')).toHaveLength(1);
-    expect(results.filter(r => r === 'lost')).toHaveLength(7);
+    // Whole outputs compared: a process that failed shows what it said.
+    expect([...results].sort()).toEqual(['lost', 'lost', 'lost', 'lost', 'lost', 'lost', 'lost', 'won']);
   });
 
   it('reads durations for shell leases', () => {
