@@ -119,6 +119,14 @@ here; only device operations and runner commands cross the network. `open` point
 dev server by the address the Mac sees it at, so the dev server must listen beyond loopback
 (`devserver.host: '0.0.0.0'`).
 
+## devices
+
+| Field | Meaning |
+|---|---|
+| `shutdownOnRelease` | shut down the devices this daemon booted when it gives them back (`device release`, `down`, daemon stop); default `true` |
+
+Every device the daemon drives is leased to it; see [Working in parallel](parallel.md).
+
 ## web
 
 Web apps, driven in a browser through Playwright as devices named `web:<name>` (`web` alone when there is one).

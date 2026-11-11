@@ -35,6 +35,10 @@ compact text.
   and visual checks of the window alone, crashes with their step. Input goes only to the app: it is brought to the
   front first, or the action fails with nothing sent. `doctor` says which permission is missing and where to turn
   it on.
+- **Parallel sessions** — each device is leased to the session that drives it ([parallel.md](parallel.md)): a
+  device another session holds is refused with its holder's name, `boot` picks a free twin or makes a new
+  instance, `shutdown` touches only your own, and a shell lease (`pitbox lease acquire`) covers scripts that call
+  `simctl` or `adb` themselves.
 - **What only some devices have** — fold and unfold a foldable (`posture`), rotate, run the app in a freeform
   window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets and desktops; a
   watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and

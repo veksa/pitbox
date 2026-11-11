@@ -15,7 +15,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
    `device action=pair` answers a QR (an image path) for the person to scan in Developer options → Wireless
    debugging → Pair device with QR code, then `device action=pair value=wait` connects it; or
    `value="<ip:port> <code>"` from its Pair device with pairing code screen. The daemon applies and repairs
-   forwards on its own.
+   forwards on its own. Devices are leased per session ([parallel.md](parallel.md)): boot your own instead of
+   using one `device list` shows as held by someone else, and `device action=release` at the end.
 
 ## Driving the app
 
