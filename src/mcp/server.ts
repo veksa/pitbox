@@ -14,7 +14,7 @@ type Shape = Record<string, z.ZodType>;
 
 const device = z.string().optional().describe('serial, AVD, simulator, web:<app> or mac:<app> (a web or Mac app from the config); default: the only online device');
 
-type Caller = {call: (method: string, params: Record<string, unknown>) => Promise<unknown>};
+type Caller = {call: (method: string, params: Record<string, unknown>) => Promise<unknown>; note?: string};
 type ToolServer = {registerTool: (name: string, def: {description: string; inputSchema: Shape}, handler: (args: Record<string, unknown>) => Promise<{content: {type: 'text'; text: string}[]; isError?: boolean}>) => unknown};
 
 /** Registers every tool on `server`; separate from the transport so a test can call each tool against a fake. */
@@ -27,7 +27,10 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
         const c = await daemon();
         const m = typeof method === 'string' ? method : method(args);
         const result = await c.call(m, map(args));
-        return {content: [{type: 'text' as const, text: formatResult(m, result)}]};
+        // A note about the daemon (one of another version kept as it is) reaches the agent once.
+        const note = c.note;
+        c.note = undefined;
+        return {content: [{type: 'text' as const, text: note ? `${note}\n${formatResult(m, result)}` : formatResult(m, result)}]};
       } catch (e) {
         onError();
         return {content: [{type: 'text' as const, text: (e as Error).message}], isError: true};

@@ -6,10 +6,17 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
 import {isAlive, startHidden} from '../util/proc.ts';
-import {DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
+import {listLeases} from '../lease/lease.ts';
+import {busyReason, compareVersions, IDLE_MS, type ActivityReport} from './activity.ts';
+import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
+
+/** The daemon answered and said no (as opposed to not answering). */
+export class DaemonError extends Error {}
 
 export class DaemonClient {
   readonly info: DaemonInfo;
+  /** Something the agent should hear once, with its next answer (a daemon of another version kept as it is). */
+  note?: string;
 
   constructor(info: DaemonInfo) {
     this.info = info;
@@ -23,7 +30,7 @@ export class DaemonClient {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const body = (await res.json()) as {ok: boolean; result?: T; error?: string};
-    if (!body.ok) throw new Error(body.error ?? `daemon error (${res.status})`);
+    if (!body.ok) throw new DaemonError(body.error ?? `daemon error (${res.status})`);
     return body.result as T;
   }
 }
@@ -90,19 +97,59 @@ const waitForBusy = async (info: DaemonInfo, waitMs: number): Promise<boolean> =
 };
 
 /**
- * Stops a daemon that runs another version of pitbox — after an upgrade it would go on serving the old code.
- * Services outlive it as on any daemon stop; the dev server, actors and the LLM mock belong to the daemon, so
- * the note says they need `up` again.
+ * Why a daemon of another version stays as it is, or undefined when this client may replace it. Only a newer
+ * pitbox replaces an older daemon, so two versions never replace each other in turn; and only an idle one, so
+ * another session's run does not lose its daemon (and its runner) in the middle. `report` is what the daemon says
+ * of its clients — a daemon from before that report says nothing, and then the devices it holds count instead.
  */
-const stopOutdated = async (info: DaemonInfo) => {
+export const keepReason = (theirs: string, mine: string, report: ActivityReport | undefined, held: number): string | undefined => {
+  if (compareVersions(theirs, mine) >= 0) return 'it is not older than this one';
+  if (report) {
+    const busy = busyReason(report);
+    return busy ? `another session uses it (${busy})` : undefined;
+  }
+  return held ? `it holds ${held} device${held > 1 ? 's' : ''} and does not say whether a session is at work` : undefined;
+};
+
+/** Live device leases of the daemon `info` describes. */
+const heldBy = (info: DaemonInfo) => listLeases().filter(l => !l.stale && l.owner === `daemon:${info.root}` && l.pid === info.pid).length;
+
+const keepNote = (info: DaemonInfo, why: string) =>
+  `pitbox: the project's daemon runs version ${info.version}, this is ${VERSION}, and ${why}: using it as it is, so what this version adds may be missing. ` +
+  `It is replaced once idle for ${IDLE_MS / 60_000} min; \`pitbox daemon restart\` replaces it now and ends any run in it (devices stay up).`;
+
+/**
+ * Stops a daemon that runs an older version of pitbox — after an upgrade it would go on serving the old code.
+ * Services outlive it as on any daemon stop; the dev server, actors and the LLM mock belong to the daemon, so
+ * the note says they need `up` again. False when the daemon refused (a session started using it meanwhile).
+ */
+const stopOutdated = async (info: DaemonInfo): Promise<boolean> => {
   // The new daemon adopts the old one's device leases: the agent's simulator stays its own across the upgrade.
-  await new DaemonClient(info).call(DAEMON_STOP, {keepLeases: true}, 5000).catch(() => undefined);
+  try {
+    await new DaemonClient(info).call(DAEMON_STOP, {keepLeases: true, swap: VERSION}, 5000);
+  } catch (e) {
+    if (e instanceof DaemonError) return false;
+  }
   const end = Date.now() + 15_000;
   while (isAlive(info.pid)) {
     if (Date.now() > end) throw new Error(`pitbox daemon ${info.pid} runs version ${info.version}, this is ${VERSION}, and it did not stop; end the process and try again`);
     await new Promise(r => setTimeout(r, 150));
   }
   process.stderr.write(`pitbox: restarted the daemon of version ${info.version} as ${VERSION}; services kept running, the dev server, actors and the LLM mock need up again\n`);
+  return true;
+};
+
+/** A daemon of another version: kept as it is (with a note for the agent), or stopped. */
+const otherVersion = async (info: DaemonInfo): Promise<DaemonClient | undefined> => {
+  const answer = await new DaemonClient(info).call<ActivityReport>(DAEMON_ACTIVITY, {}, 3000).catch(() => undefined);
+  const report = typeof answer?.inFlight === 'number' ? answer : undefined;
+  let why = keepReason(info.version, VERSION, report, report ? 0 : heldBy(info));
+  if (!why && !(await stopOutdated(info))) why = 'another session started using it';
+  if (!why) return undefined;
+  const c = new DaemonClient(info);
+  c.note = keepNote(info, why);
+  process.stderr.write(`${c.note}\n`);
+  return c;
 };
 
 /** Connects to the project's daemon, starting it in the background when none is running. */
@@ -111,7 +158,8 @@ export const connect = async (opts: {config?: string; cwd?: string; busyWaitMs?:
   const existing = readInfo(stateDir);
   if (existing && (await waitForBusy(existing, opts.busyWaitMs ?? 20_000))) {
     if (existing.version === VERSION) return new DaemonClient(existing);
-    await stopOutdated(existing);
+    const kept = await otherVersion(existing);
+    if (kept) return kept;
   }
 
   fs.mkdirSync(stateDir, {recursive: true});

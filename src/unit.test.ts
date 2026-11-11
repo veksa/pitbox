@@ -256,6 +256,18 @@ describe('mcp tools', () => {
     expect(checks).toBeGreaterThan(50);
     expect(tools.length).toBeLessThanOrEqual(30);
   });
+
+  it('tell the agent once what the client noted about the daemon (one of another version kept as it is)', async () => {
+    const {registerTools} = await import('./mcp/server.ts');
+    type Handler = (a: Record<string, unknown>) => Promise<{content: {text: string}[]}>;
+    const tools = new Map<string, Handler>();
+    const daemon = {note: 'pitbox: the project\'s daemon runs version 0.0.1', call: async () => ({docs: ['guide']})};
+    registerTools({registerTool: (name, _def, handler) => tools.set(name, handler as Handler)}, {} as never, async () => daemon);
+    const first = await tools.get('docs')!({});
+    const second = await tools.get('docs')!({});
+    expect(first.content[0]!.text).toMatch(/^pitbox: the project's daemon runs version 0\.0\.1\n/);
+    expect(second.content[0]!.text).not.toMatch(/daemon runs version/);
+  });
 });
 
 describe('swipe area', () => {

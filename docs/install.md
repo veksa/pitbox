@@ -25,8 +25,11 @@ It carries the CLI (`pitbox`), the MCP server, the runners and the connect libra
 ```
 
 The server talks over stdio and starts the project's daemon on first use. After an upgrade of the package, the
-first command replaces a daemon of the old version; services keep running, and the dev server, actors and the
-LLM mock come back with `up`. How an agent should use it:
+first command replaces a daemon of the old version; services keep running, the devices stay up and go to the new
+daemon, and the dev server, actors and the LLM mock come back with `up`. Only an older daemon is replaced, and only
+an idle one (no call for 5 min): while another session works with it — two agents on one project with different
+pitbox versions — or when it is newer, it is kept as it is and the agent hears so once with its next answer;
+`pitbox daemon restart` replaces it at once. How an agent should use it:
 [agents.md](agents.md).
 
 ## A first config
