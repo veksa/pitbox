@@ -10,7 +10,7 @@ import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
-import {AndroidDriver, avdLocked, type NetworkProfile} from '../drivers/android/driver.ts';
+import {AndroidDriver, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
@@ -42,7 +42,7 @@ import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, listLeases, machineLock, refusal, staleReason} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
-import {forgetCreated, isCreated, listCreated, recordCreated} from '../lease/created.ts';
+import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated} from '../lease/created.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
 
@@ -603,19 +603,61 @@ export class Engine {
       if (h.created && this.config.devices?.deleteCreated !== false && this.#isLocalApple(s)) await this.#deleteCreated(s, h.id);
       return r;
     }
-    const r = await this.android?.shutdown(h.id);
-    if (h.created && h.name && this.android && this.config.devices?.deleteCreated !== false) await this.#deleteCreatedAvd(this.android, h.name);
-    return r;
+    const a = this.android;
+    const r = await a?.shutdown(h.id);
+    if (!a || !h.created || !h.name || this.config.devices?.deleteCreated === false) return r;
+    const kept = await this.#deleteCreatedAvd(a, h.name);
+    return kept ? {...r, note: kept} : r;
   }
 
-  /** Deletes an AVD pitbox created for a session — only one on its list, under the lock that creates them. */
-  async #deleteCreatedAvd(a: AndroidDriver, name: string) {
-    await machineLock('android-create', async () => {
-      if (!isCreated(`android:${name}`) || avdLocked(name)) return;
-      a.deleteAvd(name);
-      forgetCreated(`android:${name}`);
-    }).catch(() => undefined);
+  /**
+   * Deletes an AVD pitbox created for a session: only one on its list whose folder is still the one it made, under
+   * the lock its boots take. Waits (≤30 s) for its emulator to let go of it; answers why it stays when it does — a
+   * later beat of any daemon, or `devices clean`, deletes it then.
+   */
+  async #deleteCreatedAvd(a: AndroidDriver, name: string): Promise<string | undefined> {
+    const end = Date.now() + Engine.AVD_LET_GO_MS;
+    while (Date.now() < end && a.lockedBy(name)) await new Promise(r => setTimeout(r, 500));
+    return machineLock('android-boot', async () => this.#deleteAvdNow(a, name).note).catch((e: Error) => `${name} not deleted: ${e.message.split('\n')[0]}`);
   }
+
+  /** The deletion itself, with the boot lock held: deleted, or why it stays (nothing when it is not pitbox's). */
+  #deleteAvdNow(a: AndroidDriver, name: string): {deleted?: true; note?: string} {
+    const id = `android:${name}`;
+    const c = createdEntry(id);
+    if (!c) return {};
+    // Gone already, or someone made an AVD of this name after pitbox's copy went: not pitbox's to delete.
+    if (!a.avdTaken(name) || (c.stamp && a.avdStamp(name) !== c.stamp)) {
+      forgetCreated(id);
+      return {};
+    }
+    if (a.lockedBy(name)) return {note: `${name} not deleted yet: its emulator still runs; a later beat or \`devices clean\` deletes it`};
+    a.deleteAvd(name);
+    forgetCreated(id);
+    return {deleted: true};
+  }
+
+  /** Copies no daemon deletes any more (a drop, a forced shutdown, a crash): deleted once nothing runs or holds them. */
+  async #reapCopies(a: AndroidDriver, opts: {all?: boolean} = {}): Promise<string[]> {
+    const left = listCreated().filter(c => c.udid.startsWith('android:') && (opts.all || !c.keep));
+    if (!left.length) return [];
+    return machineLock('android-boot', async () => {
+      const deleted: string[] = [];
+      const running = new Set((await a.devices().catch(() => [])).map(d => d.avd));
+      const held = new Set(listLeases().filter(l => l.platform === 'android' && !staleReason(l, Date.now())).map(l => l.name));
+      for (const c of left) {
+        // A copy being made or booting right now is protected by the boot lock held here; the age is a second guard.
+        if (Date.now() - c.at < Engine.COPY_GRACE_MS || running.has(c.name) || held.has(c.name) || a.lockedBy(c.name)) continue;
+        if (this.#deleteAvdNow(a, c.name).deleted) deleted.push(c.name);
+      }
+      return deleted;
+    });
+  }
+
+  /** How old a copy must be before a sweep may take it for a leftover. Settable for tests. */
+  static COPY_GRACE_MS = 15 * 60_000;
+  /** How long a release waits for a copy's emulator to let go of it before leaving the deletion to a sweep. */
+  static AVD_LET_GO_MS = 30_000;
 
   /** Deletes a simulator pitbox created — only one on its list of created ones, under the lock that creates them. */
   async #deleteCreated(s: AppleDriver, udid: string) {
@@ -727,29 +769,54 @@ export class Engine {
    * runs for another session or with no lease, the new one starts beside it `-read-only`.
    */
   async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean}) {
-    const running = (await a.devices()).filter(d => d.state === 'device' && d.avd === avd);
-    const own = running.find(d => this.#leases.holderOf('android', d.serial, d.instance)?.mine);
+    // This session's own: an instance of the AVD, or a copy pitbox made of it for this session (`boot` runs at the
+    // start of every pass: it must not make a copy each time).
+    const copyOf = (name?: string) => (name ? createdEntry(`android:${name}`)?.like : undefined);
+    const own = (await a.devices()).find(d => d.state === 'device' && (d.avd === avd || copyOf(d.avd) === avd) && this.#leases.holderOf('android', d.serial, d.instance)?.mine);
     if (own) {
-      this.#leases.claim('android', own.serial, {name: avd, instance: own.instance});
+      this.#leases.claim('android', own.serial, {name: own.avd, instance: own.instance});
       const forwards = await this.ensureForwards(true).catch(() => []);
-      return {serial: own.serial, ms: 0, already: true, avd, forwards};
+      return {serial: own.serial, ms: 0, already: true, avd: own.avd, forwards};
     }
-    const first = running[0];
-    const h = first ? this.#leases.holderOf('android', first.serial, first.instance) : undefined;
-    // An instance on its way up holds the AVD's lock before adb lists it: a second boot then needs its own instance.
-    const newInstance = running.length > 0 || avdLocked(avd);
-    const why = h ? `${avd} runs for ${describeHolder(h.lease)}` : first ? `${avd} runs without a lease (another tool or an older pitbox may drive it): left alone` : newInstance ? `${avd} is starting for another session` : undefined;
     const warning = bootWarning('android', await this.#runningDevices());
-    // The emulator runs a second instance of an AVD only when every instance runs -read-only. Beside a writable one
-    // (a normal boot, or one still starting) the session gets an AVD of its own: a copy of this one's config with no
-    // data, created under a machine-wide lock and deleted again when the session gives it back.
-    const shareable = running.length > 0 && running.every(d => a.readOnly(d.instance));
-    const twin = newInstance && !shareable ? await this.#createAvd(a, avd) : undefined;
-    const name = twin ?? avd;
-    let r: Awaited<ReturnType<AndroidDriver['boot']>>;
+    let launch: Launch | undefined;
+    let twin: string | undefined;
+    let why: string | undefined;
     try {
-      r = await a.boot(name, {...opts, newInstance: newInstance && !twin});
+      // From the decision until the new emulator shows (in adb, or on the AVD's lock), one boot at a time on the
+      // machine: two sessions booting one AVD at once would both find it free, and each take the other's emulator.
+      await machineLock('android-boot', async () => {
+        const all = await a.devices();
+        // Any state: an instance still starting, or offline, is an instance.
+        const running = all.filter(d => d.emulator && d.avd === avd);
+        const first = running[0];
+        const h = first ? this.#leases.holderOf('android', first.serial, first.instance) : undefined;
+        const locker = a.lockedBy(avd);
+        const newInstance = running.length > 0 || !!locker;
+        why = h ? `${avd} runs for ${describeHolder(h.lease)}` : first ? `${avd} runs without a lease (another tool or an older pitbox may drive it): left alone` : newInstance ? `${avd} is starting for another session` : undefined;
+        // The emulator runs a second instance of an AVD only when every instance runs -read-only. Beside a writable
+        // one (a normal boot, or one still starting) the session gets an AVD of its own: a copy of this one's config
+        // with no data, deleted again when the session gives it back.
+        const shareable = running.length > 0 && running.every(d => a.readOnly(d.instance)) && (!locker || a.readOnly(locker));
+        twin = newInstance && !shareable ? this.#createAvd(a, avd) : undefined;
+        // A copy boots from empty data (a first boot, dexopt): more time; and it neither loads nor saves a snapshot,
+        // so shutting it down is quick and deleting it never waits on a snapshot being written.
+        launch = await a.launch(twin ?? avd, {...opts, newInstance: newInstance && !twin, ...(twin ? {noSnapshot: true, timeoutMs: 600_000} : {})}, all);
+        await a.untilListed(launch);
+      });
     } catch (e) {
+      if (launch) await a.abort(launch);
+      if (twin) await this.#deleteCreatedAvd(a, twin);
+      throw e;
+    }
+    const name = twin ?? avd;
+    const l = launch!;
+    let r: Awaited<ReturnType<AndroidDriver['untilBooted']>>;
+    try {
+      r = await a.untilBooted(l);
+    } catch (e) {
+      // Not left running behind the session's back, nor its copy left on disk.
+      await a.abort(l);
       if (twin) await this.#deleteCreatedAvd(a, twin);
       throw e;
     }
@@ -757,10 +824,9 @@ export class Engine {
     try {
       this.#leases.claim('android', r.serial, {name, booted: true, instance, ...(twin ? {created: true} : {})});
     } catch (e) {
-      // Not leasable (held under its serial a moment ago). An emulator this boot started is not left running behind
-      // the session's back; one that was already running is someone else's and is left alone.
-      if (r.already) throw e;
-      await a.shutdown(r.serial).catch(() => undefined);
+      // Not leasable (held under its serial a moment ago): the emulator this launch started — known by its process —
+      // is not left running behind the session's back.
+      await a.abort(l);
       if (twin) await this.#deleteCreatedAvd(a, twin);
       throw new Error(`${(e as Error).message.split('\n')[0]} — the emulator this boot started was shut down again; boot again`);
     }
@@ -775,17 +841,24 @@ export class Engine {
     };
   }
 
-  /** A new AVD like `avd` (`<avd>_pitbox_N`, the lowest free N from 2), recorded as pitbox's own. */
-  async #createAvd(a: AndroidDriver, avd: string): Promise<string> {
-    return machineLock('android-create', async () => {
-      const taken = new Set(a.avds().map(x => x.name));
-      let n = 2;
-      while (taken.has(`${avd}_pitbox_${n}`)) n++;
-      const name = `${avd}_pitbox_${n}`;
+  /**
+   * A new AVD like `avd` (`<avd>_pitbox_N`, the lowest N from 2 with neither a pointer nor a folder), recorded as
+   * pitbox's own before it exists (a sweep forgets a record without an AVD), stamped once made. Runs under the boot lock.
+   */
+  #createAvd(a: AndroidDriver, avd: string): string {
+    let n = 2;
+    while (a.avdTaken(`${avd}_pitbox_${n}`)) n++;
+    const name = `${avd}_pitbox_${n}`;
+    const id = `android:${name}`;
+    recordCreated(id, name, {like: avd, ...(this.config.devices?.deleteCreated === false ? {keep: true} : {})});
+    try {
       a.createLike(avd, name);
-      recordCreated(`android:${name}`, name);
-      return name;
-    });
+    } catch (e) {
+      forgetCreated(id);
+      throw e;
+    }
+    updateCreated(id, {stamp: a.avdStamp(name)});
+    return name;
   }
 
   #bundleId(p: Params): string {
@@ -978,16 +1051,29 @@ export class Engine {
    * fails to load or an adb that hangs does not stop it.
    */
   async #beat() {
-    let online: Candidate[] | undefined;
+    // Present is anything not shut down: a simulator booting, an emulator offline for a moment, a phone unauthorized.
+    // Each platform's list on its own: a failing simctl does not keep the emulators from being judged.
+    const online: Candidate[] = [];
+    const unread = new Set<'apple' | 'android'>();
     try {
-      // Present is anything not shut down: a simulator booting, an emulator offline for a moment, a phone unauthorized.
       const sims = this.#isLocalApple(this.apple) ? (await this.apple.simulators()).filter(x => x.state !== 'Shutdown') : [];
-      const emus = this.android ? await this.android.devices() : [];
-      online = [...sims.map(x => ({platform: 'apple' as const, id: x.udid})), ...emus.map(d => ({platform: 'android' as const, id: d.serial, instance: d.instance}))];
+      online.push(...sims.map(x => ({platform: 'apple' as const, id: x.udid})));
     } catch {
-      online = undefined; // lists unreadable: renew only
+      unread.add('apple');
     }
-    for (const h of this.#leases.beat(online, this.#booting)) {
+    try {
+      const emus = this.android ? await this.android.devices() : [];
+      online.push(...emus.map(d => ({platform: 'android' as const, id: d.serial, instance: d.instance, offline: d.state === 'offline'})));
+    } catch {
+      unread.add('android');
+    }
+    const lost = this.#leases.beat(unread.size === 2 ? undefined : online, this.#booting, Date.now(), unread);
+    // Copies of AVDs nobody deletes any more: swept now and then, by whichever daemon beats.
+    if (this.android && Date.now() - this.#lastReap > 5 * 60_000) {
+      this.#lastReap = Date.now();
+      await this.#reapCopies(this.android).catch(() => undefined);
+    }
+    for (const h of lost) {
       void this.#uis.get(h.id)?.stop().catch(() => undefined);
       this.#uis.delete(h.id);
       this.#forwarded.delete(h.id);
@@ -995,6 +1081,8 @@ export class Engine {
   }
 
   #beatTimer?: NodeJS.Timeout;
+  /** The last sweep of leftover AVD copies; 0: the first beat sweeps. */
+  #lastReap = 0;
 
   startWatching() {
     const tick = async () => {
@@ -1521,21 +1609,9 @@ export class Engine {
           }
         });
       }
-      const a = this.android;
-      if (a) await machineLock('android-create', async () => {
-        const avds = new Set(a.avds().map(x => x.name));
-        const held = new Set(listLeases().filter(l => l.platform === 'android' && !staleReason(l, Date.now())).map(l => l.name));
-        for (const c of listCreated().filter(c => c.udid.startsWith('android:'))) {
-          if (!avds.has(c.name)) {
-            forgetCreated(c.udid);
-            continue;
-          }
-          if (avdLocked(c.name) || held.has(c.name)) continue;
-          a.deleteAvd(c.name);
-          forgetCreated(c.udid);
-          deleted.push(c.name);
-        }
-      });
+      // AVD copies: also those made for sessions that keep what they create; never one younger than the grace, one an
+      // emulator runs, one a live lease names, or a folder that is no longer the one pitbox made.
+      if (this.android) deleted.push(...(await this.#reapCopies(this.android, {all: true})));
       return {deleted};
     },
 
