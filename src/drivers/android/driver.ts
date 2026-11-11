@@ -11,8 +11,18 @@ import {car, physicalDisplays, pngFrom, posture, rotate, wear, windowMode} from 
 import {summarizeAtrace, type TraceSummary} from './atrace.ts';
 import {connected, paired, parseMdnsServices, type MdnsService} from './wifi.ts';
 
-/** `bootId`: the kernel's id of the current boot — a serial is reused by the next emulator on that port, a boot id is not. */
-export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean; bootId?: string};
+/**
+ * `instance`: which emulator this is (`pid:<n>`, the emulator process) — a serial is reused by the next emulator on
+ * that port, a process is not, and a reboot of the guest keeps it. Undefined for hardware (its serial is its own) and
+ * while the device is not online.
+ */
+export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean; instance?: string};
+
+/** The emulator process from `adb emu avd discoverypath` (`…/avd/running/pid_4242.ini`). */
+export const emulatorInstance = (discoveryPath: string): string | undefined => {
+  const pid = /pid_(\d+)\.ini/.exec(discoveryPath)?.[1];
+  return pid ? `pid:${pid}` : undefined;
+};
 
 export type PerfReport = {reset?: boolean; frames?: number; janky?: number; p50?: number; p90?: number; p99?: number; memoryMb?: number};
 
@@ -118,8 +128,9 @@ export class AndroidError extends Error {
 export class AndroidDriver {
   readonly adbPath: string;
 
-  constructor() {
-    const adb = findAdb();
+  /** `adbPath` stands in for the one found on the machine (tests). */
+  constructor(adbPath?: string) {
+    const adb = adbPath ?? findAdb();
     if (!adb) throw new AndroidError('adb not found', 'install Android SDK platform-tools or set ANDROID_HOME');
     this.adbPath = adb;
   }
@@ -134,10 +145,12 @@ export class AndroidDriver {
     return r.stdout.replace(/\r/g, '');
   }
 
-  /** AVD name per emulator serial: asking the emulator console every time is slow and busies adb. */
-  readonly #avdNames = new Map<string, string>();
-  /** Boot id per serial, asked once per boot (lease/lease.ts tells a reused serial from the leased device by it). */
-  readonly #bootIds = new Map<string, string>();
+  /**
+   * AVD name and instance per connection, asked once: asking the emulator console every time is slow and busies adb.
+   * Keyed by serial and adb's transport id, and dropped as soon as the device is not online: a new emulator on a
+   * reused port is a new connection, and never inherits the answers of the one before it.
+   */
+  readonly #known = new Map<string, {avd?: string; instance?: string}>();
 
   async devices(): Promise<AndroidDevice[]> {
     let r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 8000});
@@ -145,27 +158,27 @@ export class AndroidDriver {
     if (r.timedOut || r.code !== 0) r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 15_000});
     if (r.timedOut) throw new AndroidError('the adb server is not responding', '`doctor --fix` restarts it (a wedged server makes every device look offline)');
     const lines = r.stdout.replace(/\r/g, '').split('\n').slice(1).filter(l => l.trim());
-    const serials = new Set(lines.map(l => l.trim().split(/\s+/)[0]));
-    for (const s of [...this.#avdNames.keys()]) if (!serials.has(s)) this.#avdNames.delete(s);
-    for (const s of [...this.#bootIds.keys()]) if (!serials.has(s)) this.#bootIds.delete(s);
+    const keyOf = (line: string) => {
+      const [serial = '', state = ''] = line.trim().split(/\s+/);
+      return {serial, state, key: `${serial}#${/transport_id:(\d+)/.exec(line)?.[1] ?? ''}`};
+    };
+    const live = new Set(lines.map(keyOf).filter(x => x.state === 'device').map(x => x.key));
+    for (const k of [...this.#known.keys()]) if (!live.has(k)) this.#known.delete(k);
     return Promise.all(
       lines.map(async line => {
-        const [serial = '', state = ''] = line.trim().split(/\s+/);
+        const {serial, state, key} = keyOf(line);
         const model = /model:(\S+)/.exec(line)?.[1];
         const emulator = serial.startsWith('emulator-');
-        let avd = this.#avdNames.get(serial);
-        if (emulator && state === 'device' && !avd) {
+        let known = this.#known.get(key);
+        if (emulator && state === 'device' && !known) {
           const name = await this.adb(['emu', 'avd', 'name'], serial, {timeoutMs: 5000});
-          avd = name.stdout.replace(/\r/g, '').split('\n')[0]?.trim() || undefined;
-          if (avd) this.#avdNames.set(serial, avd);
+          const avd = name.stdout.replace(/\r/g, '').split('\n')[0]?.trim() || undefined;
+          const where = await this.adb(['emu', 'avd', 'discoverypath'], serial, {timeoutMs: 5000});
+          known = {avd, instance: emulatorInstance(where.stdout)};
+          if (avd) this.#known.set(key, known);
         }
-        let bootId = this.#bootIds.get(serial);
-        if (state === 'device' && !bootId) {
-          const id = await this.adb(['shell', 'cat', '/proc/sys/kernel/random/boot_id'], serial, {timeoutMs: 5000});
-          bootId = /^[0-9a-f-]{36}$/i.exec(id.stdout.trim())?.[0];
-          if (bootId) this.#bootIds.set(serial, bootId);
-        }
-        return {serial, state, model, avd, kind: avd ? avdKind(avd) : undefined, emulator, ...(bootId ? {bootId} : {})};
+        const {avd, instance} = known ?? {};
+        return {serial, state, model, avd, kind: avd ? avdKind(avd) : undefined, emulator, ...(instance ? {instance} : {})};
       }),
     );
   }

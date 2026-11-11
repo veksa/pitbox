@@ -16,7 +16,7 @@ export type PushTarget = {platform: 'android'; id: string; a: AndroidDriver} | {
 
 export type PushDeps = {
   /** The device a call names, or the only one online. */
-  target: (device?: string) => Promise<PushTarget>;
+  target: (device?: string, opts?: {fromGateway?: boolean}) => Promise<PushTarget>;
   /** Devices the gateway may deliver to, by platform (this session's own: never another session's). */
   online: () => Promise<{android: string[]; apple: string[]}>;
   androidApp?: () => string | undefined;
@@ -140,7 +140,7 @@ export class PushCenter {
   /** Sends one push (or schedules it); `source` tells the log where it came from. */
   async send(opts: PushOptions, source = 'push', token?: string): Promise<PushResult> {
     const msg = toMessage(opts);
-    const t = await this.#deps.target(opts.device);
+    const t = await this.#deps.target(opts.device, {fromGateway: opts.fromGateway});
     const app = this.#app(t, opts.app);
     const delay = Number(opts.delay ?? 0);
     if (!Number.isFinite(delay) || delay < 0 || delay > 3600) throw new Error('delay: seconds, 0 to 3600');

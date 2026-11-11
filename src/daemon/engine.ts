@@ -42,6 +42,7 @@ import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, machineLock, refusal} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
+import {forgetCreated, isCreated, listCreated, recordCreated} from '../lease/created.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
 
@@ -83,10 +84,19 @@ export class Engine {
   #gateway?: PushGateway;
   #pushError?: string;
   readonly #pushes = new PushCenter({
-    target: device => this.#target(device),
+    // A push from the gateway (an HTTP request) goes only to a device this session holds: it never takes one.
+    target: async (device, opts) => {
+      if (!opts?.fromGateway) return this.#target(device);
+      const t = await this.#target(device, {observe: true});
+      if ((t.platform === 'android' || this.#isLocalApple(t.s)) && !this.#leases.holds(t.platform, t.id, await this.#instance(t.platform, t.id))) {
+        const h = this.#leases.holderOf(t.platform, t.id, await this.#instance(t.platform, t.id));
+        throw new Error(h ? refusal(h.lease) : `${t.id} is not this session's: the gateway delivers only to a device the session holds`);
+      }
+      return t;
+    },
     // The gateway delivers only to this session's devices: never to another session's, never to one nobody leased.
     online: async () => ({
-      android: this.android ? (await this.android.devices().catch(() => [])).filter(d => d.state === 'device' && this.#leases.holds('android', d.serial, d.bootId)).map(d => d.serial) : [],
+      android: this.android ? (await this.android.devices().catch(() => [])).filter(d => d.state === 'device' && this.#leases.holds('android', d.serial, d.instance)).map(d => d.serial) : [],
       apple: this.apple ? (await this.apple.booted().catch(() => [])).filter(x => !this.#isLocalApple(this.apple) || this.#leases.holds('apple', x.udid)).map(x => x.udid) : [],
     }),
     androidApp: () => this.config.app?.android,
@@ -527,7 +537,7 @@ export class Engine {
   /** The current boot of an Android device (its boot id), to tell it from an earlier device with its serial. */
   async #instance(platform: 'android' | 'apple', id: string): Promise<string | undefined> {
     if (platform !== 'android') return undefined;
-    return (await this.android?.devices().catch(() => []))?.find(d => d.serial === id)?.bootId;
+    return (await this.android?.devices().catch(() => []))?.find(d => d.serial === id)?.instance;
   }
 
   /**
@@ -555,7 +565,7 @@ export class Engine {
       const android = a ?? this.#needAndroid();
       const serial = await android.resolve(device);
       const d = (await android.devices().catch(() => [])).find(x => x.serial === serial);
-      return take({platform: 'android' as const, id: serial, a: android}, d?.avd, d?.bootId);
+      return take({platform: 'android' as const, id: serial, a: android}, d?.avd, d?.instance);
     }
     const online = a ? (await a.devices().catch(() => [])).filter(d => d.state === 'device') : [];
     if (s && !local) {
@@ -563,7 +573,7 @@ export class Engine {
       if (booted.length && !online.length) return {platform: 'apple', id: await s.resolve(), s};
       if (booted.length) throw new Error(`several devices online\nhint: pass a device: ${[...online.map(d => d.avd ?? d.serial), ...booted.map(b => b.name)].join(', ')}`);
     }
-    const candidates: Candidate[] = [...(local ? booted.map(b => ({platform: 'apple' as const, id: b.udid, name: b.name})) : []), ...online.map(d => ({platform: 'android' as const, id: d.serial, name: d.avd ?? d.model, instance: d.bootId}))];
+    const candidates: Candidate[] = [...(local ? booted.map(b => ({platform: 'apple' as const, id: b.udid, name: b.name})) : []), ...online.map(d => ({platform: 'android' as const, id: d.serial, name: d.avd ?? d.model, instance: d.instance}))];
     if (!candidates.length) {
       // Nothing online: the drivers' own errors say so. adb can answer empty while busy; its resolve asks again,
       // and a device it then finds goes through the same choice.
@@ -590,10 +600,19 @@ export class Engine {
     if (h.platform === 'apple') {
       const s = this.apple;
       const r = await s?.shutdown(h.id);
-      if (h.created && this.config.devices?.deleteCreated !== false && this.#isLocalApple(s)) await s.delete(h.id).catch(() => undefined);
+      if (h.created && this.config.devices?.deleteCreated !== false && this.#isLocalApple(s)) await this.#deleteCreated(s, h.id);
       return r;
     }
     return this.android?.shutdown(h.id);
+  }
+
+  /** Deletes a simulator pitbox created — only one on its list of created ones, under the lock that creates them. */
+  async #deleteCreated(s: AppleDriver, udid: string) {
+    await machineLock('apple-create', async () => {
+      if (!isCreated(udid)) return;
+      await s.delete(udid);
+      forgetCreated(udid);
+    }).catch(() => undefined);
   }
 
   /** Gives every device back; those this daemon booted shut down unless the config keeps them. */
@@ -635,7 +654,8 @@ export class Engine {
     const want = pickSimulator(sims, name);
     if (!want) return {...(await s.boot(name, opts)), platform: 'apple'};
     const owned = (x: Simulator) => !!this.#leases.holderOf('apple', x.udid)?.mine;
-    const idle = (x: Simulator) => x.state !== 'Booted' && !this.#leases.holderOf('apple', x.udid);
+    // Shut down, not on its way up or down: a simulator booting or shutting down is someone's.
+    const idle = (x: Simulator) => x.state === 'Shutdown' && !this.#leases.holderOf('apple', x.udid);
     let why: string | undefined;
     const order: Simulator[] = [];
     if (owned(want) || idle(want)) order.push(want);
@@ -663,6 +683,7 @@ export class Engine {
         let n = 2;
         while (taken.has(`${want.name} (pitbox ${n})`)) n++;
         const sim = await s.createLike(want, `${want.name} (pitbox ${n})`);
+        recordCreated(sim.udid, sim.name);
         this.#leases.claim('apple', sim.udid, {name: sim.name, booted: true, created: true});
         return sim;
       });
@@ -682,7 +703,7 @@ export class Engine {
     } catch (e) {
       if (starting) {
         this.#leases.release('apple', pick.udid);
-        if (created) await s.delete(pick.udid).catch(() => undefined);
+        if (created) await this.#deleteCreated(s, pick.udid);
       }
       throw e;
     } finally {
@@ -696,25 +717,26 @@ export class Engine {
    */
   async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean}) {
     const running = (await a.devices()).filter(d => d.state === 'device' && d.avd === avd);
-    const own = running.find(d => this.#leases.holderOf('android', d.serial, d.bootId)?.mine);
+    const own = running.find(d => this.#leases.holderOf('android', d.serial, d.instance)?.mine);
     if (own) {
-      this.#leases.claim('android', own.serial, {name: avd, instance: own.bootId});
+      this.#leases.claim('android', own.serial, {name: avd, instance: own.instance});
       const forwards = await this.ensureForwards(true).catch(() => []);
       return {serial: own.serial, ms: 0, already: true, avd, forwards};
     }
     const first = running[0];
-    const h = first ? this.#leases.holderOf('android', first.serial, first.bootId) : undefined;
+    const h = first ? this.#leases.holderOf('android', first.serial, first.instance) : undefined;
     // An instance on its way up holds the AVD's lock before adb lists it: a second boot then needs its own instance.
     const newInstance = running.length > 0 || avdLocked(avd);
     const why = h ? `${avd} runs for ${describeHolder(h.lease)}` : first ? `${avd} runs without a lease (another tool or an older pitbox may drive it): left alone` : newInstance ? `${avd} is starting for another session` : undefined;
     const warning = bootWarning('android', await this.#runningDevices());
     const r = await a.boot(avd, {...opts, newInstance});
-    const instance = (await a.devices().catch(() => [])).find(d => d.serial === r.serial)?.bootId;
+    const instance = (await a.devices().catch(() => [])).find(d => d.serial === r.serial)?.instance;
     try {
       this.#leases.claim('android', r.serial, {name: avd, booted: true, instance});
     } catch (e) {
-      // It came up and is not leasable (held under its serial a moment ago): an emulator nobody holds is not left
-      // running behind the session's back.
+      // Not leasable (held under its serial a moment ago). An emulator this boot started is not left running behind
+      // the session's back; one that was already running is someone else's and is left alone.
+      if (r.already) throw e;
       await a.shutdown(r.serial).catch(() => undefined);
       throw new Error(`${(e as Error).message.split('\n')[0]} — the emulator this boot started was shut down again; boot again`);
     }
@@ -755,7 +777,7 @@ export class Engine {
     const all = (await android.devices()).filter(d => d.state === 'device');
     for (const s of [...this.#forwarded]) if (!all.some(d => d.serial === s)) this.#forwarded.delete(s);
     // Only the devices this session holds: another session's emulator has its own stand and its own forwards.
-    const online = all.filter(d => this.#leases.holds('android', d.serial, d.bootId));
+    const online = all.filter(d => this.#leases.holds('android', d.serial, d.instance));
     const verify = force || Date.now() - this.#lastForwardCheck > 30_000;
     if (verify) this.#lastForwardCheck = Date.now();
     const applied: {serial: string; ports: number[]; via?: string}[] = [];
@@ -921,9 +943,10 @@ export class Engine {
   async #beat() {
     let online: Candidate[] | undefined;
     try {
-      const sims = this.#isLocalApple(this.apple) ? await this.apple.booted() : [];
-      const emus = this.android ? (await this.android.devices()).filter(d => d.state === 'device') : [];
-      online = [...sims.map(x => ({platform: 'apple' as const, id: x.udid})), ...emus.map(d => ({platform: 'android' as const, id: d.serial, instance: d.bootId}))];
+      // Present is anything not shut down: a simulator booting, an emulator offline for a moment, a phone unauthorized.
+      const sims = this.#isLocalApple(this.apple) ? (await this.apple.simulators()).filter(x => x.state !== 'Shutdown') : [];
+      const emus = this.android ? await this.android.devices() : [];
+      online = [...sims.map(x => ({platform: 'apple' as const, id: x.udid})), ...emus.map(d => ({platform: 'android' as const, id: d.serial, instance: d.instance}))];
     } catch {
       online = undefined; // lists unreadable: renew only
     }
@@ -1027,7 +1050,7 @@ export class Engine {
         actors: this.actors.list(),
         mock: this.config.mocks?.llm ? {port: this.config.mocks.llm.port, running: this.#mock?.running ?? false, requests: this.#mock?.requests ?? 0} : undefined,
         push: this.config.mocks?.push ? {port: this.config.mocks.push.port ?? 4980, running: this.#gateway?.running ?? false, requests: this.#gateway?.requests ?? 0, error: this.#pushError} : undefined,
-        devices: devices.map(d => ({...d, ...this.#holderTag('android', d.serial, d.bootId, d.state === 'device')})),
+        devices: devices.map(d => ({...d, ...this.#holderTag('android', d.serial, d.instance, d.state === 'device')})),
         simulators: simulators.length ? simulators.map(x => ({udid: x.udid, name: x.name, os: x.os, ...(this.#isLocalApple(this.apple) ? this.#holderTag('apple', x.udid) : {})})) : undefined,
         exposed: exposedPorts(this.config),
         dev: this.#dev?.status(),
@@ -1358,7 +1381,7 @@ export class Engine {
       let simError: string | undefined;
       const sims = s ? await s.simulators().catch(e => ((simError = (e as Error).message.split('\n')[0]), [])) : [];
       return {
-        devices: a ? (await a.devices()).map(d => ({...d, ...this.#holderTag('android', d.serial, d.bootId, d.state === 'device')})) : [],
+        devices: a ? (await a.devices()).map(d => ({...d, ...this.#holderTag('android', d.serial, d.instance, d.state === 'device')})) : [],
         avds: a ? a.avds() : [],
         ...(this.config.web ? {web: Object.entries(this.config.web).map(([name, w]) => ({name: `web:${name}`, url: w.url}))} : {}),
         ...(this.config.mac ? {mac: Object.entries(this.config.mac).map(([name, m]) => ({name: `mac:${name}`, app: m.app}))} : {}),
@@ -1443,13 +1466,24 @@ export class Engine {
     cleanDevices: async () => {
       const s = this.apple;
       if (!this.#isLocalApple(s)) return {deleted: []};
-      const deleted: string[] = [];
-      for (const x of await s.simulators()) {
-        if (!/ \(pitbox \d+\)$/.test(x.name) || x.state !== 'Shutdown' || this.#leases.holderOf('apple', x.udid)) continue;
-        await s.delete(x.udid);
-        deleted.push(x.name);
-      }
-      return {deleted};
+      // Under the lock that creates them: a simulator created a moment ago and not leased yet is not taken for a
+      // leftover. Only the udids pitbox recorded when it created them.
+      return machineLock('apple-create', async () => {
+        const deleted: string[] = [];
+        const sims = await s.simulators();
+        for (const c of listCreated()) {
+          const x = sims.find(y => y.udid === c.udid);
+          if (!x) {
+            forgetCreated(c.udid);
+            continue;
+          }
+          if (x.state !== 'Shutdown' || this.#leases.holderOf('apple', x.udid)) continue;
+          await s.delete(x.udid);
+          forgetCreated(x.udid);
+          deleted.push(x.name);
+        }
+        return {deleted};
+      });
     },
 
     install: async (p: Params) => {
