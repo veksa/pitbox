@@ -78,11 +78,16 @@ export const withBuildLock = async <T>(cache: string, version: string, fn: () =>
   const file = lockFile(cache, version);
   const deadline = Date.now() + (opts.waitMs ?? BUILD_LOCK_MAX_MS);
   for (;;) {
+    // Written aside and linked in: the lock is never seen empty (an empty one would read as a dead builder's).
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, String(process.pid));
     try {
-      fs.writeFileSync(file, String(process.pid), {flag: 'wx'});
+      fs.linkSync(tmp, file);
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    } finally {
+      fs.rmSync(tmp, {force: true});
     }
     if (builder(cache, version) === undefined) {
       // Left by a process that died or wedged: remove it only if it is still the same file.
@@ -97,9 +102,20 @@ export const withBuildLock = async <T>(cache: string, version: string, fn: () =>
     if (Date.now() > deadline) throw new Error(`another pitbox (pid ${builder(cache, version)}) has been building ${path.basename(cache)} ${version} for too long`);
     await new Promise(r => setTimeout(r, opts.pollMs ?? 1000));
   }
+  // A cold build can outlast the lock's age limit: touched while it runs, it never looks wedged.
+  const keep = setInterval(() => {
+    try {
+      const t = new Date();
+      fs.utimesSync(file, t, t);
+    } catch {
+      // gone: nothing to keep fresh
+    }
+  }, 60_000);
+  keep.unref();
   try {
     return await fn();
   } finally {
+    clearInterval(keep);
     try {
       if (fs.readFileSync(file, 'utf8').trim() === String(process.pid)) fs.rmSync(file, {force: true});
     } catch {
@@ -140,6 +156,20 @@ export const gcVersions = (cache: string, current: string, opts: GcOptions = {})
     .filter(e => e.isDirectory() && e.name !== current)
     .map(e => ({name: e.name, dir: path.join(cache, e.name), used: lastUsed(path.join(cache, e.name))}))
     .sort((a, b) => b.used - a.used);
+  // Markers of processes that are gone say nothing; they go, in every version.
+  for (const e of entries.filter(x => x.isDirectory())) {
+    const dir = path.join(cache, e.name);
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const pid = n.startsWith(IN_USE) ? Number(n.slice(IN_USE.length)) : NaN;
+      if (Number.isInteger(pid) && pid > 0 && !alive(pid)) fs.rmSync(path.join(dir, n), {force: true});
+    }
+  }
   const removed: string[] = [];
   for (const [i, v] of versions.entries()) {
     if (i < keep - 1) continue; // `current` is one of the kept
