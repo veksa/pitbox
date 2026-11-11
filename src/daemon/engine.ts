@@ -776,24 +776,32 @@ export class Engine {
     // Found by this session's leases, in any state: a copy offline for a moment is still this session's.
     const copyOf = (name?: string) => (name ? createdEntry(`android:${name}`)?.like : undefined);
     const ownLease = this.#leases.held().find(h => h.platform === 'android' && (h.name === avd || copyOf(h.name) === avd));
-    let own = ownLease ? (await a.devices()).find(d => d.serial === ownLease.id && (!ownLease.instance || !d.instance || d.instance === ownLease.instance)) : undefined;
-    if (own && own.state !== 'device') {
-      // Offline under load, or adb reconnecting: waited for a while, never replaced by another copy.
-      const end = Date.now() + Engine.OWN_OFFLINE_WAIT_MS;
-      while (Date.now() < end && own && own.state !== 'device') {
-        await new Promise(r => setTimeout(r, 1000));
-        own = (await a.devices()).find(d => d.serial === ownLease!.id) ?? own;
-      }
+    // The leased emulator itself — its serial with its process (or, while the process is unknown, its AVD): never
+    // another emulator that took the serial since. In adb in any state, or only in the emulators' discovery files
+    // (adb restarting lists nothing for a moment).
+    const findOwn = async (): Promise<AndroidDevice | undefined> => {
+      if (!ownLease) return undefined;
+      const fits = (x: {serial: string; instance?: string; avd?: string}) =>
+        x.serial === ownLease.id && (ownLease.instance && x.instance ? x.instance === ownLease.instance : !x.avd || !ownLease.name || x.avd === ownLease.name);
+      const listed = (await a.devices().catch(() => [])).find(fits);
+      if (listed) return listed;
+      const seen = a.running().find(fits);
+      return seen ? {serial: seen.serial, state: 'not listed by adb', avd: seen.avd, emulator: true, instance: seen.instance} : undefined;
+    };
+    let own = await findOwn();
+    // Offline under load, or adb reconnecting: waited for a while, never replaced by another copy. Gone for good: a
+    // new boot.
+    const end = Date.now() + Engine.OWN_OFFLINE_WAIT_MS;
+    while (own && own.state !== 'device' && Date.now() < end) {
+      await new Promise(r => setTimeout(r, 1000));
+      own = await findOwn();
     }
-    if (own) {
-      this.#leases.claim('android', own.serial, {name: own.avd ?? ownLease!.name, instance: own.instance});
-      const forwards = await this.ensureForwards(true).catch(() => []);
-      return {serial: own.serial, ms: 0, already: true, avd: own.avd ?? ownLease!.name, forwards, ...(own.state !== 'device' ? {note: `${own.serial} is ${own.state}: still this session's, not replaced`} : {})};
-    }
+    if (own) return this.#answerOwn(own, ownLease!.name);
     const warning = bootWarning('android', await this.#runningDevices());
     let launch: Launch | undefined;
     let twin: string | undefined;
     let why: string | undefined;
+    let mineAlready: AndroidDevice | undefined;
     try {
       // From the decision until the new emulator shows (in adb, or on the AVD's lock), one boot at a time on the
       // machine: two sessions booting one AVD at once would both find it free, and each take the other's emulator.
@@ -806,6 +814,9 @@ export class Engine {
           .filter(e => e.avd === avd && !listed.some(d => d.serial === e.serial))
           .map(e => ({serial: e.serial, state: 'starting', avd: e.avd, emulator: true, instance: e.instance}) as AndroidDevice);
         const running = [...listed, ...starting];
+        // This session's own after all (seen only now, or only in a discovery file): answered, never copied.
+        mineAlready = running.find(d => this.#leases.holderOf('android', d.serial, d.instance)?.mine);
+        if (mineAlready) return;
         const first = running[0];
         const h = first ? this.#leases.holderOf('android', first.serial, first.instance) : undefined;
         const locker = a.lockedBy(avd);
@@ -823,6 +834,7 @@ export class Engine {
         // Held for seconds per boot (until the new emulator writes its discovery file): a queue of boots waits its
         // turn instead of being refused.
       }, 15 * 60_000);
+      if (mineAlready) return this.#answerOwn(mineAlready, avd);
     } catch (e) {
       if (launch) await a.abort(launch);
       if (twin) await this.#deleteCreatedAvd(a, twin);
@@ -858,6 +870,13 @@ export class Engine {
       ...(r.readOnly ? {note: 'a second instance of the AVD (-read-only): what changes on it is gone when it shuts down'} : {}),
       ...(warning ? {warning} : {}),
     };
+  }
+
+  /** A boot's answer about an emulator this session holds already. */
+  async #answerOwn(own: AndroidDevice, name?: string) {
+    this.#leases.claim('android', own.serial, {name: own.avd ?? name, instance: own.instance});
+    const forwards = await this.ensureForwards(true).catch(() => []);
+    return {serial: own.serial, ms: 0, already: true, avd: own.avd ?? name, forwards, ...(own.state !== 'device' ? {note: `${own.serial} is ${own.state}: still this session's, not replaced`} : {})};
   }
 
   /**
