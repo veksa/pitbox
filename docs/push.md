@@ -171,7 +171,7 @@ codes are the ones the real services use, so the server's token handling runs as
 | delivered, whatever the device did with it (permission off, no banner): the verdict says | `200` | `200` |
 | the app is not installed, has no pitbox receiver or no FCM client: the token is dead | `400 BadDeviceToken` | `404 UNREGISTERED` |
 | payload over 4 KB | `413 PayloadTooLarge` | `400 INVALID_ARGUMENT` |
-| no device online | `503` | `503` |
+| no device of this session online | `503` | `503` |
 
 Only a dead token should make the server drop it; a denied permission is not one. Authorization headers are
 ignored. The gateway refuses what a web page could send to it: a request with an `Origin` header (`403`), and an
@@ -182,9 +182,11 @@ before they reach a shell. A gateway request does not start a UI runner on a sim
 When the port is taken, `up` brings the rest of the stand up and reports `push gateway :4980 not started: port
 4980 is in use`; `status` says the same.
 
-**Which device.** A token bound with `push bind <token> --device …` goes to that device; so does one that came
-with a `device` in a `POST /push`. Bindings are kept in the state directory (`push-tokens.json`) across daemon
-restarts. Otherwise an APNs
+**Which device.** Only a device this session holds ([device leases](parallel.md)): never one another session
+holds, never one that runs with no lease. A token bound with `push bind <token> --device …` goes to that device
+while the session holds it (a binding to a device it no longer holds is skipped, and the verdict says so); so does
+one that came with a `device` in a `POST /push`. Bindings are kept in the state directory (`push-tokens.json`)
+across daemon restarts. Otherwise an APNs
 request goes to the booted simulator; an FCM request goes to the Android device online, or to the simulator when
 the token is an APNs token (64 hex digits) or no Android device is online — React Native Firebase registers FCM
 tokens on iOS too. An FCM token routed while both an emulator and a simulator are online is a guess, and the

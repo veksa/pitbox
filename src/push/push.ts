@@ -17,7 +17,7 @@ export type PushTarget = {platform: 'android'; id: string; a: AndroidDriver} | {
 export type PushDeps = {
   /** The device a call names, or the only one online. */
   target: (device?: string) => Promise<PushTarget>;
-  /** Online devices by platform, for the gateway's routing. */
+  /** Devices the gateway may deliver to, by platform (this session's own: never another session's). */
   online: () => Promise<{android: string[]; apple: string[]}>;
   androidApp?: () => string | undefined;
   appleApp?: () => string | undefined;
@@ -355,17 +355,24 @@ export class PushCenter {
 
   /** Which device a gateway request goes to: a bound token, else by the kind of request and what is online. */
   async route(kind: 'apns' | 'fcm', token?: string): Promise<{device?: string; note?: string}> {
-    if (token && this.tokens.has(token)) return {device: this.tokens.get(token)};
+    // `online` is the devices this session may deliver to (with leases: the ones it holds, never another's).
     const online = await this.#deps.online();
-    if (kind === 'apns') return {device: online.apple[0]};
+    let skipped: string | undefined;
+    if (token && this.tokens.has(token)) {
+      const bound = this.tokens.get(token)!;
+      if (online.android.includes(bound) || online.apple.includes(bound)) return {device: bound};
+      skipped = `the token is bound to ${bound}, which this session does not hold now: routed by kind instead`;
+    }
+    const withNote = (r: {device?: string; note?: string}) => ({...r, note: [skipped, r.note].filter(Boolean).join('; ') || undefined});
+    if (kind === 'apns') return withNote({device: online.apple[0]});
     // An APNs device token is 64 hex digits; an FCM token is not.
-    if (token && /^[0-9a-f]{64}$/i.test(token) && online.apple.length) return {device: online.apple[0]};
+    if (token && /^[0-9a-f]{64}$/i.test(token) && online.apple.length) return withNote({device: online.apple[0]});
     const device = online.android[0] ?? online.apple[0];
     const note =
       online.android.length && online.apple.length
         ? `an FCM token with an emulator and a simulator online went to ${device}: \`push bind <token> --device …\` picks the other`
         : undefined;
-    return {device, note};
+    return withNote({device, note});
   }
 
   bind(token: string, device: string) {
