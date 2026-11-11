@@ -289,7 +289,7 @@ export const menuItems = (snap: Pick<Snapshot, 'nodes'>): number[] => {
 const pickerShown = (s: Snapshot) => idOf(s, 'widgets_search_bar_edit_text') ?? (pickerEntries(s).length || s.nodes.some(n => n.id === 'widgets_list_header' || n.id === 'primary_widgets_list_view') ? -1 : undefined);
 
 /** Opens the widget picker from the home screen's menu (a long press on an empty spot, then "Widgets"). */
-const androidPicker = async (ui: DeviceUi): Promise<{snap: Snapshot; pkg: string; workspace: Bounds}> => {
+const androidPicker = async (ui: DeviceUi): Promise<{snap: Snapshot; pkg: string; workspace: Bounds; empty: {x: number; y: number}}> => {
   const home = await androidHome(ui);
   const spot = freeSpot(home.snap, home.workspace);
   if (!spot) throw new Error('no empty spot on the home screen to long-press for its menu\nhint: move an icon off the first home page, or open the widget picker by hand');
@@ -301,7 +301,7 @@ const androidPicker = async (ui: DeviceUi): Promise<{snap: Snapshot; pkg: string
     if (attempt >= items.length) break;
     await ui.press(point(menu.snap, items[attempt]!));
     const picker = await until(ui, 4000, pickerShown);
-    if (picker.hit !== undefined) return {snap: picker.snap, pkg: home.pkg, workspace: home.workspace};
+    if (picker.hit !== undefined) return {snap: picker.snap, pkg: home.pkg, workspace: home.workspace, empty: spot};
     // Another item (wallpapers, settings, the app list): back to the home screen for the next one.
     await androidHome(ui);
   }
@@ -371,7 +371,7 @@ const sizes = (entries: PickerEntry[], name: string) => entries.filter(e => same
 const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const name = w.name!;
   const app = w.app ?? name;
-  const {pkg} = await androidPicker(ui);
+  const {pkg, empty} = await androidPicker(ui);
   const snap = await androidAppWidgets(ui, app, s => pickEntry(appEntries(s, app), name, w.size) !== undefined);
   const entries = appEntries(snap, app);
   const entry = pickEntry(entries, name, w.size);
@@ -398,7 +398,7 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   if (add.hit !== undefined) await ui.press(point(add.snap, add.hit));
   else if (pickEntry(appEntries(current, app), name, entry.size)) {
     via = 'drag';
-    at = await dragPreview(ui, app, name, entry.size);
+    at = await dragPreview(ui, app, name, entry.size, empty);
   } else if (homeWidget(current, name) === undefined && current.windows.find(x => x.type === 'app')?.pkg === pkg && idOf(current, 'workspace') === undefined) {
     throw new Error(`a tap on the "${name}" widget in the picker showed no Add button and the widget left the list\nscreen:\n${current.lines.slice(0, 15).join('\n')}`);
   }
@@ -409,7 +409,7 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
  * Drags a widget's preview out of the picker onto the home screen, for a picker with no Add button: held until
  * the picker gives way to the home screen, then dropped on its emptiest spot.
  */
-const dragPreview = async (ui: DeviceUi, app: string, name: string, size: string): Promise<{x: number; y: number}> => {
+const dragPreview = async (ui: DeviceUi, app: string, name: string, size: string, empty: {x: number; y: number}): Promise<{x: number; y: number}> => {
   const snap = await ui.snapshot();
   const entry = pickEntry(appEntries(snap, app), name, size);
   if (!entry) throw new Error(`the "${name}" widget left the picker before it could be dragged`);
@@ -431,20 +431,15 @@ const dragPreview = async (ui: DeviceUi, app: string, name: string, size: string
     }
     if (!drag.hit) throw new Error(`holding the "${name}" preview did not start dragging it\nhint: this picker places widgets in a way pitbox does not drive; add it by hand`);
     // Launcher3 says where the widget would land ("Move to row 2 column 1 in Home screen 1 of 1", in the system's
-    // language) on the dragged view once the cells under the finger can take it. The finger still moves to the
-    // emptiest spot of the page and drops there once the launcher answers: dropped where the picker let go of it,
-    // the widget would push the icons aside, and on some launchers (Android 13) that drop comes to nothing.
+    // language) on the dragged view once the cells under the finger can take it. The finger goes on to the emptiest
+    // spot of the home page (read before the picker opened: the page leaves the accessibility tree while something
+    // is dragged over it) and drops there once the launcher answers. Dropped where the picker let go of it, the
+    // widget would push the icons aside, and on some launchers (Android 13) that drop comes to nothing.
     const hint = (x: Snapshot) => (x.nodes.some(n => dropHint(n, finger)) ? true : undefined);
-    let ready = await until(ui, 1500, hint);
-    const page = ready.snap.nodes[idOf(ready.snap, 'workspace') ?? idOf(ready.snap, 'drag_layer') ?? 0]!.b;
-    // What hangs under the finger is the widget itself, not something on the page.
-    const under = (n: UiNode) => n.b[0] <= finger.x && finger.x <= n.b[2] && n.b[1] <= finger.y && finger.y <= n.b[3];
-    const spot = freeSpot({windows: ready.snap.windows, nodes: ready.snap.nodes.map(n => (under(n) && !n.id ? {...n, b: [0, 0, 0, 0] as Bounds} : n))}, page);
-    if (spot) {
-      for (let k = 1; k <= 4; k++) await touch('move', Math.round(finger.x + ((spot.x - finger.x) * k) / 4), Math.round(finger.y + ((spot.y - finger.y) * k) / 4));
-      finger = spot;
-      ready = await until(ui, 2000, hint);
-    }
+    await until(ui, 1500, hint);
+    for (let k = 1; k <= 4; k++) await touch('move', Math.round(finger.x + ((empty.x - finger.x) * k) / 4), Math.round(finger.y + ((empty.y - finger.y) * k) / 4));
+    finger = empty;
+    const ready = await until(ui, 2500, hint);
     if (!ready.hit) throw new Error(`the home page has no room the launcher accepts for the "${name}" widget\nhint: make room on the first home page, or add it by hand`);
     await sleep(300);
     await touch('up', finger.x, finger.y);
