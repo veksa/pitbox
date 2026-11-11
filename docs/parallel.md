@@ -16,10 +16,12 @@ left to each agent's discipline.
 - **An Android serial is not a device.** `emulator-5556` goes to the next emulator on that port; a lease names the
   emulator process, not the kernel boot id — a quickboot snapshot restores that — so a new emulator on a reused
   serial is free, and the session that held the old one neither drives nor shuts down the new one. pitbox reads the
-  process and the AVD from the discovery file each emulator writes as it starts (`<temp>/avd/running/pid_<N>.ini`),
-  so it knows an emulator in any state, offline or not yet listed by adb, without asking its console. Without one it
-  asks the console (`adb emu avd name`, `adb emu avd discoverypath`) once per adb connection, and again every 15 s
-  while no answer came; a lease taken meanwhile gets the instance on a later beat, and only from an emulator of the
+  process and the AVD from the discovery file each emulator writes as it starts (`avd/running/pid_<N>.ini` in the
+  emulator's temp folder: `~/Library/Caches/TemporaryItems` on macOS, `$XDG_RUNTIME_DIR`, `/run/user/<uid>`,
+  `$ANDROID_TMP` or `/tmp/android-$USER` on Linux, `%LOCALAPPDATA%\Temp` on Windows), so it knows an emulator in any
+  state, offline or not yet listed by adb, without asking its console. Without one it asks the console
+  (`adb emu avd name`, `adb emu avd discoverypath`) once per adb connection, and again every 15 s while either
+  answer is missing; a lease taken meanwhile gets the instance on a later beat, and only from an emulator of the
   same AVD.
 - **The holder is the project's daemon.** Sessions of one project share its daemon, and so its devices; parallel
   sessions of one project work from separate worktrees (each has its own config folder, daemon and stand ports).
@@ -55,10 +57,14 @@ left to each agent's discipline.
   `-read-only` comes from its discovery file (on every system) or its command line. Boots of emulators take one
   machine-wide lock from the decision until the new emulator writes its discovery file or takes its AVD's lock —
   a second or two — so two sessions booting one AVD at once never take each other's emulator, and boots of other
-  AVDs queue for those seconds instead of being refused. pitbox knows its emulator by its process: a serial its
-  launch gave up is never taken for its own, nor killed. An emulator that does not come up, or that it cannot
-  lease, is killed (on Windows with the processes the launcher started), and a copy made for it deleted. A second
-  `boot` answers the session's own emulator or copy even while it is offline. A copy is recorded with its folder's identity and
+  AVDs queue for those seconds instead of being refused. pitbox launches each emulator with a marker
+  (`-prop qemu.pitbox_launch=<id>`), finds it by that marker in the discovery files, and knows it from then on by
+  its process and that process's start time: a serial its launch gave up is never taken for its own, and a pid the
+  system has since given to another process is never killed. An emulator that does not come up, does not show
+  within a minute, or that it cannot lease, is killed (on Windows with the processes the launcher started), and a
+  copy made for it deleted. A second `boot` answers the session's own emulator or copy — its serial with its
+  process — even while it is offline or adb lists nothing for a moment; one that is gone (another emulator on its
+  port, or none) gets a new boot at once. A copy is recorded with its folder's identity and
   deleted when the session gives it back; one whose emulator does not let go in time (the release says so), or one
   left by a daemon that died or a device that went away, is deleted by a later beat of any daemon (every 5 min)
   or `devices clean` — never while an emulator runs it or a live lease names it, never within 15 min of its
