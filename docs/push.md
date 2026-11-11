@@ -96,7 +96,7 @@ default channel from the manifest, or its fallback channel), a tap opens the app
 It needs no Google Play services on the emulator (a `google_apis` image works, and so does one without Play
 services) and no network: only the app's Firebase client library and an initialised Firebase app (its
 `google-services.json`). A message is delivered to an app that was force-stopped too (`app stop`); real FCM
-would not wake one.
+would not wake one, so the verdict then carries a note saying so.
 
 **Release builds are not affected.** The receiver is switched off in release builds (`pitbox_connect_enabled` is
 `false` outside the debug source set), it answers only in a debuggable app, and it is guarded by the `DUMP`
@@ -163,13 +163,32 @@ It answers the requests the real services take, on the same paths, so a server o
 | `POST /push` | pitbox's own: `{token?, device?, app?, apns? + headers? \| fcm? \| title, body, data…}`; answers the verdict as JSON |
 | `GET /health` | `200` while it runs |
 
-Every answer carries the verdict in `x-pitbox-verdict`, and `push log` lists what the server sent. No device
-online: `503`. Authorization headers are ignored.
+Every answer carries the verdict in `x-pitbox-verdict`, and `push log` lists what the server sent. The status
+codes are the ones the real services use, so the server's token handling runs as in production:
 
-**Which device.** A token bound with `push bind <token> --device …` goes to that device. Otherwise an APNs
+| Case | APNs | FCM |
+|---|---|---|
+| delivered, whatever the device did with it (permission off, no banner): the verdict says | `200` | `200` |
+| the app is not installed, has no pitbox receiver or no FCM client: the token is dead | `400 BadDeviceToken` | `404 UNREGISTERED` |
+| payload over 4 KB | `413 PayloadTooLarge` | `400 INVALID_ARGUMENT` |
+| no device online | `503` | `503` |
+
+Only a dead token should make the server drop it; a denied permission is not one. Authorization headers are
+ignored. The gateway refuses what a web page could send to it: a request with an `Origin` header (`403`), and an
+HTTP/1.1 `POST` whose `Content-Type` is not `application/json` (`415`). Package names and bundle ids are checked
+before they reach a shell. A gateway request does not start a UI runner on a simulator: until one runs there (any
+`snapshot`, `press`, `push tap`), the verdict is `delivered (banner not checked …)`.
+
+When the port is taken, `up` brings the rest of the stand up and reports `push gateway :4980 not started: port
+4980 is in use`; `status` says the same.
+
+**Which device.** A token bound with `push bind <token> --device …` goes to that device; so does one that came
+with a `device` in a `POST /push`. Bindings are kept in the state directory (`push-tokens.json`) across daemon
+restarts. Otherwise an APNs
 request goes to the booted simulator; an FCM request goes to the Android device online, or to the simulator when
 the token is an APNs token (64 hex digits) or no Android device is online — React Native Firebase registers FCM
-tokens on iOS too. The token the app registered does not need to be real: an app on an emulator without Play
+tokens on iOS too. An FCM token routed while both an emulator and a simulator are online is a guess, and the
+verdict says which one it took. The token the app registered does not need to be real: an app on an emulator without Play
 services can register any placeholder in debug.
 
 ### From a server
@@ -203,7 +222,8 @@ sends an FCM v1 request to the gateway; the app shows it and opens the link a ta
 | `… has no pitbox push receiver` | the debug build predates push support in the connect library: rebuild it with the current @veksa/pitbox |
 | `no-fcm-service` | the app has no FCM client (expo-notifications, @react-native-firebase/messaging, firebase-messaging); on such an app a push cannot arrive in production either |
 | `firebase-not-initialized` | no default Firebase app: the app lacks `google-services.json` (or `FirebaseApp.initializeApp`) |
-| `background-start` | the temporary allowlist did not take (a device policy); open the app and send again |
+| `service-start <code>` | Android refused to start or bind the messaging service (a background-start limit the temporary allowlist did not lift, a device policy); open the app and send again |
+| `firebase-obfuscated` | R8 renamed Firebase's classes in a minified debug build: the connect library's consumer rules keep them, unless the app's own rules strip them again |
 | `POST_NOTIFICATIONS not granted` | `push grant`, or answer the app's prompt |
 | iOS `not delivered: notifications are not allowed` | the app asks for permission at some point: get there and press "Allow" |
 | no notification in the background on Android | the app counted as in front for a moment after leaving it; send again a second later |

@@ -147,11 +147,14 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // it was delivered; log is a line per push.
   tool(
     'push',
-    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n.',
+    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms.',
     {
       action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind']).optional(),
       title: opt.str(),
+      subtitle: opt.str(),
       body: opt.str(),
+      image: opt.str(),
+      tag: opt.str(),
       data: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
       file: opt.str(),
       apns: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
@@ -166,6 +169,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
       priority: z.enum(['high', 'normal']).optional(),
       delay: opt.num(),
       repeat: opt.num(),
+      wait: opt.num(),
       grant: opt.bool(),
       token: opt.str(),
       app: opt.str(),
