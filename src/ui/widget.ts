@@ -6,7 +6,7 @@
 
 import type {DeviceUi} from './device.ts';
 import {tokenize, unquote} from '../flows/flow.ts';
-import {interactive, tapPoint, type Bounds, type Snapshot, type UiNode} from './snapshot.ts';
+import {buildSnapshot, interactive, tapPoint, type Bounds, type Snapshot, type UiNode} from './snapshot.ts';
 
 export const WIDGET_USAGE = 'widget add <name> [app=<label>] [size=<WxH|small|medium|large|extra large>] | widget remove <name> | widget list [app]';
 
@@ -500,9 +500,13 @@ const HOME_ICONS = 'Home screen icons';
 const ADD_WIDGET_SYMBOL = 'widget.small.badge.plus';
 const GALLERY = 'add-sheet-collection-view';
 const REMOVE_ITEM = 'com.apple.springboardhome.application-shortcut-item.remove-widget';
+const STACK_ITEM = 'com.apple.springboardhome.application-shortcut-item.configure-stack';
 
 export const IOS_FOLDABLE =
   'widget is not supported on a foldable iPhone simulator: its SpringBoard reports the home pages of both screens with frames turned against the lit one, and the simulator ignores the home button, so nothing on its home screen can be pressed where it is drawn\nhint: add the widget by hand';
+
+export const IOS_TURNED =
+  'widget is not supported on an iPad turned to 270°: SpringBoard leaves the Edit button and widgets of other pages out of its accessibility tree there\nhint: rotate 0 or rotate 90 first';
 
 export const IOS_SIZES = ['small', 'medium', 'large', 'extra large', 'extra large portrait'];
 
@@ -543,22 +547,26 @@ export const iosPages = (snap: Pick<Snapshot, 'nodes'>): {page: number; pages: n
 const iosEditing = (snap: Pick<Snapshot, 'nodes'>) => snap.nodes.some(n => n.id === 'DeleteButton');
 
 /**
- * The size of a widget in the gallery, from its preview's shape: small and large are square, medium and extra
- * large twice as wide as high, extra large portrait taller than wide; small and medium are one row high, the
- * others two. `ref` is the width of the gallery's content (its Add button).
+ * The sizes of the widgets in an app's gallery, from the shapes of their previews, which the gallery draws to one
+ * scale: small and large are square, medium and extra large about twice as wide as high, extra large portrait
+ * taller than wide; small and medium are one row high, large and extra large two. The row is the shortest side of
+ * any preview but a portrait one, so the whole gallery is read before a size is told.
  */
-export const iosSizeOf = (b: Bounds, ref: number): string => {
-  const w = b[2] - b[0];
-  const h = b[3] - b[1];
-  if (w <= 0 || h <= 0 || ref <= 0) return 'unknown';
-  const aspect = w / h;
-  if (aspect < 0.8) return 'extra large portrait';
-  if (aspect < 1.4) return w / ref > 0.65 ? 'large' : 'small';
-  return h / ref > 0.6 ? 'extra large' : 'medium';
+export const iosSizes = (boxes: Bounds[]): string[] => {
+  const dims = boxes.map(b => ({w: b[2] - b[0], h: b[3] - b[1]}));
+  const rows = dims.filter(d => d.h > 0 && d.w / d.h >= 0.8).map(d => Math.min(d.w, d.h));
+  const row = rows.length ? Math.min(...rows) : 0;
+  return dims.map(({w, h}) => {
+    if (w <= 0 || h <= 0) return 'unknown';
+    if (w / h < 0.8) return 'extra large portrait';
+    const tall = row > 0 && h >= row * 1.5;
+    if (w / h < 1.4) return tall ? 'large' : 'small';
+    return tall ? 'extra large' : 'medium';
+  });
 };
 
-/** One page of an app's widget gallery: the widget's preview, its name and size, and the Add button under it. */
-export type IosGalleryPage = {preview: number; add?: number; name: string; size: string};
+/** One page of an app's widget gallery: the widget's preview, its name, and the Add button under it. */
+export type IosGalleryPage = {preview: number; add?: number; name: string; label: string; box: Bounds};
 
 /**
  * The page of the gallery on screen. The preview is a button labelled "<App>, <Widget>" (its value says "Widget,
@@ -574,13 +582,78 @@ export const iosGalleryPage = (snap: Pick<Snapshot, 'nodes'>, app: string): IosG
     .flatMap((n, i) => (n.c === 'Button' && !n.id && i !== alone && n.b[1] >= pb[3] - 4 ? [i] : []))
     .sort((x, y) => (snap.nodes[y]!.b[2] - snap.nodes[y]!.b[0]) - (snap.nodes[x]!.b[2] - snap.nodes[x]!.b[0]));
   const add = below[0];
-  const ref = add !== undefined ? snap.nodes[add]!.b[2] - snap.nodes[add]!.b[0] : pb[2] - pb[0];
   const label = (snap.nodes[alone]!.t ?? '').replace(/\s+/g, ' ').trim();
   const name = norm(label).startsWith(prefix) ? label.slice(prefix.length).trim() : label;
-  return {preview: alone, ...(add !== undefined ? {add} : {}), name, size: iosSizeOf(pb, ref)};
+  return {preview: alone, ...(add !== undefined ? {add} : {}), name, label, box: pb};
 };
 
 const iosSnap = async (ui: DeviceUi) => steady(ui, 1500);
+
+/**
+ * How far SpringBoard's tree is turned from the screen a finger touches: with an iPad on its side, the home screen
+ * reports its frames as if the device stood upright while touches land on the turned screen. Told by the icons'
+ * name labels, which lie under an upright icon and stand on end beside a turned one, or else by the status bar's
+ * clock standing on end along the turned top edge.
+ */
+export const springboardTurn = (nodes: UiNode[], width: number): 0 | 90 | 270 | undefined => {
+  let left = 0;
+  let right = 0;
+  let upright = 0;
+  nodes.forEach((n, i) => {
+    if (n.id !== 'label-view' || n.p < 0) return;
+    const icon = nodes[n.p]!;
+    if (icon.c !== 'Icon' || i < 0) return;
+    const w = n.b[2] - n.b[0];
+    const h = n.b[3] - n.b[1];
+    if (w >= h) upright++;
+    else if (n.b[0] + n.b[2] < icon.b[0] + icon.b[2]) left++;
+    else right++;
+  });
+  if (upright + left + right > 0) return upright >= left + right ? 0 : left >= right ? 90 : 270;
+  const clock = nodes.find(n => n.c === 'Text' && /\d[:.]\d\d/.test(n.t ?? '') && n.b[3] - n.b[1] > (n.b[2] - n.b[0]) * 1.5 && n.b[2] - n.b[0] < 60);
+  const flat = nodes.find(n => n.c === 'Text' && /\d[:.]\d\d/.test(n.t ?? '') && n.b[2] - n.b[0] > n.b[3] - n.b[1]);
+  if (!clock) return flat ? 0 : undefined;
+  return (clock.b[0] + clock.b[2]) / 2 > width / 2 ? 90 : 270;
+};
+
+/** A node's frame as the finger sees it: turned with the screen. */
+export const turnBounds = (b: Bounds, turn: 0 | 90 | 270, width: number, height: number): Bounds =>
+  turn === 90 ? [b[1], width - b[2], b[3], width - b[0]] : turn === 270 ? [height - b[3], b[0], height - b[1], b[2]] : b;
+
+/**
+ * The device with SpringBoard's tree turned to the screen a finger touches, so every frame, size and point below
+ * is in one space; a no-op while the screen stands upright.
+ */
+const upright = (ui: DeviceUi): DeviceUi => {
+  // A sheet over the home screen (the widget gallery) has neither icons nor a clock: the turn last seen holds, as
+  // the device does not turn within one command.
+  let known: {turn: 0 | 90 | 270; width: number; height: number} | undefined;
+  const turned = async () => {
+    const snap = await ui.snapshot();
+    const size = await ui.size();
+    // The tree's own frame: its home page spans it (the screen's size may already be given turned).
+    const root = snap.nodes.find(n => n.id === HOME_ICONS && n.p < 0)?.b;
+    const width = root ? root[2] - root[0] : (known?.width ?? Math.min(size.width, size.height));
+    const height = root ? root[3] - root[1] : (known?.height ?? Math.max(size.width, size.height));
+    const seen = springboardTurn(snap.nodes, width);
+    if (seen !== undefined) known = {turn: seen, width, height};
+    const turn = seen ?? known?.turn ?? 0;
+    if (turn === 270) throw new Error(IOS_TURNED);
+    if (!turn) return {snap, ...size};
+    return {snap: buildSnapshot(snap.windows, snap.nodes.map(n => ({...n, b: turnBounds(n.b, turn, width, height)}))), width: height, height: width};
+  };
+  return new Proxy(ui, {
+    get(target, prop, receiver) {
+      if (prop === 'snapshot') return async () => (await turned()).snap;
+      if (prop === 'size') return async () => {
+        const t = await turned();
+        return {width: t.width, height: t.height};
+      };
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
+};
 
 /**
  * Closes the widget gallery, which home leaves up on some screens: pulled down by its grabber, the short button with
@@ -737,27 +810,44 @@ const iosAppGallery = async (ui: DeviceUi, app: string, spot: {x: number; y: num
   return iosSnap(ui);
 };
 
-/** Walks the pages of an app's gallery until `stop` holds; every page seen, in order. */
-const iosGalleryWalk = async (ui: DeviceUi, app: string, stop: (p: IosGalleryPage) => boolean): Promise<{snap: Snapshot; page?: IosGalleryPage; seen: IosGalleryPage[]}> => {
+type GalleryWalk = {pages: IosGalleryPage[]; sizes: string[]};
+
+const pageSig = (p: IosGalleryPage) => `${p.label}|${p.box.join(',')}`;
+
+/** Swipes the gallery one page on (`left`) or back (`right`), within its own width (an iPad's is a popover). */
+const iosGallerySwipe = async (ui: DeviceUi, snap: Snapshot, page: IosGalleryPage, dir: 'left' | 'right') => {
+  const span = page.add !== undefined ? snap.nodes[page.add]!.b : page.box;
+  const y = Math.round((page.box[1] + page.box[3]) / 2);
+  const right = Math.round(span[2] - (span[2] - span[0]) * 0.1);
+  const left = Math.round(span[0] + (span[2] - span[0]) * 0.1);
+  await ui.swipe(dir === 'left' ? `${right},${y},${left},${y}` : `${left},${y},${right},${y}`);
+};
+
+/** Every page of an app's gallery, from the first, and their sizes; the gallery is left on its last page. */
+const iosGalleryWalk = async (ui: DeviceUi, app: string): Promise<GalleryWalk> => {
   let snap = await iosSnap(ui);
-  const seen: IosGalleryPage[] = [];
+  const pages: IosGalleryPage[] = [];
   for (let k = 0; k < 40; k++) {
     const page = iosGalleryPage(snap, app);
-    if (!page) break;
-    seen.push(page);
-    if (stop(page)) return {snap, page, seen};
-    const pb = snap.nodes[page.preview]!.b;
-    const sig = `${snap.nodes[page.preview]!.t}|${snap.nodes[page.preview]!.d}|${pb.join(',')}|${snap.lines.join('\n')}`;
-    const {width} = await ui.size();
-    const y = Math.round((pb[1] + pb[3]) / 2);
-    await ui.swipe(`${Math.round(width * 0.85)},${y},${Math.round(width * 0.15)},${y}`);
+    if (!page || (pages.length && pageSig(pages[pages.length - 1]!) === pageSig(page))) break;
+    pages.push(page);
+    await iosGallerySwipe(ui, snap, page, 'left');
     snap = await iosSnap(ui);
-    const next = iosGalleryPage(snap, app);
-    if (!next) break;
-    const nb = snap.nodes[next.preview]!.b;
-    if (`${snap.nodes[next.preview]!.t}|${snap.nodes[next.preview]!.d}|${nb.join(',')}|${snap.lines.join('\n')}` === sig) break;
   }
-  return {snap, seen};
+  return {pages, sizes: iosSizes(pages.map(p => p.box))};
+};
+
+/** Goes back from the gallery's last page to page `k` (0-based); the page, checked to be the one walked past. */
+const iosGalleryBack = async (ui: DeviceUi, app: string, walk: GalleryWalk, k: number): Promise<{snap: Snapshot; page?: IosGalleryPage}> => {
+  let snap = await iosSnap(ui);
+  for (let i = walk.pages.length - 1; i > k; i--) {
+    const page = iosGalleryPage(snap, app);
+    if (!page) break;
+    await iosGallerySwipe(ui, snap, page, 'right');
+    snap = await iosSnap(ui);
+  }
+  const page = iosGalleryPage(snap, app);
+  return {snap, ...(page && pageSig(page) === pageSig(walk.pages[k]!) ? {page} : {})};
 };
 
 /** A spot to long-press on the home page in the tree: below the status bar, above the dock. */
@@ -789,15 +879,21 @@ const iosAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const spot = await iosSpot(ui, snap);
   if (!spot) throw new Error('no empty spot on the last home page to long-press\nhint: move an icon off it, or add the widget by hand');
   await iosAppGallery(ui, app, spot);
-  const walk = await iosGalleryWalk(ui, app, p => same(p.name, name) && (!w.size || p.size === w.size));
-  if (!walk.page || walk.page.add === undefined) {
+  const walk = await iosGalleryWalk(ui, app);
+  const k = walk.pages.findIndex((p, i) => same(p.name, name) && (!w.size || walk.sizes[i] === w.size));
+  const offered = [...new Set(walk.pages.map((p, i) => `${p.name} ${walk.sizes[i]}`))];
+  if (k < 0) {
     await iosHome(ui);
-    const kinds = walk.seen.filter(p => same(p.name, name)).map(p => p.size);
+    const kinds = walk.pages.flatMap((p, i) => (same(p.name, name) ? [walk.sizes[i]!] : []));
     if (kinds.length && w.size) throw new Error(`no ${w.size} size of the "${name}" widget (it comes in ${kinds.join(', ')})`);
-    const offered = [...new Set(walk.seen.map(p => `${p.name} ${p.size}`))];
     throw new Error(`no widget "${name}" in the gallery of "${app}"${offered.length ? ` (it shows: ${offered.join(', ')})` : ''}`);
   }
-  await ui.press(point(walk.snap, walk.page.add));
+  const back = await iosGalleryBack(ui, app, walk, k);
+  if (!back.page || back.page.add === undefined) {
+    await iosHome(ui);
+    throw new Error(`the gallery of "${app}" did not come back to the "${name}" widget's page`);
+  }
+  await ui.press(point(back.snap, back.page.add));
   await until(ui, 4000, s => (s.nodes.some(n => n.id === HOME_ICONS) && !s.nodes.some(n => n.id === GALLERY) ? true : undefined));
   let after = 0;
   await iosEachPage(ui, s => {
@@ -805,7 +901,7 @@ const iosAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   });
   if (after <= before) throw new Error(`no new "${app}" widget on the home screen after adding "${name}"`);
   await iosHome(ui);
-  return {widget: name, size: walk.page.size, label: app, on: `home page ${page}`};
+  return {widget: name, size: walk.sizes[k], label: app, on: `home page ${page}`};
 };
 
 /** The plain widgets with the label on every home page: how many, and the first page that has one. */
@@ -843,6 +939,11 @@ const iosRemove = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     await iosHome(ui);
     throw new Error(`a long press on the "${label}" widget showed no Remove Widget item`);
   }
+  // A stack whose own label was missed in the tree shows itself in its menu (Edit Stack): never removed.
+  if (idOf(item.snap, STACK_ITEM) !== undefined) {
+    await iosHome(ui);
+    throw new Error(`the first "${label}" widget is a stack of widgets: widget remove leaves stacks alone`);
+  }
   await ui.press(point(item.snap, item.hit));
   // "Remove "<widget>"?" — the destructive button comes last.
   const alert = await until(ui, 3000, s => {
@@ -872,9 +973,9 @@ const iosList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const spot = await iosSpot(ui, snap);
   if (!spot) throw new Error('no empty spot on the first home page to long-press');
   await iosAppGallery(ui, w.app, spot);
-  const walk = await iosGalleryWalk(ui, w.app, () => false);
+  const walk = await iosGalleryWalk(ui, w.app);
   await iosHome(ui);
-  return {app: w.app, widgets: [...new Set(walk.seen.map(p => `${p.name} ${p.size}`))]};
+  return {app: w.app, widgets: [...new Set(walk.pages.map((p, i) => `${p.name} ${walk.sizes[i]}`))]};
 };
 
 // ———————————————————————————————————————— entry ————————————————————————————————————————
@@ -890,6 +991,6 @@ export const widget = (ui: DeviceUi, platform: WidgetPlatform, w: WidgetOp): Pro
     const r =
       platform === 'android'
         ? w.op === 'add' ? await androidAdd(ui, w) : w.op === 'remove' ? await androidRemove(ui, w) : await androidList(ui, w)
-        : w.op === 'add' ? await iosAdd(ui, w) : w.op === 'remove' ? await iosRemove(ui, w) : await iosList(ui, w);
+        : await (async (u: DeviceUi) => (w.op === 'add' ? iosAdd(u, w) : w.op === 'remove' ? iosRemove(u, w) : iosList(u, w)))(upright(ui));
     return {serial: ui.serial, ...r, ms: Date.now() - t0};
   });

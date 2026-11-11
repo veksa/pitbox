@@ -3,7 +3,7 @@ import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 import {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, type Bounds, type UiNode, type UiWindow} from './ui/snapshot.ts';
-import {freeSpot, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizeOf, parseWidget, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
+import {freeSpot, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
 
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
@@ -275,15 +275,43 @@ describe('the iOS widget gallery', () => {
   ];
 
   it('reads the widget\'s name after the app\'s and finds the Add button below it', () => {
-    expect(iosGalleryPage(snap(page([119, 435, 283, 600]), SB), 'myapp')).toEqual({preview: 2, add: 4, name: 'Up next', size: 'small'});
+    expect(iosGalleryPage(snap(page([119, 435, 283, 600]), SB), 'myapp')).toEqual({preview: 2, add: 4, name: 'Up next', label: 'MyApp, Up next', box: [119, 435, 283, 600]});
     expect(iosGalleryPage(snap(page([119, 435, 283, 600], 'Other app, Up next'), SB), 'MyApp')).toBeUndefined();
   });
 
-  it('tells the size from the preview\'s shape', () => {
-    const ref = 354;
-    expect(iosSizeOf([119, 435, 283, 600], ref)).toBe('small');
-    expect(iosSizeOf([45, 444, 357, 591], ref)).toBe('medium');
-    expect(iosSizeOf([45, 355, 357, 680], ref)).toBe('large');
-    expect(iosSizeOf([89, 336, 314, 699], ref)).toBe('extra large portrait');
+  it('tells the sizes from the previews\' shapes, all drawn to one scale', () => {
+    // A phone's gallery and a tablet's, which draws the same sizes smaller.
+    expect(iosSizes([[119, 435, 283, 600], [45, 444, 357, 591], [45, 355, 357, 680], [89, 336, 314, 699]])).toEqual(['small', 'medium', 'large', 'extra large portrait']);
+    expect(iosSizes([[411, 544, 531, 664], [300, 560, 640, 680], [354, 487, 588, 721], [230, 487, 710, 721]])).toEqual(['small', 'medium', 'large', 'extra large']);
+    expect(iosSizes([[354, 487, 588, 721], [411, 544, 531, 664]])).toEqual(['large', 'small']);
+  });
+});
+
+describe('an iPad on its side', () => {
+  const icon = (b: Bounds, label: Bounds): UiNode[] => [
+    {p: 0, w: 0, c: 'Icon', b, t: 'MyApp', id: 'MyApp', f: 'c'},
+    {p: -2, w: 0, c: 'Other', b: label, id: 'label-view'},
+  ];
+  const page = (...icons: UiNode[][]): UiNode[] => {
+    const nodes: UiNode[] = [{p: -1, w: 0, c: 'Other', b: [0, 0, 756, 1158], id: 'Home screen icons'}];
+    for (const [i, l] of icons) {
+      nodes.push(i!);
+      nodes.push({...l!, p: nodes.length - 1});
+    }
+    return nodes;
+  };
+
+  it('tells how the home screen\'s frames are turned from where its icons\' names lie', () => {
+    expect(springboardTurn(page(icon([106, 107, 182, 190], [100, 168, 188, 188])), 756)).toBe(0);
+    expect(springboardTurn(page(icon([589, 190, 684, 268], [591, 192, 611, 266])), 756)).toBe(90);
+    expect(springboardTurn(page(icon([211, 333, 306, 405], [284, 341, 304, 398])), 756)).toBe(270);
+    expect(springboardTurn([{p: -1, w: 0, c: 'Other', b: [0, 0, 756, 1158], id: 'PopoverDismissRegion'}], 756)).toBeUndefined();
+  });
+
+  it('turns a frame into the space a finger touches', () => {
+    // A stack drawn at the top left of the turned screen, reported along the upright frame's right edge.
+    expect(turnBounds([430, 167, 711, 431], 90, 756, 1158)).toEqual([167, 45, 431, 326]);
+    expect(turnBounds([430, 167, 711, 431], 270, 756, 1158)).toEqual([727, 430, 991, 711]);
+    expect(turnBounds([1, 2, 3, 4], 0, 756, 1158)).toEqual([1, 2, 3, 4]);
   });
 });
