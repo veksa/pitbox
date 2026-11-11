@@ -486,7 +486,7 @@ export class Engine {
   #webRunner(name: string): WebRunner {
     let r = this.#webRunners.get(name);
     if (!r) {
-      r = new WebRunner(name, this.config.web![name]!, this.#loaded.root);
+      r = new WebRunner(name, this.config.web![name]!, this.#loaded.root, this.#loaded.stateDir);
       this.#webRunners.set(name, r);
     }
     return r;
@@ -1678,10 +1678,11 @@ export class Engine {
       const web = await this.#webTarget(str(p, 'device'));
       if (web) {
         const t0 = Date.now();
-        const r = await this.#webRunner(web).goto(str(p, 'target'), bool(p, 'relaunch'));
+        const r = await this.#webRunner(web).goto(str(p, 'target'), bool(p, 'fresh') ? 'fresh' : bool(p, 'relaunch') ? 'relaunch' : undefined);
         this.#uis.get(`web:${web}`)?.screenChanged();
         return {serial: `web:${web}`, target: r.url, totalMs: Date.now() - t0};
       }
+      if (bool(p, 'fresh')) throw new Error('fresh is for web apps (a clean browser profile)\nhint: on a phone, app action=clear, then open');
       const t = await this.#target(str(p, 'device'));
       // A daemon that just started brings the proxy and the forwards up on its first tick, seconds later; an app
       // launched before that asks a port nobody serves and a dev launcher shows "Connection reset".
@@ -1761,6 +1762,14 @@ export class Engine {
       return {serial: t.id};
     },
 
+    downloads: async (p: Params) => {
+      const web = await this.#webTarget(str(p, 'device'));
+      if (!web) throw new Error('downloads are read from web apps (device web:<name>)\nhint: on a phone the app saves files where it chooses: app logs, or a project tool');
+      const wait = num(p, 'timeout');
+      const r = await this.#webRunner(web).downloads({grep: str(p, 'grep'), limit: num(p, 'lines'), waitMs: wait === undefined ? undefined : wait * 1000});
+      return {serial: `web:${web}`, root: this.#loaded.root, ...r};
+    },
+
     clearApp: async (p: Params) => {
       if (await this.#macTarget(str(p, 'device'))) throw new Error("a Mac app keeps its data where it chooses\nhint: remove it with a project tool (tools: in the config), or give the app a launch argument that starts it clean");
       const web = await this.#webTarget(str(p, 'device'));
@@ -1803,6 +1812,28 @@ export class Engine {
     },
 
     settings: async (p: Params) => {
+      const web = await this.#webTarget(str(p, 'device'));
+      if (web) {
+        const unsupported = ['fontScale', 'animations', 'grant', 'revoke'].filter(k => p[k] !== undefined);
+        if (unsupported.length) throw new Error(`${unsupported.join(', ')}: not for a web app\nhint: a web app takes emulate=<preset>|reset, size=WxH|reset, density=<scale>, touch, mobile, userAgent, dark, locale`);
+        const size = str(p, 'size');
+        const emulate = str(p, 'emulate');
+        const density = str(p, 'density');
+        const applied = await this.#webRunner(web).emulate({
+          reset: emulate === 'reset' || size === 'reset',
+          device: emulate && emulate !== 'reset' ? emulate : undefined,
+          viewport: size && size !== 'reset' ? size : undefined,
+          scale: density && density !== 'reset' ? Number(density) : undefined,
+          touch: bool(p, 'touch'),
+          mobile: bool(p, 'mobile'),
+          userAgent: str(p, 'userAgent'),
+          dark: bool(p, 'dark'),
+          locale: str(p, 'locale'),
+        });
+        this.#uis.get(`web:${web}`)?.screenChanged();
+        return {serial: `web:${web}`, applied};
+      }
+      if (str(p, 'emulate') !== undefined) throw new Error('emulate is for web apps (device web:<name>): a phone is what it is');
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
         const bundleId = str(p, 'pkg') ?? this.config.app?.apple;

@@ -107,16 +107,17 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
     a => ({list: 'devices', boot: 'boot', shutdown: 'shutdown', lease: 'lease', release: 'release', clean: 'cleanDevices', info: 'info', reverse: 'reverse', pair: 'pair', posture: 'posture', rotate: 'rotate', window: 'window', wear: 'wear', xr: 'xr', car: 'car', widget: 'widget'})[a.action as string]!,
     a => (a.action === 'lease' ? {...a, purpose: a.value} : a),
   );
+  // Typical answer for downloads: a line per file (name, size, type, path), the last 10.
   tool(
     'app',
-    'The app: open (or a deep link target; relaunch), install <apk|.app> (replace: uninstall first), stop, clear, uninstall, logs.',
-    {action: z.enum(['open', 'install', 'stop', 'clear', 'uninstall', 'logs']), target: opt.str(), relaunch: opt.bool(), apk: opt.str(), replace: opt.bool(), lines: opt.num(), grep: opt.str(), device},
-    a => ({open: 'open', install: 'install', stop: 'stopApp', clear: 'clearApp', uninstall: 'uninstall', logs: 'appLogs'})[a.action as string]!,
+    'The app: open (or a deep link target; relaunch; web: relaunch keeps the profile, fresh starts clean), install <apk|.app> (replace: uninstall first), stop, clear, uninstall, logs, downloads (web: saved files; grep name; timeout s waits for a new one).',
+    {action: z.enum(['open', 'install', 'stop', 'clear', 'uninstall', 'logs', 'downloads']), target: opt.str(), relaunch: opt.bool(), fresh: opt.bool(), apk: opt.str(), replace: opt.bool(), lines: opt.num(), grep: opt.str(), timeout: opt.num(), device},
+    a => ({open: 'open', install: 'install', stop: 'stopApp', clear: 'clearApp', uninstall: 'uninstall', logs: 'appLogs', downloads: 'downloads'})[a.action as string]!,
   );
   tool(
     'settings',
-    'Device settings: fontScale, dark, animations, size/density ("reset"), locale (app), grant/revoke permission, network (full|lte|umts|edge|gsm|offline|online).',
-    {fontScale: opt.num(), dark: opt.bool(), animations: opt.bool(), size: opt.str(), density: opt.str(), locale: opt.str(), grant: opt.str(), revoke: opt.str(), network: opt.str(), device},
+    'Device settings: fontScale, dark, animations, size/density ("reset"), locale (app), grant/revoke permission, network (full|lte|umts|edge|gsm|offline|online). Web: emulate=<Playwright device, "iPhone 15">|reset, size=WxH, density=<scale>, touch, mobile, userAgent, dark, locale (login kept).',
+    {fontScale: opt.num(), dark: opt.bool(), animations: opt.bool(), size: opt.str(), density: opt.str(), locale: opt.str(), grant: opt.str(), revoke: opt.str(), network: opt.str(), emulate: opt.str(), touch: opt.bool(), mobile: opt.bool(), userAgent: opt.str(), device},
     a => (a.network ? 'network' : 'settings'),
     a => (a.network ? {device: a.device, profile: a.network} : a),
   );

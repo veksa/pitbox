@@ -140,6 +140,7 @@ the page. Uncaught page errors and console errors come back with the action that
 web: {
   admin: {url: 'http://localhost:3200', viewport: '1440x900'},
   shop: {url: 'https://shop.example.test', browser: 'firefox'},
+  mobile: {url: 'http://localhost:5173', device: 'iPhone 15'},   // a phone-sized page with touch
 },
 routes: {order: '/orders/{id}'},   // a route that starts with / opens in the web app
 ```
@@ -152,10 +153,19 @@ routes: {order: '/orders/{id}'},   // a route that starts with / opens in the we
 | `channel` | a browser the machine has instead of Playwright's own: `chrome`, `msedge` |
 | `headed` | show the window (default headless) |
 | `scale` | device scale factor, default 1 |
+| `device` | a Playwright device preset — `iPhone 15`, `Pixel 7`, `iPad Mini` (case and dashes aside): its viewport, scale, user agent, mobile and touch; the fields here override it |
+| `mobile` | a mobile browser: the page's meta viewport is honoured (not in Firefox) |
+| `touch` | touch input: `press`, `longpress`, `doubletap`, `swipe` and `touch` reach the page as touch events (Chromium; other browsers keep the mouse) |
+| `userAgent` | the user agent string |
 
 Playwright is loaded only when a web app is driven, from the project: add `playwright-core` (or `playwright`) to
-its dev dependencies — pitbox does not bring one — and its browsers with `npx playwright-core install chromium`. `open!` (`relaunch`) starts from a clean
-profile — no cookies or storage — and `app action=clear` clears them in place. With no device named, a call goes to
+its dev dependencies — pitbox does not bring one — and its browsers with `npx playwright-core install chromium`. `open!` (`relaunch`) closes the tab and opens the
+app in a new one, as a phone app is closed and opened again: cookies, local storage and IndexedDB stay (a login
+survives), the page's memory and session storage go. `app action=open fresh=true` (`open --fresh`) starts from a
+clean profile, and `app action=clear` clears cookies and storage in place. `settings` changes the emulation at run
+time — `emulate="Pixel 7"`, `size=390x844`, `density=3`, `touch`, `mobile`, `userAgent`, `dark`, `locale`,
+`emulate=reset` for the config's — in a new browser context that takes over the cookies and storage and reloads the
+page that was open. Files the page downloads are saved to `.pitbox/downloads/<app>/` (`app action=downloads`). With no device named, a call goes to
 the only web app when no phone, emulator or simulator is online.
 
 ## mac

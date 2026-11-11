@@ -81,7 +81,7 @@ locales.
 | Step | Does |
 |---|---|
 | `open` | launches the app — through its connect link when there is one (`app.connect` in the config), so it always talks to this dev server |
-| `open!` | the same after force-stopping the app (a cold start). The verdict gets a note: `cold start: activity 640 ms · JS running at 2.9s · wait id=home at 4.1s` — the activity, the moment the dev bundle started running, and the first `wait`/`expect` after it |
+| `open!` | the same after force-stopping the app (a cold start). The verdict gets a note: `cold start: activity 640 ms · JS running at 2.9s · wait id=home at 4.1s` — the activity, the moment the dev bundle started running, and the first `wait`/`expect` after it. On a web app: a new tab in the same profile (the login stays) |
 | `open <url\|package>` · `open! <url\|package>` | opens a deep link or another package. A link into the app goes on once what it did shows (the app acts on it after the system returns): no `sleep` after it |
 | `goto <route> key=value…` | opens a route from the config (`routes`), parameters URL-encoded: `goto item id=42`; goes on once the route shows, as a link does |
 | `as <user>` | runs the config's `signIn` flow with `${user}` |

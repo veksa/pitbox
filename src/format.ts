@@ -1,6 +1,7 @@
 // Compact text for results — the same for a person in a terminal and an agent over MCP. Short lines, no JSON
 // unless the data is JSON, nothing repeated that the caller already knows.
 
+import path from 'node:path';
 import type {AndroidDevice} from './drivers/android/driver.ts';
 import type {DoctorReport} from './doctor/run.ts';
 import type {ActorState} from './stand/actors.ts';
@@ -15,6 +16,7 @@ import type {PushRecord, PushResult} from './push/push.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
 import {clipLines, seconds} from './util/text.ts';
+import type {WebDownload} from './drivers/web/runner.ts';
 
 const mark: Record<string, string> = {up: '✓', external: '✓', starting: '…', stopped: '·', down: '✗', failed: '✗'};
 
@@ -520,6 +522,19 @@ export const formatResult = (method: string, r: unknown): string => {
       return `released ${x.released}${x.gone !== undefined ? (x.gone ? `, shut down in ${seconds(x.ms as number)}` : ', still listed after shutdown') : ''}${x.note ? `\nnote: ${x.note}` : ''}`;
     case 'apps':
       return (x.packages as string[]).join('\n') || 'no third-party packages';
+    case 'downloads': {
+      const list = x.downloads as WebDownload[];
+      const rel = (f: string) => (x.root ? path.relative(x.root as string, f) : f);
+      if (!list.length) return `no downloads on ${x.serial} yet (they are saved to ${rel(x.dir as string)})`;
+      const size = (b: number) => (b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
+      const line = (d: WebDownload) =>
+        d.state === 'failed'
+          ? `✗ ${d.name}: ${d.error ?? 'failed'} (${d.url})`
+          : d.state === 'saving'
+            ? `… ${d.name} still downloading (${d.url})`
+            : `✓ ${d.name} · ${size(d.size ?? 0)} · ${d.type ?? 'unknown type'} · ${rel(d.file!)}`;
+      return [...(x.waited !== undefined ? [`new download after ${seconds(x.waited as number)}:`] : []), ...list.map(line)].join('\n');
+    }
     default:
       return fmtObject(r);
   }

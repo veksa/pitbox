@@ -6,6 +6,7 @@
 // web app is driven, from the project first and pitbox's own install second. Browsers are the ones Playwright
 // installs (`npx playwright-core install chromium`) or a channel the machine has (`chrome`, `msedge`).
 
+import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -26,7 +27,34 @@ export type WebAppConfig = {
   headed?: boolean;
   /** Device scale factor. Default 1. */
   scale?: number;
+  /** A Playwright device preset (`iPhone 15`, `Pixel 7`): its viewport, scale, user agent, touch and mobile flags. */
+  device?: string;
+  /** A mobile browser: the page's meta viewport is honoured, as on a phone. */
+  mobile?: boolean;
+  /** Touch input: taps, long presses, swipes and a held finger reach the page as touch events. */
+  touch?: boolean;
+  userAgent?: string;
 };
+
+/** What a web app emulates. Layers apply in order (the config's, then the runtime's); a preset sets every field it has. */
+export type WebEmulation = {device?: string; viewport?: string; scale?: number; mobile?: boolean; touch?: boolean; userAgent?: string; dark?: boolean; locale?: string};
+
+export type WebContextOptions = {
+  viewport: {width: number; height: number};
+  /** The whole screen of a preset (`window.screen`), past the viewport's browser bars. */
+  screen?: {width: number; height: number};
+  deviceScaleFactor: number;
+  isMobile: boolean;
+  hasTouch: boolean;
+  userAgent?: string;
+  colorScheme?: 'dark' | 'light';
+  locale?: string;
+  /** The preset the options came from, for the answer. */
+  preset?: string;
+};
+
+/** A downloaded file, saved into the project's state folder. */
+export type WebDownload = {n: number; name: string; url: string; at: number; state: 'saving' | 'done' | 'failed'; file?: string; size?: number; type?: string; ms?: number; error?: string};
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Pw = any;
@@ -77,6 +105,80 @@ export const webKey = (code: number, meta = 0): string => {
   const mods = [meta & 0x3000 ? 'Control' : '', meta & 0x41 ? 'Shift' : '', meta & 0x12 ? 'Alt' : '', meta & 0x30000 ? 'Meta' : ''].filter(Boolean);
   return [...mods, key].join('+');
 };
+
+/** A preset by its name, case, dashes and spaces aside (`iphone 15`, `Pixel-7`); an unknown one names the nearest. */
+export const presetName = (name: string, devices: Record<string, unknown>): string => {
+  if (devices[name]) return name;
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+  const want = norm(name);
+  const hit = Object.keys(devices).find(k => norm(k) === want);
+  if (hit) return hit;
+  const first = want.split(' ')[0] ?? want;
+  const near = Object.keys(devices).filter(k => !/landscape/i.test(k) && norm(k).includes(first)).slice(0, 8);
+  throw new WebError(`no device preset "${name}"`, near.length ? `Playwright has: ${near.join(', ')}` : 'a name from Playwright\'s devices: "iPhone 15", "Pixel 7", "iPad Mini", "Desktop Chrome"');
+};
+
+const parseSize = (v: string): {width: number; height: number} => {
+  const m = /^(\d+)x(\d+)$/.exec(v.trim());
+  if (!m) throw new WebError(`not a size: "${v}"`, 'WxH in CSS pixels, like 390x844');
+  return {width: Number(m[1]), height: Number(m[2])};
+};
+
+/** The browser context's options from layers of emulation; `devices` is Playwright's preset table. */
+export const contextOptions = (layers: WebEmulation[], devices: Record<string, Pw>): WebContextOptions => {
+  const o: WebContextOptions = {viewport: {width: 1440, height: 900}, deviceScaleFactor: 1, isMobile: false, hasTouch: false};
+  for (const l of layers) {
+    if (l.device) {
+      const name = presetName(l.device, devices);
+      const d = devices[name];
+      Object.assign(o, {viewport: {...d.viewport}, screen: d.screen ? {...d.screen} : undefined, deviceScaleFactor: d.deviceScaleFactor ?? 1, isMobile: !!d.isMobile, hasTouch: !!d.hasTouch, userAgent: d.userAgent, preset: name});
+    }
+    if (l.viewport) {
+      o.viewport = parseSize(l.viewport);
+      o.screen = undefined;
+    }
+    if (l.scale !== undefined) o.deviceScaleFactor = l.scale;
+    if (l.mobile !== undefined) o.isMobile = l.mobile;
+    if (l.touch !== undefined) o.hasTouch = l.touch;
+    if (l.userAgent !== undefined) o.userAgent = l.userAgent || undefined;
+    if (l.dark !== undefined) o.colorScheme = l.dark ? 'dark' : 'light';
+    if (l.locale !== undefined) o.locale = l.locale || undefined;
+  }
+  return o;
+};
+
+/** One line for an answer: `390x844 @3x mobile touch · iPhone 15 · dark`. */
+export const describeEmulation = (o: WebContextOptions): string =>
+  [
+    `${o.viewport.width}x${o.viewport.height}${o.deviceScaleFactor !== 1 ? ` @${o.deviceScaleFactor}x` : ''}${o.isMobile ? ' mobile' : ''}${o.hasTouch ? ' touch' : ' mouse'}`,
+    o.preset ?? (o.userAgent ? `user agent "${o.userAgent.slice(0, 40)}${o.userAgent.length > 40 ? '…' : ''}"` : ''),
+    o.colorScheme ?? '',
+    o.locale ?? '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+/** A file's type from its first bytes, else from its extension. */
+export const fileType = (head: Buffer, name: string): string | undefined => {
+  const hex = head.subarray(0, 12).toString('hex');
+  const ascii = head.subarray(0, 12).toString('latin1');
+  if (hex.startsWith('89504e47')) return 'image/png';
+  if (hex.startsWith('ffd8ff')) return 'image/jpeg';
+  if (ascii.startsWith('GIF8')) return 'image/gif';
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp';
+  if (ascii.startsWith('%PDF')) return 'application/pdf';
+  if (ascii.slice(4, 8) === 'ftyp') return /^ftyp(heic|heix|mif1)/.test(ascii.slice(4, 12)) ? 'image/heic' : ascii.slice(8, 11) === 'M4A' ? 'audio/mp4' : ascii.slice(8, 10) === 'qt' ? 'video/quicktime' : 'video/mp4';
+  if (hex.startsWith('1a45dfa3')) return 'video/webm';
+  if (ascii.startsWith('OggS')) return 'audio/ogg';
+  if (ascii.startsWith('ID3') || hex.startsWith('fffb')) return 'audio/mpeg';
+  if (hex.startsWith('504b0304')) return 'application/zip';
+  const ext = path.extname(name).slice(1).toLowerCase();
+  const byExt: Record<string, string> = {txt: 'text/plain', csv: 'text/csv', json: 'application/json', html: 'text/html', svg: 'image/svg+xml', ics: 'text/calendar', vcf: 'text/vcard'};
+  return byExt[ext];
+};
+
+/** A download's URL for an answer: a data URL by its type alone, others cut short. */
+const shortUrl = (u: string) => (u.startsWith('data:') ? `${u.slice(0, Math.min(u.indexOf(',') + 1 || 30, 40))}…` : u.length > 120 ? `${u.slice(0, 117)}…` : u);
 
 /**
  * Runs in the page: the visible elements as UiNodes. An element becomes a node when it is interactive, carries text
@@ -250,24 +352,46 @@ export class WebRunner {
   readonly name: string;
   readonly cfg: WebAppConfig;
   readonly #root: string;
+  readonly #stateDir: string;
   #browser?: Pw;
   #context?: Pw;
   #page?: Pw;
   #lab?: Pw;
+  #cdp?: Pw;
   #starting?: Promise<Pw>;
+  /** Emulation set at run time (`settings`), over the config's. */
+  #over: WebEmulation = {};
+  /** The options the current context was made with. */
+  #opts?: WebContextOptions;
   /** Uncaught page errors and console errors, for the actions' crash reports. */
   readonly events: AppEvent[] = [];
   #touch?: {x: number; y: number};
+  readonly #downloads: WebDownload[] = [];
+  /** Downloads an answer has shown: `downloads wait` waits for one that is not. */
+  #downloadsSeen = 0;
+  #downloadSeq = 0;
 
-  constructor(name: string, cfg: WebAppConfig, root: string) {
+  constructor(name: string, cfg: WebAppConfig, root: string, stateDir = path.join(root, '.pitbox')) {
     this.name = name;
     this.cfg = cfg;
     this.#root = root;
+    this.#stateDir = stateDir;
   }
 
   get viewport(): {width: number; height: number} {
+    if (this.#opts) return this.#opts.viewport;
     const m = /^(\d+)x(\d+)$/.exec(this.cfg.viewport ?? '');
     return m ? {width: Number(m[1]), height: Number(m[2])} : {width: 1440, height: 900};
+  }
+
+  get #scale(): number {
+    return this.#opts?.deviceScaleFactor ?? this.cfg.scale ?? 1;
+  }
+
+  /** The config's emulation, as the first layer. */
+  get #base(): WebEmulation {
+    const c = this.cfg;
+    return {device: c.device, viewport: c.viewport, scale: c.scale, mobile: c.mobile, touch: c.touch, userAgent: c.userAgent};
   }
 
   /**
@@ -310,6 +434,7 @@ export class WebRunner {
     const pw = await loadPlaywright(this.#root);
     if (!this.#browser?.isConnected?.()) {
       const type = pw[this.cfg.browser ?? 'chromium'];
+      this.#context = undefined;
       try {
         this.#browser = await type.launch({headless: !this.cfg.headed, ...(this.cfg.channel ? {channel: this.cfg.channel} : {})});
       } catch (e) {
@@ -317,19 +442,111 @@ export class WebRunner {
         throw new WebError(`cannot start ${this.cfg.browser ?? 'chromium'}: ${msg}`, /Executable doesn't exist|install/i.test(msg) ? `npx playwright-core install ${this.cfg.browser ?? 'chromium'}, or set web.<app>.channel: 'chrome'` : undefined);
       }
     }
-    this.#context = await this.#browser.newContext({viewport: this.viewport, deviceScaleFactor: this.cfg.scale ?? 1});
+    if (this.#context) return this.#newPage();
+    return this.#openContext(contextOptions([this.#base, this.#over], pw.devices ?? {}));
+  }
+
+  /** A context with these options (and the storage of an earlier one), and its page. */
+  async #openContext(o: WebContextOptions, storageState?: unknown): Promise<Pw> {
+    const {preset: _preset, ...opts} = o;
+    if (!opts.screen) delete opts.screen;
+    // Firefox has no mobile mode: its viewport and touch still apply.
+    if (this.cfg.browser === 'firefox') delete (opts as Partial<WebContextOptions>).isMobile;
+    this.#context = await this.#browser.newContext({...opts, acceptDownloads: true, ...(storageState ? {storageState} : {})});
+    this.#opts = o;
+    return this.#newPage();
+  }
+
+  async #newPage(): Promise<Pw> {
     const page = await this.#context.newPage();
     page.on('pageerror', (err: Error) => this.#event(`${err.name}: ${err.message}`, err.stack));
     page.on('console', (m: Pw) => {
       if (m.type() === 'error') this.#event(m.text());
     });
+    page.on('download', (d: Pw) => this.#download(d));
     this.#page = page;
+    this.#cdp = undefined;
     return page;
   }
 
   #event(message: string, stack?: string) {
     this.events.push({kind: 'js-error', at: Date.now(), summary: message.slice(0, 300), lines: stack ? stack.split('\n').slice(1, 6).map(l => l.trim()) : []});
     if (this.events.length > 200) this.events.shift();
+  }
+
+  /** A download the page started: saved under the state folder by its suggested name (a repeated name gets -2, -3). */
+  #download(d: Pw) {
+    const t0 = Date.now();
+    const name = String(d.suggestedFilename() || 'download').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_');
+    const rec: WebDownload = {n: ++this.#downloadSeq, name, url: shortUrl(String(d.url())), at: t0, state: 'saving'};
+    const dir = path.join(this.#stateDir, 'downloads', this.name);
+    const taken = new Set(this.#downloads.map(x => x.file));
+    const ext = path.extname(name);
+    let file = path.join(dir, name);
+    for (let i = 2; taken.has(file); i++) file = path.join(dir, `${name.slice(0, name.length - ext.length)}-${i}${ext}`);
+    rec.file = file;
+    this.#downloads.push(rec);
+    if (this.#downloads.length > 50) {
+      this.#downloads.shift();
+      this.#downloadsSeen = Math.max(0, this.#downloadsSeen - 1);
+    }
+    void (async () => {
+      try {
+        fs.mkdirSync(dir, {recursive: true});
+        await d.saveAs(file);
+        const failure = await d.failure();
+        if (failure) throw new Error(failure);
+        rec.size = fs.statSync(file).size;
+        const fd = fs.openSync(file, 'r');
+        const head = Buffer.alloc(16);
+        fs.readSync(fd, head, 0, 16, 0);
+        fs.closeSync(fd);
+        rec.type = fileType(head, name);
+        rec.state = 'done';
+      } catch (e) {
+        rec.state = 'failed';
+        rec.error = (e as Error).message.split('\n')[0];
+      }
+      rec.ms = Date.now() - t0;
+    })();
+  }
+
+  /**
+   * The page's downloads, newest last. With `waitMs`, waits for one no answer has shown yet (matching `grep`) to
+   * finish and answers with it alone; without, lists the last `limit` and counts them as shown.
+   */
+  async downloads(opts: {grep?: string; waitMs?: number; limit?: number} = {}): Promise<{downloads: WebDownload[]; dir: string; waited?: number}> {
+    const dir = path.join(this.#stateDir, 'downloads', this.name);
+    const re = opts.grep ? new RegExp(opts.grep, 'i') : undefined;
+    const match = (d: WebDownload) => !re || re.test(d.name);
+    if (opts.waitMs === undefined) {
+      this.#downloadsSeen = this.#downloads.length;
+      return {downloads: this.#downloads.filter(match).slice(-(opts.limit ?? 10)), dir};
+    }
+    const t0 = Date.now();
+    for (;;) {
+      const fresh = this.#downloads.slice(this.#downloadsSeen).find(match);
+      if (fresh && fresh.state !== 'saving') {
+        this.#downloadsSeen = this.#downloads.indexOf(fresh) + 1;
+        return {downloads: [fresh], dir, waited: Date.now() - t0};
+      }
+      if (Date.now() - t0 >= opts.waitMs) {
+        throw new Error(
+          fresh
+            ? `"${fresh.name}" is still downloading after ${Math.round(opts.waitMs / 1000)}s`
+            : `no new download${re ? ` matching /${opts.grep}/` : ''} in ${Math.round(opts.waitMs / 1000)}s${this.#lastNote(re)}`,
+        );
+      }
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+
+  /** What came instead, for a wait that found nothing: new downloads the pattern left out, or the last one shown. */
+  #lastNote(re?: RegExp): string {
+    const unseen = this.#downloads.slice(this.#downloadsSeen).filter(d => re && !re.test(d.name));
+    if (unseen.length) return ` (new, not matching: ${unseen.map(d => `"${d.name}"`).join(', ')})`;
+    const last = this.#downloads[this.#downloads.length - 1];
+    return last ? ` (the last one, "${last.name}", was already shown)` : '';
   }
 
   /** A blank page in its own context for image work: no app CSP, no app state. */
@@ -341,17 +558,71 @@ export class WebRunner {
     return this.#lab;
   }
 
-  /** Opens a URL (a path is joined to the app's URL); `fresh` drops cookies and storage first, as a clean start. */
-  async goto(target?: string, fresh = false): Promise<{url: string}> {
-    if (fresh && this.#context) {
+  /**
+   * Opens a URL (a path is joined to the app's URL). `relaunch` closes the tab and opens a new one in the same
+   * profile, as an app is closed and opened again: cookies, local storage and IndexedDB stay, the page's memory and
+   * session storage go. `fresh` starts from a clean profile.
+   */
+  async goto(target?: string, mode?: 'relaunch' | 'fresh'): Promise<{url: string}> {
+    if (mode === 'fresh' && this.#context) {
       await this.#context.close().catch(() => undefined);
       this.#page = undefined;
       this.#context = undefined;
+    } else if (mode === 'relaunch' && this.#page && this.#context) {
+      await this.#page.close().catch(() => undefined);
+      await this.#newPage();
     }
     const page = await this.page(false);
     const url = !target ? this.cfg.url : /^[a-z][\w+.-]*:/i.test(target) ? target : new URL(target, this.cfg.url).href;
     await page.goto(url, {waitUntil: 'domcontentloaded', timeout: 60_000});
     return {url: page.url()};
+  }
+
+  /**
+   * Changes what the browser emulates (`settings` on a web app): a device preset, the size, the scale, mobile,
+   * touch, the user agent, dark, the locale; `reset` goes back to the config's. A colour scheme alone changes in
+   * place; anything else needs a new context, which takes over the cookies and storage (IndexedDB too) and reloads
+   * the page that was open.
+   */
+  async emulate(change: WebEmulation & {reset?: boolean}): Promise<string[]> {
+    const {reset, ...set} = change;
+    const given = Object.fromEntries(Object.entries(set).filter(([, v]) => v !== undefined)) as WebEmulation;
+    if (!reset && !Object.keys(given).length) throw new WebError('nothing to change', 'settings emulate="iPhone 15" | size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR | emulate=reset');
+    // A new preset replaces the earlier run-time size, scale and flags; dark and the locale stay.
+    const kept = reset ? {} : given.device ? {dark: this.#over.dark, locale: this.#over.locale} : this.#over;
+    const over = {...kept, ...given};
+    const pw = await loadPlaywright(this.#root);
+    const next = contextOptions([this.#base, over], pw.devices ?? {});
+    this.#over = over;
+    const prev = this.#opts;
+    // Touch input goes through Chromium's input protocol; another browser reports touch support but gets the mouse.
+    const mouseOnly = next.hasTouch && (this.cfg.browser ?? 'chromium') !== 'chromium' ? [`${this.cfg.browser} takes no synthesized touch: press, swipe and touch stay the mouse's (browser: chromium for touch)`] : [];
+    if (!this.#context || !this.#browser?.isConnected?.()) {
+      await this.page();
+      return [describeEmulation(this.#opts ?? next), ...mouseOnly];
+    }
+    const same = (a: WebContextOptions, b: WebContextOptions) => JSON.stringify({...a, colorScheme: 0}) === JSON.stringify({...b, colorScheme: 0});
+    if (prev && same(prev, next)) {
+      if (prev.colorScheme !== next.colorScheme) await this.#page?.emulateMedia({colorScheme: next.colorScheme ?? null});
+      this.#opts = next;
+      return [describeEmulation(next), ...mouseOnly];
+    }
+    const url = this.#page && !this.#page.isClosed() ? String(this.#page.url()) : undefined;
+    const state = await this.#context.storageState({indexedDB: true}).catch(() => this.#context.storageState().catch(() => undefined));
+    await this.#context.close().catch(() => undefined);
+    this.#context = undefined;
+    this.#page = undefined;
+    const page = await this.#openContext(next, state);
+    const back = url && /^https?:/.test(url) ? url : this.cfg.url;
+    await page.goto(back, {waitUntil: 'domcontentloaded', timeout: 60_000});
+    return [describeEmulation(next), `new browser context: cookies and storage kept, ${new URL(page.url()).pathname} reloaded (session storage and the page's memory are gone)`, ...mouseOnly];
+  }
+
+  /** The device-protocol session for touch input: Chromium with touch on; undefined otherwise (input stays the mouse). */
+  async #touchInput(page: Pw): Promise<Pw | undefined> {
+    if (!this.#opts?.hasTouch || (this.cfg.browser ?? 'chromium') !== 'chromium') return undefined;
+    this.#cdp ??= await this.#context.newCDPSession(page);
+    return this.#cdp;
   }
 
   /** Clears cookies and storage of the app's origin (the app's data on a phone). */
@@ -377,7 +648,7 @@ export class WebRunner {
       case 'ping':
         return {version: 'web'};
       case 'info':
-        return {...this.viewport, density: 160 * (this.cfg.scale ?? 1), sdk: 0};
+        return {...this.viewport, density: 160 * this.#scale, sdk: 0};
       case 'tree':
         return (await evaluateAcrossNavigation(page, pageTree)) as Record<string, unknown>;
       case 'idle': {
@@ -389,16 +660,55 @@ export class WebRunner {
       case 'tap':
       case 'longpress': {
         const hold = Number(args.hold ?? (cmd === 'longpress' ? 800 : 40));
+        const touch = await this.#touchInput(page);
+        if (touch && cmd === 'tap') {
+          await this.#finger(touch, 'touchStart', n('x'), n('y'));
+          await page.waitForTimeout(hold);
+          await this.#finger(touch, 'touchEnd');
+          return {};
+        }
+        // A held finger as the browser's gesture detector sees it: raw touch events alone never make a long press
+        // (no contextmenu, no long-press gesture); a synthesized one does, with its touch events.
+        if (touch) {
+          await touch.send('Input.synthesizeTapGesture', {x: n('x'), y: n('y'), duration: hold, tapCount: 1, gestureSourceType: 'touch'});
+          return {};
+        }
         await page.mouse.move(n('x'), n('y'));
         await page.mouse.down();
         await page.waitForTimeout(hold);
         await page.mouse.up();
         return {};
       }
-      case 'doubletap':
-        await page.mouse.dblclick(n('x'), n('y'));
+      case 'doubletap': {
+        const touch = await this.#touchInput(page);
+        if (!touch) {
+          await page.mouse.dblclick(n('x'), n('y'));
+          return {};
+        }
+        for (let i = 0; i < 2; i++) {
+          if (i) await page.waitForTimeout(Number(args.gap ?? 90));
+          await this.#finger(touch, 'touchStart', n('x'), n('y'));
+          await page.waitForTimeout(30);
+          await this.#finger(touch, 'touchEnd');
+        }
         return {};
+      }
       case 'swipe': {
+        // With touch, a finger drags across the page (the browser scrolls, or the page's own gesture takes it).
+        const touch = await this.#touchInput(page);
+        if (touch) {
+          const duration = Math.max(50, Number(args.duration ?? 300));
+          const steps = Math.max(4, Math.round(duration / 16));
+          await this.#finger(touch, 'touchStart', n('x1'), n('y1'));
+          if (Number(args.hold ?? 0) > 0) await page.waitForTimeout(Number(args.hold));
+          for (let i = 1; i <= steps; i++) {
+            await this.#finger(touch, 'touchMove', n('x1') + ((n('x2') - n('x1')) * i) / steps, n('y1') + ((n('y2') - n('y1')) * i) / steps);
+            await page.waitForTimeout(duration / steps);
+          }
+          await this.#finger(touch, 'touchEnd');
+          await page.waitForTimeout(150);
+          return {};
+        }
         // A swipe on a page is a scroll by the distance travelled, at its start point.
         await page.mouse.move(n('x1'), n('y1'));
         await page.mouse.wheel(n('x1') - n('x2'), n('y1') - n('y2'));
@@ -444,7 +754,7 @@ export class WebRunner {
         return {set};
       }
       case 'screenshot': {
-        const png = (await page.screenshot({type: 'png', timeout: timeoutMs})) as Buffer;
+        const png = (await page.screenshot({type: 'png', timeout: timeoutMs, scale: 'css'})) as Buffer;
         const lab = await this.#labPage();
         const r = await lab.evaluate(labJpeg, {src: `data:image/png;base64,${png.toString('base64')}`, scale: Number(args.scale ?? 0.5), quality: Number(args.quality ?? 70)});
         return {jpeg: r.data, width: r.width, height: r.height};
@@ -454,10 +764,10 @@ export class WebRunner {
         return {png: png.toString('base64')};
       }
       case 'fingerprint': {
-        const png = (await page.screenshot({type: 'png', timeout: timeoutMs})) as Buffer;
+        // In CSS pixels, as the masks are, whatever the device scale.
+        const png = (await page.screenshot({type: 'png', timeout: timeoutMs, scale: 'css'})) as Buffer;
         const lab = await this.#labPage();
-        const scale = this.cfg.scale ?? 1;
-        const fp = await lab.evaluate(labFingerprint, {src: `data:image/png;base64,${png.toString('base64')}`, cols: Number(args.cols ?? 54), masks: (args.masks as number[][] | undefined) ?? [], scale});
+        const fp = await lab.evaluate(labFingerprint, {src: `data:image/png;base64,${png.toString('base64')}`, cols: Number(args.cols ?? 54), masks: (args.masks as number[][] | undefined) ?? [], scale: 1});
         return {...fp, width: this.viewport.width, height: this.viewport.height};
       }
       case 'frames': {
@@ -471,7 +781,7 @@ export class WebRunner {
         for (let i = 0; i < count; i++) {
           if (i) await page.waitForTimeout(interval);
           const clip = b ? {x: b[0]!, y: b[1]!, width: Math.max(1, b[2]! - b[0]!), height: Math.max(1, b[3]! - b[1]!)} : undefined;
-          const png = (await page.screenshot({type: 'png', ...(clip ? {clip} : {})})) as Buffer;
+          const png = (await page.screenshot({type: 'png', scale: 'css', ...(clip ? {clip} : {})})) as Buffer;
           const fp = (await lab.evaluate(labFingerprint, {src: `data:image/png;base64,${png.toString('base64')}`, cols: 32, masks: [], scale: 1})) as {grid: number[]};
           luma.push(fp.grid.reduce((s, v) => s + v, 0) / fp.grid.length);
           if (prev) diff.push(fp.grid.reduce((s, v, k) => s + Math.abs(v - prev![k]!), 0) / fp.grid.length);
@@ -496,6 +806,21 @@ export class WebRunner {
       }
       case 'touch': {
         const phase = String(args.phase);
+        const finger = await this.#touchInput(page);
+        if (finger) {
+          if (phase === 'down') {
+            await this.#finger(finger, 'touchStart', n('x'), n('y'));
+            this.#touch = {x: n('x'), y: n('y')};
+          } else if (phase === 'move') {
+            const from = this.#touch ?? {x: n('x'), y: n('y')};
+            for (let i = 1; i <= 8; i++) await this.#finger(finger, 'touchMove', from.x + ((n('x') - from.x) * i) / 8, from.y + ((n('y') - from.y) * i) / 8);
+            this.#touch = {x: n('x'), y: n('y')};
+          } else {
+            await this.#finger(finger, 'touchEnd');
+            this.#touch = undefined;
+          }
+          return {down: !!this.#touch};
+        }
         if (phase === 'down') {
           await page.mouse.move(n('x'), n('y'));
           await page.mouse.down();
@@ -513,11 +838,18 @@ export class WebRunner {
     }
   }
 
+  /** One touch event with one finger (none for the end of a touch). */
+  async #finger(cdp: Pw, type: 'touchStart' | 'touchMove' | 'touchEnd', x?: number, y?: number) {
+    await cdp.send('Input.dispatchTouchEvent', {type, touchPoints: type === 'touchEnd' ? [] : [{x: Math.round(x!), y: Math.round(y!)}]});
+  }
+
   async stop(): Promise<void> {
     await this.#browser?.close().catch(() => undefined);
     this.#browser = undefined;
     this.#context = undefined;
     this.#page = undefined;
     this.#lab = undefined;
+    this.#cdp = undefined;
+    this.#opts = undefined;
   }
 }

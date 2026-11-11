@@ -202,6 +202,13 @@ export const configSchema = z.object({
         channel: z.string().optional(),
         headed: z.boolean().optional(),
         scale: z.number().positive().optional(),
+        /** A Playwright device preset (`iPhone 15`, `Pixel 7`): viewport, scale, user agent, touch, mobile. */
+        device: z.string().optional(),
+        /** A mobile browser: the page's meta viewport is honoured. */
+        mobile: z.boolean().optional(),
+        /** Touch input: taps, long presses and swipes reach the page as touch events. */
+        touch: z.boolean().optional(),
+        userAgent: z.string().optional(),
       }),
     )
     .optional(),

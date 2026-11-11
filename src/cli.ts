@@ -30,11 +30,13 @@ android
   shutdown [--device d] [--force]   only a device this session holds; --force shuts down another's and names its holder
   device lease [--device d] [--purpose text] · device release [--device d] [--keep]   hold a device for this session · give it back (one pitbox booted shuts down unless --keep)
   install <apk|app> [--replace] --replace uninstalls an app signed with another key first
-  open [package|url] [--relaunch]
+  open [package|url] [--relaunch] [--fresh]   web: --relaunch keeps cookies and storage, --fresh starts from a clean profile
   stop-app | clear-app | uninstall [--pkg p]
   apps [filter]
   app-logs [-n 50] [--grep re] [--level E] [--all]
   settings fontScale=1.3 dark=true animations=false size=1080x2400 density=420 locale=fr-FR grant=<perm> revoke=<perm>
+  settings emulate="iPhone 15"|reset size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR   a web app (login kept)
+  downloads [name-regex] [-n 10] [--wait s]   a web app's downloaded files; --wait waits for a new one
   network full|lte|umts|edge|gsm|offline|online
   screenshot [file]
   reverse                       forward every exposed port to every device now
@@ -113,7 +115,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'fresh', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -170,7 +172,9 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'install':
       return {method: 'install', params: {...common, apk: rest[0], replace: flags.replace}};
     case 'open':
-      return {method: 'open', params: {...common, target: rest[0], relaunch: flags.relaunch}};
+      return {method: 'open', params: {...common, target: rest[0], relaunch: flags.relaunch, fresh: flags.fresh}};
+    case 'downloads':
+      return {method: 'downloads', params: {device, grep: rest[0], lines: flags.lines, timeout: flags.wait === true ? 10 : flags.wait}};
     case 'stop-app':
       return {method: 'stopApp', params: common};
     case 'clear-app':

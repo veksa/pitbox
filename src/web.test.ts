@@ -3,8 +3,9 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-import {WebError, WebRunner, webKey} from './drivers/web/runner.ts';
+import {contextOptions, describeEmulation, fileType, presetName, WebError, WebRunner, webKey} from './drivers/web/runner.ts';
 import {DeviceUi} from './ui/device.ts';
+import {formatResult} from './format.ts';
 import {freePort} from './util/net.ts';
 
 // A small app: a sign-in form that answers after a request, a list taller than the window, a link to a second page.
@@ -29,6 +30,19 @@ async function go(){
 }
 </script></body></html>`;
 
+// Touch events and clicks as the page sees them, a tall page to scroll, links that download.
+const touchPage = `<!doctype html><html><head><meta name="viewport" content="width=device-width"><title>Touch</title><style>
+body{margin:0;font-family:sans-serif} #pad{height:300px;background:#ddd} .row{height:200px;border-bottom:1px solid #ccc}
+</style></head><body>
+<div id="pad" data-testid="pad">Pad</div>
+<a data-testid="get" href="/report.pdf">Get report</a>
+<a data-testid="blob" href="#" onclick="event.preventDefault();const a=document.createElement('a');a.href=window.URL.createObjectURL(new Blob(['a,b\\n1,2'],{type:'text/csv'}));a.download='table.csv';a.click()">Export</a>
+${Array.from({length: 20}, (_, i) => `<div class="row">Row ${i + 1}</div>`).join('')}
+<script>
+window.seen = [];
+for (const t of ['touchstart','touchmove','touchend','click','contextmenu','mousedown']) document.getElementById('pad').addEventListener(t, e => { if (seen[seen.length-1] !== t) seen.push(t); });
+</script></body></html>`;
+
 let port = 0;
 let server: http.Server;
 let dir = '';
@@ -39,7 +53,9 @@ beforeAll(async () => {
     if (req.url?.startsWith('/hello')) {
       const name = new URL(req.url, 'http://x').searchParams.get('name');
       setTimeout(() => res.end(`Signed in as ${name}`), 200);
-    } else if (req.url === '/second') res.end('<!doctype html><title>Second</title><h2 data-testid="second">Second page</h2><button onclick="boom()">Break</button><button onclick="setTimeout(() => location.reload(), 30)">Reload</button>');
+    } else if (req.url === '/touch') res.setHeader('content-type', 'text/html').end(touchPage);
+    else if (req.url === '/report.pdf') res.setHeader('content-type', 'application/pdf').setHeader('content-disposition', 'attachment; filename="report.pdf"').end('%PDF-1.4\n% a tiny file\n');
+    else if (req.url === '/second') res.end('<!doctype html><title>Second</title><h2 data-testid="second">Second page</h2><button onclick="boom()">Break</button><button onclick="setTimeout(() => location.reload(), 30)">Reload</button>');
     else res.setHeader('content-type', 'text/html').end(page);
   });
   await new Promise<void>(r => server.listen(port, '127.0.0.1', () => r()));
@@ -152,6 +168,15 @@ describe('a web flow', () => {
       expect(failed).toMatchObject({ok: false, failed: {line: 2}});
       expect(failed.failed?.screen?.some(l => /#email/.test(l))).toBe(true);
       expect((await e.methods.devices({})) as {web?: unknown[]}).toMatchObject({web: [{name: 'web:demo'}]});
+      // Settings on a web app emulate a phone; a phone's settings say what a web app takes instead.
+      const set = await e.methods.settings({device: 'web:demo', emulate: 'iPhone 15', dark: 'true'});
+      expect(formatResult('settings', set)).toMatch(/393x659 @3x mobile touch · iPhone 15 · dark/);
+      await expect(e.methods.settings({device: 'web:demo', fontScale: 1.3})).rejects.toThrow(/fontScale: not for a web app\nhint: a web app takes emulate=/);
+      const none = await e.methods.downloads({device: 'web:demo'});
+      expect(formatResult('downloads', none)).toBe('no downloads on web:demo yet (they are saved to .pitbox/downloads/demo)');
+      expect(formatResult('downloads', {serial: 'web:demo', root: '/p', dir: '/p/.pitbox/downloads/demo', waited: 1200, downloads: [{n: 1, name: 'a.pdf', url: 'http://x/a.pdf', at: 0, state: 'done', size: 2048, type: 'application/pdf', file: '/p/.pitbox/downloads/demo/a.pdf'}]})).toBe(
+        'new download after 1.2s:\n✓ a.pdf · 2.0 KB · application/pdf · .pitbox/downloads/demo/a.pdf',
+      );
     } finally {
       await e.stopAll();
     }
@@ -162,5 +187,102 @@ describe('web errors', () => {
   it('carry the hint in the message, which is all a flow prints', () => {
     expect(new WebError('Playwright is not installed', 'yarn add -D playwright-core').message).toBe('Playwright is not installed\nhint: yarn add -D playwright-core');
     expect(new WebError('no page').message).toBe('no page');
+  });
+});
+
+describe('web emulation', () => {
+  it('resolves presets by loose names and layers explicit fields over them', async () => {
+    const devices = {'iPhone 15': {viewport: {width: 393, height: 659}, screen: {width: 393, height: 852}, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: 'UA'}, 'iPhone 15 landscape': {}, 'Pixel 7': {}};
+    expect(presetName('iphone-15', devices)).toBe('iPhone 15');
+    expect(() => presetName('iPhone 99', devices)).toThrow(/no device preset "iPhone 99"\nhint: Playwright has: iPhone 15$/);
+    const o = contextOptions([{viewport: '800x600'}, {device: 'iPhone 15'}, {touch: false, dark: true}], devices);
+    expect(o).toMatchObject({viewport: {width: 393, height: 659}, deviceScaleFactor: 3, isMobile: true, hasTouch: false, userAgent: 'UA', colorScheme: 'dark', preset: 'iPhone 15'});
+    expect(describeEmulation(o)).toBe('393x659 @3x mobile mouse · iPhone 15 · dark');
+    expect(contextOptions([{device: 'iPhone 15'}, {viewport: '390x844'}], devices)).toMatchObject({viewport: {width: 390, height: 844}, screen: undefined, deviceScaleFactor: 3});
+    expect(() => contextOptions([{viewport: 'wide'}], devices)).toThrow(/not a size/);
+  });
+
+  it("tells a downloaded file's type by its first bytes, then its extension", () => {
+    expect(fileType(Buffer.from('89504e470d0a1a0a', 'hex'), 'x.bin')).toBe('image/png');
+    expect(fileType(Buffer.from('%PDF-1.7'), 'x')).toBe('application/pdf');
+    expect(fileType(Buffer.from('\0\0\0\x18ftypmp42'), 'v')).toBe('video/mp4');
+    expect(fileType(Buffer.from('a,b'), 'table.csv')).toBe('text/csv');
+    expect(fileType(Buffer.from('??'), 'x.weird')).toBeUndefined();
+  });
+
+  let runner: WebRunner;
+  let ui: DeviceUi;
+  const state = () => path.join(dir, 'state');
+
+  beforeAll(async () => {
+    runner = new WebRunner('touchy', {url: `http://127.0.0.1:${port}/touch`, viewport: '800x600'}, dir, state());
+    ui = new DeviceUi('web:touchy', runner, {}, {start: () => undefined, stop: () => undefined, since: t => runner.events.filter(e => e.at >= t)});
+    await runner.goto();
+  }, 60_000);
+
+  afterAll(async () => {
+    await ui.stop();
+  });
+
+  const inPage = async (expr: string) => (await runner.evaluate(expr)).value;
+
+  it('switches to a phone at run time and back, keeping cookies and storage', {timeout: 60_000}, async () => {
+    await inPage('localStorage.setItem("token", "t1"); document.cookie = "sid=s1"; 1');
+    const applied = await runner.emulate({device: 'Pixel 7'});
+    expect(applied[0]).toBe('412x839 @2.625x mobile touch · Pixel 7');
+    expect(applied[1]).toMatch(/cookies and storage kept, \/touch reloaded/);
+    expect(await inPage('[innerWidth, navigator.maxTouchPoints > 0, localStorage.getItem("token"), document.cookie, /Android/.test(navigator.userAgent)]')).toBe('[412, true, "t1", "sid=s1", true]');
+    expect((await ui.snapshot()).lines.some(l => /#pad/.test(l))).toBe(true);
+    // Dark alone changes in place: no new context, nothing reloaded.
+    expect(await runner.emulate({dark: true})).toEqual(['412x839 @2.625x mobile touch · Pixel 7 · dark']);
+    expect(await runner.emulate({viewport: '360x640'})).toHaveLength(2);
+    expect(await inPage('[innerWidth, matchMedia("(prefers-color-scheme: dark)").matches]')).toBe('[360, true]');
+    await runner.emulate({reset: true});
+    expect(await inPage('[innerWidth, navigator.maxTouchPoints, localStorage.getItem("token")]')).toBe('[800, 0, "t1"]');
+    await expect(runner.emulate({})).rejects.toThrow(/nothing to change/);
+  });
+
+  it('taps, long-presses and swipes with touch events when the page has touch', {timeout: 60_000}, async () => {
+    await runner.emulate({device: 'iPhone 15'});
+    await inPage('seen.length = 0');
+    await ui.press('id=pad');
+    expect(await inPage('seen.join(" ")')).toBe('"touchstart touchend mousedown click"');
+    await inPage('seen.length = 0');
+    await ui.press('id=pad', 'longpress');
+    expect(await inPage('seen.join(" ")')).toMatch(/^"touchstart contextmenu touchend/);
+    await ui.swipe('up');
+    expect(Number(await inPage('scrollY'))).toBeGreaterThan(100);
+    await inPage('scrollTo(0, 0); seen.length = 0');
+    await ui.touch('down', 'id=pad');
+    expect(await inPage('seen.join(" ")')).toBe('"touchstart"');
+    await ui.touch('up');
+    // Without touch, the same calls are the mouse's.
+    await runner.emulate({reset: true});
+    await inPage('seen.length = 0');
+    await ui.press('id=pad');
+    expect(await inPage('seen.join(" ")')).toBe('"mousedown click"');
+  });
+
+  it('saves downloads into the state folder, lists them, and waits for a new one', {timeout: 60_000}, async () => {
+    expect((await runner.downloads()).downloads).toEqual([]);
+    await ui.press('id=get');
+    const got = await runner.downloads({waitMs: 10_000});
+    expect(got.downloads[0]).toMatchObject({name: 'report.pdf', state: 'done', type: 'application/pdf', size: 23, file: path.join(state(), 'downloads', 'touchy', 'report.pdf')});
+    expect(fs.readFileSync(got.downloads[0]!.file!, 'utf8')).toMatch(/^%PDF/);
+    // Shown already: a wait needs a new one.
+    await expect(runner.downloads({waitMs: 300})).rejects.toThrow(/no new download in 0s \(the last one, "report.pdf", was already shown\)/);
+    await ui.press('id=get');
+    await ui.press('id=blob');
+    expect((await runner.downloads({waitMs: 10_000, grep: 'csv'})).downloads[0]).toMatchObject({name: 'table.csv', type: 'text/csv', size: 7});
+    const all = await runner.downloads();
+    expect(all.downloads.map(d => path.basename(d.file!))).toEqual(['report.pdf', 'report-2.pdf', 'table.csv']);
+  });
+
+  it('keeps the profile on a relaunch and starts clean when asked', {timeout: 60_000}, async () => {
+    await inPage('localStorage.setItem("token", "t2"); sessionStorage.setItem("tab", "1"); 1');
+    await runner.goto(undefined, 'relaunch');
+    expect(await inPage('[localStorage.getItem("token"), sessionStorage.getItem("tab")]')).toBe('["t2", null]');
+    await runner.goto(undefined, 'fresh');
+    expect(await inPage('localStorage.getItem("token")')).toBe('null');
   });
 });

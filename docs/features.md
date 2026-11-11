@@ -28,7 +28,9 @@ compact text.
   machine (`pitbox serve-devices`).
 - **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots,
   selectors, actions, checks and flows as on a phone, page errors reported with the action that caused them.
-  One flow can switch between a web app and a phone.
+  One flow can switch between a web app and a phone. A phone in the browser — a Playwright device preset or a
+  size, scale, mobile, touch and user agent, switched at run time with the login kept — and touch input for taps,
+  long presses, swipes and a held finger; downloads saved and listed; a relaunch that keeps the profile.
 - **Mac apps** — a native app on this Mac as one more device (`mac:<name>`), read and driven through the
   Accessibility API by a small runner built on first use: AppKit, SwiftUI and web views (WKWebView) in one tree,
   several windows (the front one, or one picked by title), the app's menu bar items and open menus, screenshots
