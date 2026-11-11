@@ -682,6 +682,45 @@ describe('a keyboard over the target', () => {
   });
 });
 
+describe('a keyboard still on its way up', () => {
+  const app: UiWindow = {type: 'app', title: '', pkg: 'com.example.app'};
+  const ime: UiWindow = {type: 'ime', title: 'keyboard', pkg: 'com.apple.keyboard'};
+  // A composer that rides on the keyboard: Send sits just above the keys once they are up, and lower while they
+  // still move.
+  const screen = (top: number | undefined, value = 'Hi'): {windows: UiWindow[]; nodes: UiNode[]} => {
+    const bottom = top ?? 500;
+    const nodes: UiNode[] = [
+      {p: -1, w: 0, c: 'TextView', b: [0, bottom - 60, 340, bottom - 10], id: 'prompt', t: value, f: 'e'},
+      {p: -1, w: 0, c: 'Button', b: [340, bottom - 60, 400, bottom - 10], id: 'send', f: 'c'},
+    ];
+    if (top === undefined) return {windows: [app], nodes};
+    return {windows: [app, ime], nodes: [...nodes, {p: -1, w: 1, c: 'Keyboard', b: [0, top, 400, 500]}]};
+  };
+
+  it('is waited out before the press decides the target is under it, so it is not closed with return', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const calls: string[] = [];
+    // The keys rise over three reads; the composer follows them once they stop.
+    const tops = [420, 300, 260];
+    let trees = 0;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key' || cmd === 'tap') calls.push(`${cmd} ${JSON.stringify(cmd === 'tap' ? {x: args.x, y: args.y} : args)}`);
+        if (cmd === 'tree') {
+          const top = tops[Math.min(trees++, tops.length - 1)]!;
+          // Send is still where it was before the keys came up: under them while they rise.
+          return trees <= 2 ? {...screen(top), nodes: [...screen(500).nodes, screen(top).nodes[2]!]} : screen(top);
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('sim', runner as never).press('id=send');
+    expect(calls).toEqual(['tap {"x":370,"y":225}']);
+  });
+});
+
 describe('a keyboard that comes up by itself', () => {
   it('is waited for when the target is missing, then hidden', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

@@ -127,6 +127,34 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   }
 
   /**
+   * Waits until the on-screen keyboard stands still — there or not, at the same height, with the target (when one
+   * is named) where it was — and returns the screen then. A keyboard on its way up covers a control the app lifts
+   * above it once it is up (a composer that rides on the keyboard), and the screen read mid-way says the control
+   * is under the keys.
+   */
+  async #keyboardStill(snap: Snapshot, selector?: string, timeoutMs = 1500): Promise<Snapshot> {
+    const end = Date.now() + timeoutMs;
+    const {height} = await this.size();
+    const at = (s: Snapshot) => {
+      if (!selector) return '';
+      try {
+        const t = resolveTarget(s, selector);
+        return `${t.x},${t.y}`;
+      } catch {
+        return 'none';
+      }
+    };
+    const state = (s: Snapshot) => `${s.windows.some(w => w.type === 'ime')}|${keyboardTop(s, height)}|${at(s)}`;
+    let prev = snap;
+    for (;;) {
+      await this.runner.call('idle', {quiet: 150, timeout: 600}, 6000);
+      const next = await this.snapshot();
+      if (state(next) === state(prev) || Date.now() > end) return next;
+      prev = next;
+    }
+  }
+
+  /**
    * Waits for the UI to go quiet and diffs. An action's effect can start after the first quiet window (a sheet
    * that animates on the next frame, a navigation that waits for a promise), so an unchanged screen is checked
    * again for a little while before it is reported as unchanged.
@@ -233,8 +261,22 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         if (!imeShown) throw e;
       }
     }
-    const top = ref || !imeShown ? undefined : (keyboardTop(snap, (await this.size()).height) ?? 0);
-    const covered = top !== undefined && (!target || (target.node && snap.windows[target.node.w]?.type !== 'ime' && target.y >= top));
+    const coveredIn = async (s: Snapshot, t: typeof target) => {
+      const top = ref || !s.windows.some(w => w.type === 'ime') ? undefined : (keyboardTop(s, (await this.size()).height) ?? 0);
+      return top !== undefined && (!t || (!!t.node && s.windows[t.node.w]?.type !== 'ime' && t.y >= top));
+    };
+    let covered = await coveredIn(snap, target);
+    // Under a keyboard that may still be moving: looked at again once it stands still, so a control the app
+    // lifts above it is tapped where it ends up instead of closing the keyboard for it.
+    if (covered && target && !ref) {
+      snap = await this.#keyboardStill(snap, selector);
+      try {
+        target = resolveTarget(snap, selector);
+      } catch {
+        target = undefined;
+      }
+      covered = await coveredIn(snap, target);
+    }
     if (covered || !target) {
       snap = await this.#hideKeyboard(selector);
       target = resolveTarget(snap, selector);
