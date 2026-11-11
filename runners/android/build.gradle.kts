@@ -14,7 +14,7 @@ android {
     minSdk = 24
     targetSdk = 36
     // Bumped with every protocol change; the host reinstalls the runner when it differs.
-    versionCode = 18
+    versionCode = 19
     versionName = "0.1.0"
   }
 

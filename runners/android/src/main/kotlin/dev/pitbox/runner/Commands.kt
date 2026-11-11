@@ -550,5 +550,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 18
+  const val VERSION = 19
 }
