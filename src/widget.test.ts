@@ -3,7 +3,7 @@ import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 import {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, type Bounds, type UiNode, type UiWindow} from './ui/snapshot.ts';
-import {appEntries, dropHint, freeSpot, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
+import {appEntries, dropHint, freeSpot, pageLayout, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
 
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
@@ -229,6 +229,16 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
 };
 
 describe('a widget on a Launcher3 home screen', () => {
+  it('tells home pages apart by their views, not by a clock ticking on them', () => {
+    const page = (time: string, label = 'Clock'): UiNode[] => [
+      {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400], id: 'workspace'},
+      {p: 0, w: 0, c: 'FrameLayout', b: [60, 900, 1020, 1400], d: label},
+      {p: 1, w: 0, c: 'TextView', b: [100, 1000, 900, 1200], t: time, d: time},
+    ];
+    expect(pageLayout(snap(page('15:07')))).toBe(pageLayout(snap(page('15:08'))));
+    expect(pageLayout(snap(page('15:07')))).not.toBe(pageLayout(snap(page('15:07', 'Note'))));
+  });
+
   it('reads where a dragged widget would land in any language, only on the view under the finger', () => {
     const node = (d: string, extra: Partial<UiNode> = {}): UiNode => ({c: 'FrameLayout', b: [199, 688, 744, 1233], d, ...extra}) as UiNode;
     const finger = {x: 400, y: 900};

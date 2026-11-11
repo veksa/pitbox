@@ -358,10 +358,10 @@ const twoPane = (s: Snapshot) => {
 const scrollPicker = async (ui: DeviceUi, test: (s: Snapshot) => boolean, max = 12): Promise<Snapshot> => {
   let snap = await ui.snapshot();
   for (let i = 0; i < max && !test(snap); i++) {
-    const before = snap.lines.join('\n');
+    const before = pageLayout(snap);
     await ui.swipe('up');
     snap = await ui.snapshot();
-    if (snap.lines.join('\n') === before) break;
+    if (pageLayout(snap) === before) break;
   }
   return snap;
 };
@@ -499,6 +499,15 @@ const androidPlaced = async (ui: DeviceUi, w: WidgetOp, launcher: string, extra:
   return {widget: name, ...extra, on: 'home'};
 };
 
+/**
+ * What tells one home page from another: its views, where they are and what they say, numbers left out, so that a
+ * clock ticking on the page does not pass for the next page.
+ */
+export const pageLayout = (s: Pick<Snapshot, 'nodes'>) => {
+  const words = (v?: string) => (v ?? '').replace(/\p{Nd}+/gu, '#');
+  return s.nodes.map(n => `${n.c}#${n.id ?? ''}@${n.b.join(',')}:${words(n.t)}:${words(n.d)}`).join('\n');
+};
+
 /** Finds a widget on the home pages, swiping through them; the snapshot shows it. */
 const androidFind = async (ui: DeviceUi, name: string): Promise<{snap: Snapshot; index: number} | undefined> => {
   await androidHome(ui);
@@ -506,10 +515,10 @@ const androidFind = async (ui: DeviceUi, name: string): Promise<{snap: Snapshot;
   for (let page = 0; page < 8; page++) {
     const index = homeWidget(snap, name);
     if (index !== undefined) return {snap, index};
-    const before = snap.lines.join('\n');
+    const before = pageLayout(snap);
     await ui.swipe('left');
     snap = await steady(ui);
-    if (snap.lines.join('\n') === before) break;
+    if (pageLayout(snap) === before) break;
   }
   return undefined;
 };
@@ -591,11 +600,11 @@ const androidList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     let snap = await steady(ui);
     for (let page = 0; page < 8; page++) {
       widgets.push(...homeWidgets(snap, workspace));
-      const before = snap.lines.join('\n');
+      const before = pageLayout(snap);
       await ui.swipe('left');
       // Read once the page has stopped: the same page again means this was the last one.
       snap = await steady(ui);
-      if (snap.lines.join('\n') === before) break;
+      if (pageLayout(snap) === before) break;
     }
     await ui.key(['home']);
     return {widgets};
