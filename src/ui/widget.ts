@@ -579,12 +579,17 @@ export const iosGalleryPage = (snap: Pick<Snapshot, 'nodes'>, app: string): IosG
 
 const iosSnap = async (ui: DeviceUi) => steady(ui, 1500);
 
-/** The first home page, out of editing, with nothing over it. */
+/**
+ * The first home page, out of editing, with nothing over it. Home leaves editing or a menu first, and goes to the
+ * first page when pressed on another one.
+ */
 const iosHome = async (ui: DeviceUi): Promise<Snapshot> => {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     await ui.key(['home']);
     const {snap, hit} = await until(ui, 2500, s => (s.windows[0]?.pkg === SPRINGBOARD && s.nodes.some(n => n.id === HOME_ICONS) ? true : undefined));
-    if (hit && !iosEditing(snap) && !snap.nodes.some(n => n.id === GALLERY || n.id === REMOVE_ITEM)) return iosSnap(ui);
+    if (!hit || iosEditing(snap) || snap.nodes.some(n => n.id === GALLERY || n.id === REMOVE_ITEM)) continue;
+    const settled = await iosSnap(ui);
+    if (iosPages(settled).page === 1) return settled;
   }
   const snap = await ui.snapshot();
   throw new Error(`home did not bring up the home screen (in front: ${snap.windows[0]?.pkg ?? 'nothing'})`);
@@ -602,8 +607,9 @@ const iosNextPage = async (ui: DeviceUi, snap: Snapshot): Promise<Snapshot | und
 /** Every home page from the first, with the widgets on it. */
 const iosEachPage = async (ui: DeviceUi, visit: (snap: Snapshot, page: number) => boolean | void): Promise<void> => {
   let snap = await iosHome(ui);
-  const {pages} = iosPages(snap);
-  for (let page = 1; ; page++) {
+  for (;;) {
+    const {page, pages} = iosPages(snap);
+    // Past the last page is the App Library: never swiped into.
     if (visit(snap, page) === true || page >= pages) return;
     const next = await iosNextPage(ui, snap);
     if (!next) return;
@@ -723,14 +729,17 @@ const iosAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const name = w.name!;
   const app = w.app ?? name;
   // The last home page: the one with room, where a new widget moves the fewest icons.
+  // Counted on every page on the way: a full page sends a new widget, or the icons it displaces, to another page.
+  const mine = (s: Snapshot) => iosHomeWidgets(s).filter(x => !x.stack && iosMatches(x, app)).length;
   let snap = await iosHome(ui);
-  for (let k = iosPages(snap).pages; k > 1; k--) {
+  let before = mine(snap);
+  while (iosPages(snap).page < iosPages(snap).pages) {
     const next = await iosNextPage(ui, snap);
     if (!next) break;
     snap = next;
+    before += mine(snap);
   }
   const {page} = iosPages(snap);
-  const before = iosHomeWidgets(snap).filter(x => !x.stack && iosMatches(x, app)).length;
   const spot = await iosSpot(ui, snap);
   if (!spot) throw new Error('no empty spot on the last home page to long-press\nhint: move an icon off it, or add the widget by hand');
   await iosAppGallery(ui, app, spot);
@@ -743,31 +752,46 @@ const iosAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     throw new Error(`no widget "${name}" in the gallery of "${app}"${offered.length ? ` (it shows: ${offered.join(', ')})` : ''}`);
   }
   await ui.press(point(walk.snap, walk.page.add));
-  const placed = await until(ui, 6000, s => (s.nodes.some(n => n.id === HOME_ICONS) && iosHomeWidgets(s).filter(x => !x.stack && iosMatches(x, app)).length > before ? true : undefined));
+  await until(ui, 4000, s => (s.nodes.some(n => n.id === HOME_ICONS) && !s.nodes.some(n => n.id === GALLERY) ? true : undefined));
+  let after = 0;
+  await iosEachPage(ui, s => {
+    after += mine(s);
+  });
+  if (after <= before) throw new Error(`no new "${app}" widget on the home screen after adding "${name}"`);
   await iosHome(ui);
-  if (!placed.hit) throw new Error(`no "${app}" widget on the home screen after adding "${name}"`);
   return {widget: name, size: walk.page.size, label: app, on: `home page ${page}`};
 };
 
-/**
- * The widget to remove: the first one with the label in reading order (pages from the first, top to bottom, left
- * to right), as on Android. A stack is never taken: it holds other widgets too.
- */
-const iosFind = async (ui: DeviceUi, label: string): Promise<{snap: Snapshot; index: number; page: number; count: number} | undefined> => {
-  let hit: {snap: Snapshot; index: number; page: number; count: number} | undefined;
+/** The plain widgets with the label on every home page: how many, and the first page that has one. */
+const iosCount = async (ui: DeviceUi, label: string): Promise<{total: number; first?: number}> => {
+  let total = 0;
+  let first: number | undefined;
   await iosEachPage(ui, (snap, page) => {
-    const mine = iosHomeWidgets(snap).filter(x => !x.stack && iosMatches(x, label));
-    if (mine.length) hit = {snap, index: mine[0]!.index, page, count: mine.length};
-    return !!hit;
+    const n = iosHomeWidgets(snap).filter(x => !x.stack && iosMatches(x, label)).length;
+    if (n && first === undefined) first = page;
+    total += n;
   });
-  return hit;
+  return {total, ...(first !== undefined ? {first} : {})};
 };
 
+/**
+ * Removes the first widget with the label in reading order (pages from the first, top to bottom, left to right),
+ * as on Android. A stack is never taken: it holds other widgets too. Removing one lets the next page's icons and
+ * widgets flow back, so the check is the count over every page, not the page it was on.
+ */
 const iosRemove = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const label = w.app ?? w.name!;
-  const found = await iosFind(ui, label);
-  if (!found) throw new Error(`no "${label}" widget on the home screen\nhint: on iOS a home-screen widget is labelled with its app's name; widget list shows them`);
-  await ui.press(point(found.snap, found.index), 'longpress');
+  const before = await iosCount(ui, label);
+  if (before.first === undefined) throw new Error(`no "${label}" widget on the home screen\nhint: on iOS a home-screen widget is labelled with its app's name; widget list shows them`);
+  let snap = await iosHome(ui);
+  while (iosPages(snap).page < before.first) {
+    const next = await iosNextPage(ui, snap);
+    if (!next) break;
+    snap = next;
+  }
+  const target = iosHomeWidgets(snap).find(x => !x.stack && iosMatches(x, label));
+  if (!target) throw new Error(`the "${label}" widget left page ${before.first} before it could be removed`);
+  await ui.press(point(snap, target.index), 'longpress');
   const item = await until(ui, 3000, s => idOf(s, REMOVE_ITEM));
   if (item.hit === undefined) {
     await iosHome(ui);
@@ -782,10 +806,11 @@ const iosRemove = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     return buttons.length ? buttons[buttons.length - 1] : undefined;
   });
   if (alert.hit !== undefined) await ui.press(point(alert.snap, alert.hit));
-  const gone = await until(ui, 4000, s => (s.nodes.some(n => n.id === HOME_ICONS) && !s.nodes.some(n => n.c === 'Alert') && iosHomeWidgets(s).filter(x => !x.stack && iosMatches(x, label)).length < found.count ? true : undefined));
+  await until(ui, 3000, s => (s.nodes.some(n => n.id === HOME_ICONS) && !s.nodes.some(n => n.c === 'Alert') ? true : undefined));
+  const after = await iosCount(ui, label);
   await iosHome(ui);
-  if (!gone.hit) throw new Error(`the "${label}" widget is still on the home screen after removing it`);
-  return {widget: label, removed: true, page: found.page};
+  if (after.total >= before.total) throw new Error(`the "${label}" widget is still on the home screen after removing it`);
+  return {widget: label, removed: true, page: before.first, left: after.total};
 };
 
 const iosList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
