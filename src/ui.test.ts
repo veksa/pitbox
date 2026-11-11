@@ -465,6 +465,28 @@ describe('a link into the app in front', () => {
     await ui.press('id=send');
     expect(taps).toEqual(['send']);
   });
+
+  it('is waited out by a press when what it removes still covers the whole target', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const send: UiNode = {p: -1, w: 0, c: 'Button', b: [340, 400, 400, 450], id: 'send', f: 'c', z: 1};
+    const overlay: UiNode = {p: -1, w: 0, c: 'ScrollView', b: [0, 60, 400, 470], f: 's', t: 'debug lines', z: 2};
+    const hiddenAt = Date.now() + 150;
+    const taps: string[] = [];
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') taps.push(Date.now() >= hiddenAt ? 'send' : 'overlay');
+        if (cmd === 'tree') return {windows: app, nodes: Date.now() >= hiddenAt ? [send] : [send, overlay]};
+        if (cmd === 'info') return {width: 400, height: 500};
+        if (cmd === 'idle') await new Promise(r => setTimeout(r, Number(args.quiet ?? 0)));
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).press('id=send');
+    expect(taps).toEqual(['send']);
+    expect(r.note).toBeUndefined();
+  });
 });
 
 describe("React Native's warnings toast over a target", () => {

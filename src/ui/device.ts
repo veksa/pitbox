@@ -383,10 +383,17 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   async press(selector: string, kind: 'tap' | 'longpress' | 'doubletap' = 'tap'): Promise<ActResult> {
     const t0 = this.#begin();
-    const {snap, target} = await this.#target(selector);
+    let {snap, target} = await this.#target(selector);
+    let at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
+    // Covered all over, nothing of it left to tap: a cover on its way out (an overlay the last step hid, a sheet
+    // closing) is waited for once, as the tap would go to it.
+    if (at.coveredBy && at.x === target.x && at.y === target.y && !/^@e\d+$/.test(selector.trim())) {
+      await this.runner.call('idle', {quiet: 200, timeout: 1000}, 6000);
+      ({snap, target} = await this.#target(selector));
+      at = target.index !== undefined ? tapPoint(snap, target.index) : target;
+    }
     this.#front(snap);
     let t = this.#phase('target', t0);
-    const at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
     await this.runner.call(kind, {x: at.x, y: at.y, ...aim(target.node, snap)});
     t = this.#phase('input', t);
     const chosen = target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`;
