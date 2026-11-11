@@ -25,7 +25,7 @@ stand
   actors | actor start <type> <name> [--port n] | actor stop <name> | actor call <name> '<json>'
 
 android
-  devices                       online devices, idle AVDs and simulators
+  devices [clean]               online devices with who holds each, idle AVDs and simulators · clean deletes the shut-down simulators pitbox created for sessions
   boot [avd|simulator] [--wipe] [--headless]   leased to this session; a device another session holds is not touched: a free one of the same model, or a new instance, is booted instead
   shutdown [--device d] [--force]   only a device this session holds; --force shuts down another's and names its holder
   device lease [--device d] [--purpose text] · device release [--device d] [--keep]   hold a device for this session · give it back (one pitbox booted shuts down unless --keep)
@@ -157,7 +157,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       throw new Error('actor start|stop|call');
     }
     case 'devices':
-      return {method: 'devices', params: {}};
+      return {method: rest[0] === 'clean' ? 'cleanDevices' : 'devices', params: {}};
     case 'boot':
       return {method: 'boot', params: {avd: rest[0], wipe: flags.wipe, headless: flags.headless}};
     case 'shutdown':
@@ -380,6 +380,11 @@ export const main = async () => {
       const {isAlive} = await import('./util/proc.ts');
       const end = Date.now() + 120_000;
       while (running && isAlive(running.info.pid) && Date.now() < end) await new Promise(r => setTimeout(r, 200));
+      if (running && isAlive(running.info.pid)) {
+        process.stdout.write(`still stopping: pid ${running.info.pid} is giving its devices back (a device that will not shut down holds it up)\n`);
+        process.exitCode = 1;
+        return;
+      }
       if (sub === 'stop') {
         process.stdout.write(running ? 'stopped\n' : 'not running\n');
         return;

@@ -512,6 +512,8 @@ export const formatResult = (method: string, r: unknown): string => {
       return `${x.file} (${Math.round((x.bytes as number) / 1024)} KB)`;
     case 'shutdown':
       return (x.gone ? `${x.serial ?? x.udid} shut down in ${seconds(x.ms as number)}` : `${x.serial ?? x.udid} still listed after ${seconds(x.ms as number)}`) + (x.note ? `\nnote: ${x.note}` : '');
+    case 'cleanDevices':
+      return (x.deleted as string[]).length ? `deleted ${(x.deleted as string[]).join(', ')}` : 'no simulators pitbox created are left over';
     case 'lease':
       return `${x.leased} (${x.id}) is held by "${x.label}"${x.booted ? ', booted by it' : ''}`;
     case 'release':

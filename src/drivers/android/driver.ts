@@ -11,7 +11,8 @@ import {car, physicalDisplays, pngFrom, posture, rotate, wear, windowMode} from 
 import {summarizeAtrace, type TraceSummary} from './atrace.ts';
 import {connected, paired, parseMdnsServices, type MdnsService} from './wifi.ts';
 
-export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean};
+/** `bootId`: the kernel's id of the current boot — a serial is reused by the next emulator on that port, a boot id is not. */
+export type AndroidDevice = {serial: string; state: string; model?: string; avd?: string; kind?: string; emulator: boolean; bootId?: string};
 
 export type PerfReport = {reset?: boolean; frames?: number; janky?: number; p50?: number; p90?: number; p99?: number; memoryMb?: number};
 
@@ -135,6 +136,8 @@ export class AndroidDriver {
 
   /** AVD name per emulator serial: asking the emulator console every time is slow and busies adb. */
   readonly #avdNames = new Map<string, string>();
+  /** Boot id per serial, asked once per boot (lease/lease.ts tells a reused serial from the leased device by it). */
+  readonly #bootIds = new Map<string, string>();
 
   async devices(): Promise<AndroidDevice[]> {
     let r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 8000});
@@ -144,6 +147,7 @@ export class AndroidDriver {
     const lines = r.stdout.replace(/\r/g, '').split('\n').slice(1).filter(l => l.trim());
     const serials = new Set(lines.map(l => l.trim().split(/\s+/)[0]));
     for (const s of [...this.#avdNames.keys()]) if (!serials.has(s)) this.#avdNames.delete(s);
+    for (const s of [...this.#bootIds.keys()]) if (!serials.has(s)) this.#bootIds.delete(s);
     return Promise.all(
       lines.map(async line => {
         const [serial = '', state = ''] = line.trim().split(/\s+/);
@@ -155,7 +159,13 @@ export class AndroidDriver {
           avd = name.stdout.replace(/\r/g, '').split('\n')[0]?.trim() || undefined;
           if (avd) this.#avdNames.set(serial, avd);
         }
-        return {serial, state, model, avd, kind: avd ? avdKind(avd) : undefined, emulator};
+        let bootId = this.#bootIds.get(serial);
+        if (state === 'device' && !bootId) {
+          const id = await this.adb(['shell', 'cat', '/proc/sys/kernel/random/boot_id'], serial, {timeoutMs: 5000});
+          bootId = /^[0-9a-f-]{36}$/i.exec(id.stdout.trim())?.[0];
+          if (bootId) this.#bootIds.set(serial, bootId);
+        }
+        return {serial, state, model, avd, kind: avd ? avdKind(avd) : undefined, emulator, ...(bootId ? {bootId} : {})};
       }),
     );
   }
@@ -191,7 +201,7 @@ export class AndroidDriver {
     const t0 = Date.now();
     const before = await this.devices();
     const running = before.find(d => d.avd === avd && d.state === 'device');
-    const readOnly = !!opts.newInstance && before.some(d => d.avd === avd);
+    const readOnly = !!opts.newInstance;
     if (running && !opts.newInstance) return {serial: running.serial, ms: 0, already: true};
     if (!listAvds().includes(avd)) throw new AndroidError(`unknown AVD "${avd}"`, `available: ${listAvds().join(', ') || 'none'}`);
     if (readOnly && opts.wipe) throw new AndroidError(`${avd} runs already: a second instance cannot wipe it`, 'boot another AVD to start clean');
@@ -231,7 +241,11 @@ export class AndroidDriver {
   /** Shuts an emulator down and waits until adb no longer lists it (it takes ~20 s to save and exit). */
   async shutdown(serial: string, timeoutMs = 60_000): Promise<{ms: number; gone: boolean}> {
     const t0 = Date.now();
-    const avd = (await this.devices()).find(d => d.serial === serial)?.avd;
+    const all = await this.devices();
+    const avd = all.find(d => d.serial === serial)?.avd;
+    // Another instance of the AVD (a -read-only one, or the one a -read-only one runs beside) holds its lock: the lock
+    // is then no sign of this instance, and waiting for it would wait for the other session's emulator.
+    const sharesAvd = !!avd && all.some(d => d.serial !== serial && d.avd === avd);
     // Killing the emulator drops what the guest has not written out yet: an APK installed just before can be
     // gone after the next boot while the package manager still lists it.
     await this.adb(['shell', 'sync'], serial, {timeoutMs: 20_000}).catch(() => undefined);
@@ -239,7 +253,7 @@ export class AndroidDriver {
     while (Date.now() - t0 < timeoutMs) {
       // Gone from adb is not gone: the emulator still writes its disk and holds the AVD's lock for a few
       // seconds, and a boot in that window exits without a word.
-      if (!(await this.devices()).some(d => d.serial === serial) && !(avd && avdLocked(avd))) return {ms: Date.now() - t0, gone: true};
+      if (!(await this.devices()).some(d => d.serial === serial) && !(avd && !sharesAvd && avdLocked(avd))) return {ms: Date.now() - t0, gone: true};
       await new Promise(r => setTimeout(r, 1000));
     }
     return {ms: Date.now() - t0, gone: false};

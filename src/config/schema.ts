@@ -182,6 +182,8 @@ export const configSchema = z.object({
     .object({
       /** Shut down the devices this daemon booted when it gives them back (`device release`, `down`, daemon stop). Default true. */
       shutdownOnRelease: z.boolean().optional(),
+      /** Delete the simulators pitbox created for this session (`<name> (pitbox N)`) when it gives them back. Default true. */
+      deleteCreated: z.boolean().optional(),
     })
     .optional(),
   /**

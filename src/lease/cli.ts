@@ -10,11 +10,11 @@
 
 import path from 'node:path';
 import {findConfig} from '../config/load.ts';
-import {acquire, describeHolder, listLeases, parseDuration, release, type Holder, type Platform} from './lease.ts';
+import {acquire, describeHolder, listLeases, parseDuration, processStart, release, type Holder, type Platform} from './lease.ts';
 
 export type LeaseFlags = Record<string, string | boolean>;
 
-type Resolved = {platform: Platform; id: string; name?: string};
+type Resolved = {platform: Platform; id: string; name?: string; instance?: string};
 
 /** `apple:<udid>`, `android:<serial>`, or a udid, serial, simulator name or AVD looked up on this machine. */
 export const resolveDevice = async (selector: string): Promise<Resolved> => {
@@ -34,7 +34,7 @@ export const resolveDevice = async (selector: string): Promise<Resolved> => {
     const {AndroidDriver} = await import('../drivers/android/driver.ts');
     const online = (await new AndroidDriver().devices()).filter(d => d.state === 'device');
     const hit = online.find(d => d.serial === selector || d.avd === selector || d.model === selector);
-    if (hit) return {platform: 'android', id: hit.serial, name: hit.avd ?? hit.model};
+    if (hit) return {platform: 'android', id: hit.serial, name: hit.avd ?? hit.model, instance: hit.bootId};
   } catch (e) {
     errors.push((e as Error).message.split('\n')[0]!);
   }
@@ -52,7 +52,8 @@ const shellHolder = (flags: LeaseFlags, cwd: string): Holder => {
   const label = typeof flags.as === 'string' ? flags.as : (process.env.PITBOX_SESSION ?? path.basename(root));
   const pid = typeof flags.pid === 'string' ? Number(flags.pid) : undefined;
   if (pid !== undefined && !(Number.isInteger(pid) && pid > 0)) throw new Error(`--pid takes a process id, got "${flags.pid}"`);
-  return {owner: `as:${label}`, label, root, ...(pid ? {pid} : {})};
+  // The label and the project together: two worktrees running the same skill under one label are two holders.
+  return {owner: `as:${label}@${root}`, label, root, ...(pid ? {pid, pidStart: processStart(pid)} : {})};
 };
 
 /** Runs a lease subcommand; returns the text to print and whether it failed. */
@@ -78,7 +79,7 @@ export const leaseCommand = async (rest: string[], flags: LeaseFlags, cwd = proc
     const waitMs = typeof flags.wait === 'string' ? parseDuration(flags.wait) : 0;
     const deadline = Date.now() + waitMs;
     for (;;) {
-      const r = acquire(device.platform, device.id, holder, {name: device.name, purpose: typeof flags.purpose === 'string' ? flags.purpose : undefined, ttlMs});
+      const r = acquire(device.platform, device.id, holder, {name: device.name, instance: device.instance, purpose: typeof flags.purpose === 'string' ? flags.purpose : undefined, ttlMs});
       if (r.ok) {
         const until = new Date(r.lease.heartbeat + r.lease.ttlMs).toTimeString().slice(0, 5);
         const took = r.replaced ? `\nnote: took over a stale lease of "${r.replaced.lease.label}" (${r.replaced.why})` : '';
@@ -90,7 +91,7 @@ export const leaseCommand = async (rest: string[], flags: LeaseFlags, cwd = proc
   }
   if (sub === 'release') {
     try {
-      const r = release(device.platform, device.id, l => l.owner === holder.owner || (!!l.root && l.root === holder.root), {force: !!flags.force});
+      const r = release(device.platform, device.id, l => l.owner === holder.owner || (!!l.root && l.root === holder.root), {force: !!flags.force, instance: device.instance});
       if (!r.released) return {text: `${what} had no lease`, failed: false};
       const theirs = r.lease && r.lease.owner !== holder.owner ? ` (it was ${describeHolder(r.lease)})` : '';
       return {text: `released ${what}${theirs}`, failed: false};

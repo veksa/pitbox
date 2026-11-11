@@ -2,11 +2,12 @@
 // and giving everything back when it stops. The lease files themselves are in lease.ts.
 
 import path from 'node:path';
-import {acquire, DAEMON_TTL_MS, describeHolder, heartbeat, listLeases, readLease, refusal, release, staleReason, type Holder, type Lease, type Platform} from './lease.ts';
+import {acquire, DAEMON_TTL_MS, describeHolder, heartbeat, listLeases, processStart, readLease, refusal, release, staleReason, type Holder, type Lease, type Platform} from './lease.ts';
 
-export type Candidate = {platform: Platform; id: string; name?: string};
+/** A device online now. `instance` is its current boot (Android), to tell a reused serial from the leased device. */
+export type Candidate = {platform: Platform; id: string; name?: string; instance?: string};
 
-export type Held = {platform: Platform; id: string; name?: string; booted: boolean};
+export type Held = {platform: Platform; id: string; name?: string; instance?: string; booted: boolean; created: boolean};
 
 const key = (platform: Platform, id: string) => `${platform}:${id}`;
 
@@ -16,45 +17,55 @@ export const sessionLabel = (root: string, env: NodeJS.ProcessEnv = process.env)
   return session ? `${path.basename(root)} · ${session}` : path.basename(root);
 };
 
+/** What a running device nobody leased is to every session: someone's (another tool, an older pitbox), until named. */
+export const UNLEASED = 'running, unleased';
+
 export class DeviceLeases {
   readonly holder: Holder;
   readonly #held = new Map<string, Held>();
 
   constructor(root: string, pid = process.pid, label = sessionLabel(root)) {
-    this.holder = {owner: `daemon:${root}`, label, pid, root};
+    this.holder = {owner: `daemon:${root}`, label, pid, pidStart: processStart(pid), root};
   }
 
   /** A lease of this daemon, or of a shell lease taken in the same project (`pitbox lease acquire` there). */
   isMine = (l: Lease) => l.owner === this.holder.owner || (!!l.root && l.root === this.holder.root);
 
-  /** Who holds a device, as other sessions see it: undefined when nobody (or a stale lease). */
-  holderOf(platform: Platform, id: string): {mine: boolean; lease: Lease} | undefined {
+  /** Who holds a device: undefined when nobody does (no lease, a stale one, or one taken on an earlier boot). */
+  holderOf(platform: Platform, id: string, instance?: string): {mine: boolean; lease: Lease} | undefined {
     const l = readLease(platform, id);
     if (!l) return undefined;
+    if (instance && l.instance && instance !== l.instance) return undefined;
     if (this.isMine(l)) return {mine: true, lease: l};
     return staleReason(l) ? undefined : {mine: false, lease: l};
   }
 
-  /** A short tag for device lists: `yours`, or `held by "label" (pid …)`. */
-  tag(platform: Platform, id: string): string | undefined {
-    const h = this.holderOf(platform, id);
-    if (!h) return undefined;
-    return h.mine ? `yours${h.lease.booted ? ', booted here' : ''}` : `held by ${describeHolder(h.lease)}`;
+  /** A short tag for device lists: `yours`, `held by "label" (pid …)`, or `running, unleased`. */
+  tag(platform: Platform, id: string, instance?: string, running = true): string | undefined {
+    const h = this.holderOf(platform, id, instance);
+    if (!h) return running ? UNLEASED : undefined;
+    return h.mine ? `yours${h.lease.created ? ', created here' : h.lease.booted ? ', booted here' : ''}` : `held by ${describeHolder(h.lease)}`;
   }
 
   /** Takes the device or renews the hold; throws the refusal naming its holder when someone else has it. */
-  claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean} = {}): Lease {
+  claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean; created?: boolean; instance?: string} = {}): Lease {
     const r = acquire(platform, id, this.holder, {...opts, ttlMs: DAEMON_TTL_MS}, this.isMine);
     if (!r.ok) throw new Error(refusal(r.lease, opts.name ?? r.lease.name ?? id));
     const was = this.#held.get(key(platform, id));
-    this.#held.set(key(platform, id), {platform, id, name: opts.name ?? r.lease.name ?? was?.name, booted: !!(r.lease.booted || was?.booted || opts.booted)});
+    this.#held.set(key(platform, id), {
+      platform,
+      id,
+      name: opts.name ?? r.lease.name ?? was?.name,
+      instance: r.lease.instance ?? opts.instance,
+      booted: !!(r.lease.booted || opts.booted),
+      created: !!(r.lease.created || opts.created),
+    });
     return r.lease;
   }
 
   /** Whether this daemon may drive the device without asking: it holds it. */
-  holds(platform: Platform, id: string): boolean {
-    const h = this.holderOf(platform, id);
-    return !!h?.mine;
+  holds(platform: Platform, id: string, instance?: string): boolean {
+    return !!this.holderOf(platform, id, instance)?.mine;
   }
 
   held(): Held[] {
@@ -62,39 +73,49 @@ export class DeviceLeases {
   }
 
   /**
-   * The device a call without a device means: the one this session holds, else the only free one (taken now).
-   * Devices other sessions hold are never chosen; when they are all there is, the error names their holders.
+   * The device a call without a device means: the one this session holds. A device another session holds is never
+   * chosen, and neither is a running device nobody leased (another tool or an older pitbox may be driving it): it
+   * is taken only when named. `observe` (reading only) may look at the only device online, whoever's it is.
    */
   choose(candidates: Candidate[], opts: {observe?: boolean} = {}): Candidate {
     const mine: Candidate[] = [];
-    const free: Candidate[] = [];
+    const unleased: Candidate[] = [];
     const taken: {c: Candidate; lease: Lease}[] = [];
     for (const c of candidates) {
-      const h = this.holderOf(c.platform, c.id);
-      if (!h) free.push(c);
+      const h = this.holderOf(c.platform, c.id, c.instance);
+      if (!h) unleased.push(c);
       else if (h.mine) mine.push(c);
       else taken.push({c, lease: h.lease});
     }
     const names = (list: Candidate[]) => list.map(c => c.name ?? c.id).join(', ');
     if (mine.length === 1) return mine[0]!;
     if (mine.length > 1) throw new Error(`you hold several devices\nhint: pass a device: ${names(mine)}`);
-    if (free.length === 1) {
-      if (!opts.observe) this.claim(free[0]!.platform, free[0]!.id, {name: free[0]!.name});
-      return free[0]!;
-    }
-    if (free.length > 1) throw new Error(`several devices online\nhint: pass a device: ${names(free)}`);
-    if (opts.observe && taken.length === 1) return taken[0]!.c;
-    const who = taken.map(t => `${t.c.name ?? t.c.id} — held by ${describeHolder(t.lease)}`).join('\n');
-    throw new Error(`every device online is held by another session:\n${who}\nhint: \`device boot\` gives you one of your own; pitbox does not touch another session's device`);
+    if (opts.observe && candidates.length === 1) return candidates[0]!;
+    const lines = [...taken.map(t => `${t.c.name ?? t.c.id} — held by ${describeHolder(t.lease)}`), ...unleased.map(c => `${c.name ?? c.id} (${c.id}) — ${UNLEASED}`)];
+    const hint = unleased.length
+      ? `\`device boot\` gives you one of your own; a running device nobody leased is taken only when named (device=${unleased[0]!.id}) — make sure no one else drives it`
+      : "`device boot` gives you one of your own; pitbox does not touch another session's device";
+    throw new Error(`no device of this session is online:\n${lines.join('\n')}\nhint: ${hint}`);
   }
 
-  /** Renews every lease; a lease taken away (forced, or expired and taken) is dropped. Returns the dropped ones. */
-  beat(): Held[] {
+  /**
+   * Drops the devices that went away (shut down elsewhere, or a serial now another emulator's) — their leases go —
+   * and renews the rest. `online` undefined: the device lists could not be read, only renew. `busy`: devices on
+   * their way up, not online yet. Returns the dropped devices.
+   */
+  beat(online?: Candidate[], busy: Set<string> = new Set()): Held[] {
     const lost: Held[] = [];
     for (const [k, h] of this.#held) {
-      const ok = heartbeat(h.platform, h.id, this.holder.owner, {pid: this.holder.pid});
-      if (ok) continue;
+      const here = online?.find(c => c.platform === h.platform && c.id === h.id);
+      const gone = online && !busy.has(h.id) && (!here || (h.instance && here.instance && h.instance !== here.instance));
       const l = readLease(h.platform, h.id);
+      if (gone) {
+        if (l && l.owner === this.holder.owner && (!h.instance || l.instance === h.instance)) release(h.platform, h.id, this.isMine);
+        this.#held.delete(k);
+        lost.push(h);
+        continue;
+      }
+      if (heartbeat(h.platform, h.id, this.holder.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart})) continue;
       // A shell lease of this project that this daemon used: still ours, not renewed by us.
       if (l && this.isMine(l)) continue;
       this.#held.delete(k);
@@ -108,8 +129,8 @@ export class DeviceLeases {
     const adopted: Held[] = [];
     for (const l of listLeases()) {
       if (l.owner !== this.holder.owner) continue;
-      if (!heartbeat(l.platform, l.device, l.owner, {pid: this.holder.pid, label: this.holder.label})) continue;
-      const h: Held = {platform: l.platform, id: l.device, name: l.name, booted: !!l.booted};
+      if (!heartbeat(l.platform, l.device, l.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart, label: this.holder.label})) continue;
+      const h: Held = {platform: l.platform, id: l.device, name: l.name, instance: l.instance, booted: !!l.booted, created: !!l.created};
       this.#held.set(key(l.platform, l.device), h);
       adopted.push(h);
     }
@@ -117,7 +138,7 @@ export class DeviceLeases {
   }
 
   /** Gives one device back; forgotten whether or not the file was still ours. */
-  release(platform: Platform, id: string, opts: {force?: boolean} = {}): {released: boolean; lease?: Lease} {
+  release(platform: Platform, id: string, opts: {force?: boolean; instance?: string} = {}): {released: boolean; lease?: Lease} {
     this.#held.delete(key(platform, id));
     return release(platform, id, this.isMine, opts);
   }
@@ -132,7 +153,7 @@ export class DeviceLeases {
     for (const h of [...this.#held.values()]) {
       const l = readLease(h.platform, h.id);
       // Someone else's by now, or a shell lease of this project that this daemon only used: not ours to end.
-      if (l && l.owner !== this.holder.owner) {
+      if (!l || l.owner !== this.holder.owner || (h.instance && l.instance && l.instance !== h.instance)) {
         this.#held.delete(key(h.platform, h.id));
         continue;
       }

@@ -243,6 +243,13 @@ export class AppleDriver {
     return sim;
   }
 
+  /** Deletes a simulator (one pitbox created for a session); it must be shut down. */
+  async delete(udid: string) {
+    this.forgetList();
+    await this.#ok(['delete', udid], 'delete', 60_000);
+    this.forgetList();
+  }
+
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {
     this.forgetList();
     const t0 = Date.now();
