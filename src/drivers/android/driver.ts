@@ -116,6 +116,48 @@ const clearStaleAvdLock = (avd: string) => {
   }
 };
 
+/**
+ * Whether the emulator process of an instance (`pid:N`) runs `-read-only`. The emulator starts a second instance of an
+ * AVD only when every instance of it runs `-read-only`; beside a writable one it refuses. Unknown (Windows, a process
+ * that cannot be read): false.
+ */
+export const readOnlyInstance = (instance?: string): boolean => {
+  const pid = /^pid:(\d+)$/.exec(instance ?? '')?.[1];
+  if (!pid || process.platform === 'win32') return false;
+  try {
+    return / -read-only(\s|$)/.test(execFileSync('ps', ['-p', pid, '-o', 'command='], {encoding: 'utf8', timeout: 5000}));
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * A new AVD like `like` (`<like>_pitbox_N`): its `config.ini` — device, system image, hardware — and no data, so it
+ * boots as a fresh phone of the same model and image. Fails when the name is taken.
+ */
+export const createAvdLike = (like: string, name: string) => {
+  const home = avdHome();
+  const ini = fs.readFileSync(path.join(home, `${like}.ini`), 'utf8');
+  const config = fs.readFileSync(path.join(home, `${like}.avd`, 'config.ini'), 'utf8');
+  const dir = path.join(home, `${name}.avd`);
+  fs.mkdirSync(dir);
+  const named = (l: string) => (/^(AvdId|avd\.ini\.displayname)=/.test(l) || (/^avd\.(id|name)=/.test(l) && !l.endsWith('<build>')) ? l.replace(/=.*/, `=${name}`) : l);
+  fs.writeFileSync(path.join(dir, 'config.ini'), config.split('\n').map(named).join('\n'));
+  const pointer = ini
+    .split('\n')
+    .map(l => (l.startsWith('path=') ? `path=${dir}` : l.startsWith('path.rel=') ? l.replace(`${like}.avd`, `${name}.avd`) : l))
+    .join('\n');
+  fs.writeFileSync(path.join(home, `${name}.ini`), pointer);
+};
+
+/** Deletes an AVD pitbox created; refuses while an emulator runs it. */
+export const deleteAvd = (name: string) => {
+  if (avdLocked(name)) throw new AndroidError(`${name} is running: not deleted`);
+  const home = avdHome();
+  fs.rmSync(path.join(home, `${name}.avd`), {recursive: true, force: true});
+  fs.rmSync(path.join(home, `${name}.ini`), {force: true});
+};
+
 export class AndroidError extends Error {
   readonly hint?: string;
 
@@ -185,6 +227,21 @@ export class AndroidDriver {
 
   avds() {
     return listAvds().map(name => ({name, kind: avdKind(name)}));
+  }
+
+  /** See `readOnlyInstance`. */
+  readOnly(instance?: string): boolean {
+    return readOnlyInstance(instance);
+  }
+
+  /** See `createAvdLike`. */
+  createLike(like: string, name: string) {
+    createAvdLike(like, name);
+  }
+
+  /** See `deleteAvd`. */
+  deleteAvd(name: string) {
+    deleteAvd(name);
   }
 
   /** Picks a device: by serial, AVD name or model; the only online device when no selector is given. */
