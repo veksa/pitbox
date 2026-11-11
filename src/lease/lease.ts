@@ -393,7 +393,9 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
       const own = current.owner === holder.owner;
       const renewed: Lease = {
         ...current,
-        heartbeat: now,
+        // Another holder's lease that lives with its process is judged by that process alone: touching its heartbeat
+        // would stretch the grace after the process ended.
+        heartbeat: own || !current.pid ? now : current.heartbeat,
         ...(own ? {pid: holder.pid, pidStart: holder.pidStart, label: holder.label} : {}),
         name: opts.name ?? current.name,
         purpose: opts.purpose ?? current.purpose,

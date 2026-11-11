@@ -122,7 +122,9 @@ left to each agent's discipline.
 A shell lease (`pitbox lease acquire`) lives for its `--ttl` (default 30 min) or as long as `--pid` runs; acquiring
 again renews it. Its holder is the label together with the project (the nearest pitbox config's folder, else the
 working folder): the same `--as` in two worktrees is two holders. Taken inside a project, the project's daemon treats it as its own, so a script and pitbox can
-share the device. The device is a udid, serial, simulator name or AVD, or `apple:<udid>` / `android:<serial>`.
+share the device; the other way round, `lease acquire` on a device that project's running daemon holds succeeds and
+shares it (exit 0), and `lease release` leaves it with the daemon. Another project's or another label's lease is
+still refused, and a lease of a daemon that is gone is taken over once its grace ends. The device is a udid, serial, simulator name or AVD, or `apple:<udid>` / `android:<serial>`.
 
 ## What an agent does
 

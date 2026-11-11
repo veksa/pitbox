@@ -351,6 +351,70 @@ describe('shell leases', () => {
     const d = new DeviceLeases(one, process.pid, 'daemon');
     expect(d.holds('apple', 'U1')).toBe(true);
   });
+
+  it("shares a device its own project's daemon holds, and leaves it with the daemon on release", async () => {
+    const one = project();
+    const d = new DeviceLeases(one, process.pid, 'one');
+    d.claim('apple', 'U1', {name: 'iPhone 17', purpose: 'pass'});
+    const before = readLease('apple', 'U1')!;
+    const r = await leaseCommand(['acquire', 'apple:U1'], {as: 'script', purpose: 'other'}, one);
+    expect(r.failed).toBe(false);
+    expect(r.text).toMatch(/^U1 is held by this project's pitbox daemon "one" .*shared with it/);
+    const shared = readLease('apple', 'U1')!;
+    expect(shared.owner).toBe(`daemon:${one}`);
+    expect(shared.pid).toBe(process.pid);
+    expect(shared.heartbeat).toBe(before.heartbeat);
+    const rel = await leaseCommand(['release', 'apple:U1'], {as: 'script'}, one);
+    expect(rel).toEqual({text: expect.stringMatching(/^U1 stays with this project's pitbox daemon "one"/), failed: false});
+    expect(readLease('apple', 'U1')?.owner).toBe(`daemon:${one}`);
+    expect(d.holds('apple', 'U1')).toBe(true);
+  });
+
+  it("still refuses a device another project's daemon or another shell holder of its project holds", async () => {
+    const one = project();
+    const two = project();
+    new DeviceLeases(two, process.pid, 'two').claim('apple', 'U1');
+    const r = await leaseCommand(['acquire', 'apple:U1'], {as: 'script'}, one);
+    expect(r.failed).toBe(true);
+    expect(r.text).toMatch(/^U1 is held by "two"/);
+    expect((await leaseCommand(['release', 'apple:U1'], {as: 'script'}, one)).failed).toBe(true);
+    expect(readLease('apple', 'U1')?.owner).toBe(`daemon:${two}`);
+    await leaseCommand(['acquire', 'apple:U2'], {as: 'first'}, one);
+    expect((await leaseCommand(['acquire', 'apple:U2'], {as: 'second'}, one)).failed).toBe(true);
+  });
+
+  it("does not keep a gone daemon's lease alive: shared within its grace untouched, taken over after", async () => {
+    const one = project();
+    acquire('apple', 'U1', {owner: `daemon:${one}`, label: 'one', pid: DEAD_PID, root: one}, {now: Date.now() - DEAD_GRACE_MS / 2});
+    const before = readLease('apple', 'U1')!;
+    expect((await leaseCommand(['acquire', 'apple:U1'], {as: 'script'}, one)).text).toMatch(/shared with it/);
+    expect(readLease('apple', 'U1')!.heartbeat).toBe(before.heartbeat);
+    acquire('apple', 'U2', {owner: `daemon:${one}`, label: 'one', pid: DEAD_PID, root: one}, {now: Date.now() - 2 * DEAD_GRACE_MS});
+    const r = await leaseCommand(['acquire', 'apple:U2'], {as: 'script'}, one);
+    expect(r.text).toMatch(/^acquired U2 as "script".*took over a stale lease of "one"/s);
+    expect(readLease('apple', 'U2')?.owner).toBe(`as:script@${one}`);
+  });
+
+  it("shares with its project's daemon from many shell processes at once, and never takes the device", async () => {
+    const one = project();
+    new DeviceLeases(one, process.pid, 'one').claim('apple', 'RACE');
+    const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lease', 'cli.ts');
+    const script = `import {leaseCommand} from ${JSON.stringify(pathToFileURL(cli).href)};
+      const r = await leaseCommand(['acquire', 'apple:RACE'], {as: 's' + process.pid}, ${JSON.stringify(one)});
+      process.stdout.write(r.failed ? 'refused: ' + r.text : 'shared');`;
+    const runs = Array.from({length: 6}, () =>
+      new Promise<string>((resolve, reject) => {
+        const child = spawn(process.execPath, ['--input-type=module', '-e', script], {env: process.env});
+        let out = '';
+        child.stdout.on('data', d => (out += d));
+        child.stderr.on('data', d => (out += d));
+        child.on('error', reject);
+        child.on('exit', () => resolve(out.trim()));
+      }),
+    );
+    expect(await Promise.all(runs)).toEqual(Array(6).fill('shared'));
+    expect(readLease('apple', 'RACE')?.owner).toBe(`daemon:${one}`);
+  });
 });
 
 describe("a daemon's leases", () => {

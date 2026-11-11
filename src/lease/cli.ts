@@ -6,11 +6,12 @@
 //   pitbox lease list
 //
 // A shell lease has no process behind it unless --pid names one: it lives for its ttl, and acquiring again renews
-// it. Taken inside a project, it counts as that project's daemon's own, so the skill and pitbox share the device.
+// it. Taken inside a project, it counts as that project's daemon's own, so the skill and pitbox share the device —
+// and the other way round: a device that project's live daemon holds is shared with the shell, not refused.
 
 import path from 'node:path';
 import {findConfig} from '../config/load.ts';
-import {acquire, describeHolder, listLeases, parseDuration, processStart, release, type Holder, type Platform} from './lease.ts';
+import {acquire, describeHolder, listLeases, parseDuration, processStart, readLease, release, staleReason, type Holder, type Lease, type Platform} from './lease.ts';
 
 export type LeaseFlags = Record<string, string | boolean>;
 
@@ -56,6 +57,9 @@ const shellHolder = (flags: LeaseFlags, cwd: string): Holder => {
   return {owner: `as:${label}@${root}`, label, root, ...(pid ? {pid, pidStart: processStart(pid)} : {})};
 };
 
+/** A lease of the pitbox daemon of the shell's project, still live: the device is shared with it, never taken over. */
+const projectDaemon = (l: Lease, holder: Holder, instance?: string) => !!holder.root && l.owner === `daemon:${holder.root}` && !staleReason(l, Date.now(), instance);
+
 /** Runs a lease subcommand; returns the text to print and whether it failed. */
 export const leaseCommand = async (rest: string[], flags: LeaseFlags, cwd = process.cwd()): Promise<{text: string; failed: boolean}> => {
   const [sub, selector] = rest;
@@ -79,7 +83,11 @@ export const leaseCommand = async (rest: string[], flags: LeaseFlags, cwd = proc
     const waitMs = typeof flags.wait === 'string' ? parseDuration(flags.wait) : 0;
     const deadline = Date.now() + waitMs;
     for (;;) {
-      const r = acquire(device.platform, device.id, holder, {name: device.name, instance: device.instance, purpose: typeof flags.purpose === 'string' ? flags.purpose : undefined, ttlMs});
+      const same = (l: Lease) => l.owner === holder.owner || projectDaemon(l, holder, device.instance);
+      const r = acquire(device.platform, device.id, holder, {name: device.name, instance: device.instance, purpose: typeof flags.purpose === 'string' ? flags.purpose : undefined, ttlMs}, same);
+      if (r.ok && r.lease.owner !== holder.owner) {
+        return {text: `${what} is held by this project's pitbox daemon ${describeHolder(r.lease)}: shared with it while it holds the device`, failed: false};
+      }
       if (r.ok) {
         const until = new Date(r.lease.heartbeat + r.lease.ttlMs).toTimeString().slice(0, 5);
         const took = r.replaced ? `\nnote: took over a stale lease of "${r.replaced.lease.label}" (${r.replaced.why})` : '';
@@ -90,8 +98,12 @@ export const leaseCommand = async (rest: string[], flags: LeaseFlags, cwd = proc
     }
   }
   if (sub === 'release') {
+    // The project's daemon keeps a device it shared: a script that releases at the end does not take it from pitbox.
+    const daemons = readLease(device.platform, device.id);
+    if (daemons && !flags.force && projectDaemon(daemons, holder, device.instance)) return {text: `${what} stays with this project's pitbox daemon ${describeHolder(daemons)}`, failed: false};
     try {
-      const r = release(device.platform, device.id, l => l.owner === holder.owner || (!!l.root && l.root === holder.root), {force: !!flags.force, instance: device.instance});
+      const mine = (l: Lease) => l.owner === holder.owner || (!!l.root && l.root === holder.root && !l.owner.startsWith('daemon:'));
+      const r = release(device.platform, device.id, mine, {force: !!flags.force, instance: device.instance});
       if (!r.released) return {text: `${what} had no lease`, failed: false};
       const theirs = r.lease && r.lease.owner !== holder.owner ? ` (it was ${describeHolder(r.lease)})` : '';
       return {text: `released ${what}${theirs}`, failed: false};
