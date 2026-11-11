@@ -14,3 +14,9 @@ export const VERSION: string = JSON.parse(fs.readFileSync(path.join(path.dirname
 
 /** RPC that stops the daemon itself — named so it cannot collide with an engine method such as `shutdown`. */
 export const DAEMON_STOP = '__stopDaemon';
+
+/** RPC that reports what the daemon's clients are doing (calls in flight, the last call, their versions). */
+export const DAEMON_ACTIVITY = '__daemonActivity';
+
+/** The header in which a client names its pitbox version. */
+export const VERSION_HEADER = 'x-pitbox-version';

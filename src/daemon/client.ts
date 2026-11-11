@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
 import {isAlive, startHidden} from '../util/proc.ts';
-import {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo} from './info.ts';
+import {DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
 
 export class DaemonClient {
   readonly info: DaemonInfo;
@@ -18,7 +18,7 @@ export class DaemonClient {
   async call<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 15 * 60_000): Promise<T> {
     const res = await fetch(`http://127.0.0.1:${this.info.port}/`, {
       method: 'POST',
-      headers: {'content-type': 'application/json', 'x-pitbox-token': this.info.token},
+      headers: {'content-type': 'application/json', 'x-pitbox-token': this.info.token, [VERSION_HEADER]: VERSION},
       body: JSON.stringify({method, params}),
       signal: AbortSignal.timeout(timeoutMs),
     });

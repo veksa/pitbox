@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {Engine} from './engine.ts';
-import {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo} from './info.ts';
+import {IDLE_MS} from './activity.ts';
+import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
 
 export {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo};
 
@@ -48,14 +49,34 @@ export const serve = async (configFile?: string) => {
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as {method: string; params?: Record<string, unknown>};
       method = body.method;
+      if (method === DAEMON_ACTIVITY) {
+        res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result: engine.activity.report()}));
+        return;
+      }
       if (method === DAEMON_STOP) {
+        // `pitbox daemon stop|restart` always stops it. Any other stop is a client of another version replacing the
+        // daemon — an older pitbox sends no params at all — and waits until no session is at work here.
+        const busy = body.params?.by === 'user' ? undefined : engine.activity.busy();
+        if (busy) {
+          const error = `pitbox daemon ${process.pid} (version ${VERSION}) is in use (${busy}): it is not replaced by another version while a session works with it; it may be once idle for ${IDLE_MS / 60_000} min, or now with \`pitbox daemon restart\``;
+          res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: false, error}));
+          process.stderr.write(`${new Date().toISOString()} refused a stop from a client of version ${req.headers[VERSION_HEADER] ?? 'unknown'}: ${busy}\n`);
+          return;
+        }
         res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result: {stopping: true}}));
         // Only a stop that asks for it gives the devices back: an older client's upgrade restart sends no params.
         const release = body.params?.release === true;
         setTimeout(() => void shutdown(0, release), 50);
         return;
       }
-      const result = await engine.call(method, body.params ?? {});
+      const header = req.headers[VERSION_HEADER];
+      const done = engine.activity.begin(method, typeof header === 'string' ? header : undefined);
+      let result: unknown;
+      try {
+        result = await engine.call(method, body.params ?? {});
+      } finally {
+        done();
+      }
       res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result}));
     } catch (e) {
       res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: false, error: (e as Error).message}));

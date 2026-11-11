@@ -42,6 +42,8 @@ import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, machineLock, refusal} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
+import {Activity} from './activity.ts';
+import {VERSION} from './info.ts';
 
 type Params = Record<string, unknown>;
 
@@ -151,6 +153,8 @@ export class Engine {
     await this.ensureForwards(true).catch(() => undefined);
   }
   #devKey = '';
+  /** What the clients are doing; the server counts the calls, `doctor` reads their versions. */
+  readonly activity = new Activity(VERSION);
 
   private constructor(loaded: LoadedConfig) {
     this.#loaded = loaded;
