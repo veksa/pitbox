@@ -7,10 +7,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {DeviceLeases, sessionLabel, UNLEASED} from './lease/devices.ts';
 import {leaseCommand} from './lease/cli.ts';
-import {acquire, DEAD_GRACE_MS, heartbeat, leaseDir, listLeases, parseDuration, parseElapsed, probe, readLease, refusal, release, staleReason, withLock, type Holder, type Lease} from './lease/lease.ts';
+import {forgetCreated, isCreated, recordCreated} from './lease/created.ts';
+import {acquire, DEAD_GRACE_MS, heartbeat, leaseDir, listLeases, lockInternals, parseDuration, parseElapsed, probe, readLease, refusal, release, staleReason, withLock, type Holder, type Lease} from './lease/lease.ts';
 import {availableFromMeminfo, availableFromVmStat, bootWarning} from './lease/resources.ts';
 
 const realProbe = {...probe};
@@ -148,7 +149,7 @@ describe('leases', () => {
     fs.writeFileSync(path.join(blocked, 'home'), '');
     process.env.PITBOX_HOME = path.join(blocked, 'home');
     try {
-      expect(() => acquire('apple', 'U1', alice)).toThrow(/cannot write its device leases in .*home.leases \(ENOTDIR|EEXIST\)|set PITBOX_HOME to a writable folder/);
+      expect(() => acquire('apple', 'U1', alice)).toThrow(/cannot write its device leases in .*home.leases \(ENOTDIR\)\nhint: set PITBOX_HOME to a writable folder/);
     } finally {
       process.env.PITBOX_HOME = previous;
       fs.rmSync(blocked, {recursive: true, force: true});
@@ -162,6 +163,85 @@ describe('leases', () => {
     expect(() => withLock(live, () => 'ran', 200)).toThrow(/stays locked by pid/);
     expect(fs.existsSync(`${live}.lock`)).toBe(true);
     fs.rmSync(`${live}.lock`);
+  });
+
+  it('leaves a lock alone while another process is stealing it, and clears a steal file left behind', () => {
+    const lock = path.join(leaseDir(), 's.json.lock');
+    fs.mkdirSync(leaseDir(), {recursive: true});
+    fs.writeFileSync(lock, JSON.stringify({pid: DEAD_PID, at: Date.now()}));
+    fs.writeFileSync(`${lock}.steal`, '1');
+    expect(lockInternals.tryLock(lock)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(fs.existsSync(`${lock}.steal`)).toBe(true);
+    // The stealer died mid-steal: its file goes once it is old, and the next try takes the lock over.
+    const old = new Date(Date.now() - 20_000);
+    fs.utimesSync(`${lock}.steal`, old, old);
+    expect(lockInternals.tryLock(lock)).toBe(false);
+    expect(fs.existsSync(`${lock}.steal`)).toBe(false);
+    expect(lockInternals.tryLock(lock)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(lockInternals.tryLock(lock)).toBe(true);
+    fs.rmSync(lock);
+  });
+
+  it('does not remove a lock that changed hands between being judged left behind and being stolen', () => {
+    const lock = path.join(leaseDir(), 'r.json.lock');
+    fs.mkdirSync(leaseDir(), {recursive: true});
+    fs.writeFileSync(lock, JSON.stringify({pid: DEAD_PID, at: Date.now()}));
+    const taken = JSON.stringify({pid: process.pid, start: probe.start(process.pid), at: Date.now() + 1});
+    const alive = probe.alive;
+    let first = true;
+    probe.alive = pid => {
+      if (first) {
+        first = false;
+        // Another process clears the dead lock and takes it, right after this one read it.
+        fs.writeFileSync(lock, taken);
+        return false;
+      }
+      return alive(pid);
+    };
+    try {
+      expect(lockInternals.tryLock(lock)).toBe(false);
+    } finally {
+      probe.alive = alive;
+    }
+    expect(fs.readFileSync(lock, 'utf8')).toBe(taken);
+    fs.rmSync(lock);
+  });
+
+  it('locks with exclusive creation on a file system without hard links', () => {
+    const lock = path.join(leaseDir(), 'w.json.lock');
+    fs.mkdirSync(leaseDir(), {recursive: true});
+    const link = vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+      throw Object.assign(new Error('operation not permitted'), {code: 'EPERM'});
+    });
+    try {
+      expect(lockInternals.tryLock(lock)).toBe(true);
+      expect(lockInternals.usesLinks()).toBe(false);
+      expect(JSON.parse(fs.readFileSync(lock, 'utf8')).pid).toBe(process.pid);
+      expect(lockInternals.tryLock(lock)).toBe(false);
+      expect(fs.readdirSync(leaseDir()).filter(f => f.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      link.mockRestore();
+      lockInternals.resetLinks();
+      fs.rmSync(lock, {force: true});
+    }
+  });
+
+  it('retries writing the created-devices list while Windows holds the file', () => {
+    const rename = fs.renameSync;
+    let refusals = 2;
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation((a, b) => {
+      if (refusals-- > 0) throw Object.assign(new Error('resource busy'), {code: 'EBUSY'});
+      rename(a, b);
+    });
+    try {
+      recordCreated('U-RETRY', 'iPhone 17 (pitbox 2)');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(isCreated('U-RETRY')).toBe(true);
+    forgetCreated('U-RETRY');
   });
 
   it('clears a lock left by a process that is gone', () => {
@@ -314,6 +394,37 @@ describe("a daemon's leases", () => {
     expect(a.beat([sim, emu], new Set(), t0 + 130_000)).toEqual([]);
     expect(a.beat([sim], new Set(), t0 + 160_000)).toEqual([]);
     expect(a.held().map(h => h.id).sort()).toEqual(['SIM', 'emulator-5554']);
+  });
+
+  it('judges a platform whose list was read while another platform\'s list failed', () => {
+    const a = new DeviceLeases('/work/alice', process.pid, 'alice');
+    a.claim('apple', 'SIM');
+    a.claim('android', 'emulator-5554', {instance: 'pid:1'});
+    const t0 = Date.now();
+    const emu = {platform: 'android' as const, id: 'emulator-5554', instance: 'pid:2'};
+    // simctl failed: the simulator is not judged; the emulator on the serial is another one, dropped at once.
+    expect(a.beat([emu], new Set(), t0, new Set(['apple'])).map(h => h.id)).toEqual(['emulator-5554']);
+    for (let i = 1; i <= 4; i++) expect(a.beat([], new Set(), t0 + i * 60_000, new Set(['apple']))).toEqual([]);
+    expect(a.held().map(h => h.id)).toEqual(['SIM']);
+  });
+
+  it('gives back an emulator stuck offline for ten minutes', () => {
+    const a = new DeviceLeases('/work/alice', process.pid, 'alice');
+    a.claim('android', 'emulator-5554', {instance: 'pid:1'});
+    const t0 = Date.now();
+    const off = [{platform: 'android' as const, id: 'emulator-5554', offline: true}];
+    for (let t = 0; t < 10 * 60_000; t += 60_000) expect(a.beat(off, new Set(), t0 + t)).toEqual([]);
+    for (let t = 10 * 60_000; t < 12 * 60_000; t += 30_000) a.beat(off, new Set(), t0 + t);
+    expect(a.held()).toEqual([]);
+  });
+
+  it('fills in the instance of a lease taken without one, and never changes one it has', () => {
+    const a = new DeviceLeases('/work/alice', process.pid, 'alice');
+    a.claim('android', 'emulator-5554');
+    a.beat([{platform: 'android', id: 'emulator-5554', instance: 'pid:5'}]);
+    expect(readLease('android', 'emulator-5554')?.instance).toBe('pid:5');
+    expect(heartbeat('android', 'emulator-5554', readLease('android', 'emulator-5554')!.owner, {instance: 'pid:6'})).toBe(true);
+    expect(readLease('android', 'emulator-5554')?.instance).toBe('pid:5');
   });
 
   it('waits much longer when a whole device list comes back empty (adb restarted)', () => {

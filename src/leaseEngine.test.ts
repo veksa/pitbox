@@ -6,11 +6,12 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {Engine} from './daemon/engine.ts';
-import {AndroidDriver, type AndroidDevice} from './drivers/android/driver.ts';
+import {AndroidDriver, avdDir, avdStamp, avdTaken, createAvdLike, deleteAvd, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
+import {avdHome} from './drivers/android/sdk.ts';
 import type {Simulator} from './drivers/apple/driver.ts';
-import {isCreated, recordCreated} from './lease/created.ts';
+import {isCreated, listCreated, recordCreated} from './lease/created.ts';
 import {leaseDir, readLease} from './lease/lease.ts';
 import {PushCenter} from './push/push.ts';
 
@@ -61,16 +62,23 @@ class FakeAndroid {
   devs: AndroidDevice[] = [];
   bootOpts: Record<string, unknown>[] = [];
   stopped: string[] = [];
-  #boots = 0;
-
+  aborted: string[] = [];
   avdNames = ['Test_Phone_Lease'];
   deletedAvds: string[] = [];
   /** Instances started -read-only (the emulator runs a second instance of an AVD only beside read-only ones). */
   readOnlyIds = new Set<string>();
+  /** AVDs whose next boot never finishes. */
+  hang = new Set<string>();
+  /** AVD -> the instance holding its lock while one runs. */
+  locks = new Map<string, string>();
+  #boots = 0;
 
   devices = async () => this.devs.map(d => ({...d}));
   avds = () => this.avdNames.map(name => ({name, kind: 'phone'}));
   readOnly = (instance?: string) => !!instance && this.readOnlyIds.has(instance);
+  lockedBy = (avd: string) => this.locks.get(avd) ?? this.devs.find(d => d.avd === avd && !this.readOnly(d.instance))?.instance;
+  avdTaken = (name: string) => this.avdNames.includes(name);
+  avdStamp = (name: string) => (this.avdNames.includes(name) ? `stamp-${name}` : undefined);
   createLike = (like: string, name: string) => {
     if (!this.avdNames.includes(like) || this.avdNames.includes(name)) throw new Error('bad clone');
     this.avdNames.push(name);
@@ -85,18 +93,27 @@ class FakeAndroid {
     return hit[0]!.serial;
   };
   /** A new emulator takes the lowest free port, as the emulator does: a serial comes back after a shutdown. */
-  boot = async (avd: string, opts: Record<string, unknown>) => {
+  launch = async (avd: string, opts: Record<string, unknown>) => {
     this.bootOpts.push(opts);
-    let port = 5554;
-    while (this.devs.some(d => d.serial === `emulator-${port}`)) port += 2;
-    const serial = `emulator-${port}`;
     if (!this.avdNames.includes(avd)) throw new Error(`unknown AVD "${avd}"`);
     // The emulator's own rule: a second instance only when it and every running one are -read-only.
     if (this.devs.some(d => d.avd === avd && !(opts.newInstance && this.readOnly(d.instance)))) throw new Error('Another emulator instance is running');
+    let port = 5554;
+    while (this.devs.some(d => d.serial === `emulator-${port}`)) port += 2;
+    const serial = `emulator-${port}`;
     const instance = `pid:${++this.#boots}`;
-    if (opts.newInstance || opts.readOnly) this.readOnlyIds.add(instance);
+    if (opts.newInstance) this.readOnlyIds.add(instance);
     this.devs.push({serial, state: 'device', avd, emulator: true, instance});
-    return {serial, ms: 1, already: false, ...(opts.newInstance ? {readOnly: true} : {})};
+    return {avd, serial, readOnly: !!opts.newInstance} as unknown as Launch;
+  };
+  untilListed = async () => undefined;
+  untilBooted = async (l: Launch) => {
+    if (this.hang.has(l.avd)) throw new Error(`${l.avd} did not finish booting in 600s`);
+    return {serial: l.serial!, ms: 1, already: false, ...(l.readOnly ? {readOnly: true} : {})};
+  };
+  abort = async (l: Launch) => {
+    this.aborted.push(l.serial!);
+    this.devs = this.devs.filter(d => d.serial !== l.serial);
   };
   shutdown = async (serial: string) => {
     this.devs = this.devs.filter(d => d.serial !== serial);
@@ -339,6 +356,88 @@ const freePort = () =>
     });
   });
 
+describe('AVD copies', () => {
+  const grace = Engine.COPY_GRACE_MS;
+  const letGo = Engine.AVD_LET_GO_MS;
+  afterEach(() => {
+    Engine.COPY_GRACE_MS = grace;
+    Engine.AVD_LET_GO_MS = letGo;
+  });
+
+  it('answers the copy it holds on the next boot instead of making another', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await b.methods.boot({avd: 'Test_Phone_Lease'});
+    expect(await b.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({serial: 'emulator-5556', already: true, avd: 'Test_Phone_Lease_pitbox_2'});
+    expect(android.avdNames).toEqual(['Test_Phone_Lease', 'Test_Phone_Lease_pitbox_2']);
+    expect(await b.methods.stopApp({})).toEqual({serial: 'emulator-5556'});
+  });
+
+  it('boots a copy without snapshots and with more time, and kills and deletes one that does not come up', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    android.hang.add('Test_Phone_Lease_pitbox_2');
+    await expect(b.methods.boot({avd: 'Test_Phone_Lease'})).rejects.toThrow(/did not finish booting/);
+    expect(android.bootOpts[1]).toMatchObject({noSnapshot: true, timeoutMs: 600_000, newInstance: false});
+    expect(android.aborted).toEqual(['emulator-5556']);
+    expect(android.deletedAvds).toEqual(['Test_Phone_Lease_pitbox_2']);
+    expect(listCreated()).toEqual([]);
+    expect(readLease('android', 'emulator-5556')).toBeUndefined();
+  });
+
+  it('says when a copy outlives its release, and a later sweep deletes it', async () => {
+    Engine.AVD_LET_GO_MS = 50;
+    Engine.COPY_GRACE_MS = 0;
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await b.methods.boot({avd: 'Test_Phone_Lease'});
+    // Its emulator is slow to let go of the AVD.
+    android.locks.set('Test_Phone_Lease_pitbox_2', 'pid:99');
+    expect(await b.methods.release({})).toMatchObject({note: expect.stringMatching(/Test_Phone_Lease_pitbox_2 not deleted yet: its emulator still runs/)});
+    expect(android.avdNames).toContain('Test_Phone_Lease_pitbox_2');
+    android.locks.delete('Test_Phone_Lease_pitbox_2');
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: ['Test_Phone_Lease_pitbox_2']});
+  });
+
+  it('lets two sessions booting one AVD at once each end up with an emulator of its own', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    const [ra, rb] = (await Promise.all([a.methods.boot({avd: 'Test_Phone_Lease'}), b.methods.boot({avd: 'Test_Phone_Lease'})])) as {serial: string; avd: string}[];
+    expect(new Set([ra!.serial, rb!.serial]).size).toBe(2);
+    expect([ra!.avd, rb!.avd].sort()).toEqual(['Test_Phone_Lease', 'Test_Phone_Lease_pitbox_2']);
+    expect(android.aborted).toEqual([]);
+  });
+
+  it('makes a copy beside a writable instance that is still starting or offline, never a -read-only instance', async () => {
+    const android = new FakeAndroid();
+    const b = await session('bob', {android});
+    android.devs.push({serial: 'emulator-5554', state: 'offline', avd: 'Test_Phone_Lease', emulator: true, instance: 'pid:w'});
+    expect(await b.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({avd: 'Test_Phone_Lease_pitbox_2'});
+    expect(android.bootOpts[0]).toMatchObject({newInstance: false, noSnapshot: true});
+  });
+
+  it('sweeps only copies older than the grace, never a folder made later under the same name', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    android.avdNames.push('Test_Phone_Lease_pitbox_2', 'Test_Phone_Lease_pitbox_3');
+    recordCreated('android:Test_Phone_Lease_pitbox_2', 'Test_Phone_Lease_pitbox_2', {like: 'Test_Phone_Lease', stamp: 'stamp-Test_Phone_Lease_pitbox_2'});
+    recordCreated('android:Test_Phone_Lease_pitbox_3', 'Test_Phone_Lease_pitbox_3', {like: 'Test_Phone_Lease', stamp: 'an older folder'});
+    // Just made: maybe booting right now.
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: []});
+    Engine.COPY_GRACE_MS = 0;
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: ['Test_Phone_Lease_pitbox_2']});
+    expect(android.avdNames).toEqual(['Test_Phone_Lease', 'Test_Phone_Lease_pitbox_3']);
+    expect(listCreated()).toEqual([]);
+  });
+});
+
 describe('push gateway through the daemon', () => {
   it("delivers only to the session's own device, and never takes a device for POST /push", async () => {
     const android = new FakeAndroid();
@@ -387,7 +486,7 @@ D=${JSON.stringify(dir)}
 case "$1 $2 $3" in
   "devices -l "*) echo "List of devices attached"; cat "$D/list";;
   "emu avd name") echo emu >> "$D/calls"; echo "Test_Phone_Lease"; echo OK;;
-  "emu avd discoverypath") echo emu >> "$D/calls"; cat "$D/path"; echo; echo OK;;
+  "emu avd discoverypath") echo emu >> "$D/calls"; cat "$D/path"; echo; grep -q '^KO' "$D/path" || echo OK;;
 esac
 `,
       {mode: 0o755},
@@ -418,4 +517,77 @@ esac
     adb.set(line(2), '/Users/x/.android/avd/running/pid_6060.ini');
     expect((await adb.driver.devices())[0]?.instance).toBe('pid:6060');
   });
+  it.skipIf(process.platform === 'win32')('asks again for an instance the console did not give, and keeps one it did', async () => {
+    const adb = fakeAdb();
+    adb.set(line(7), 'KO: unknown command');
+    expect((await adb.driver.devices())[0]).toMatchObject({avd: 'Test_Phone_Lease'});
+    expect((await adb.driver.devices())[0]?.instance).toBeUndefined();
+    // Not asked again at once (the console is slow to answer), but after a while.
+    expect(adb.calls()).toBe(2);
+    adb.set(line(7), '/Users/x/.android/avd/running/pid_7070.ini');
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 16_000);
+    try {
+      expect((await adb.driver.devices())[0]?.instance).toBe('pid:7070');
+      expect((await adb.driver.devices())[0]?.instance).toBe('pid:7070');
+    } finally {
+      clock.mockRestore();
+    }
+    // The name was kept: only the instance was asked again, once.
+    expect(adb.calls()).toBe(3);
+  });
 });
+
+describe('android AVD files', () => {
+  const previous = {...process.env};
+  let home = '';
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-avdhome-'));
+    dirs.push(home);
+    for (const k of ['ANDROID_AVD_HOME', 'ANDROID_EMULATOR_HOME', 'ANDROID_USER_HOME', 'ANDROID_PREFS_ROOT', 'ANDROID_SDK_HOME']) delete process.env[k];
+  });
+  afterEach(() => {
+    process.env = {...previous};
+  });
+
+  it('finds the AVD home the way the emulator does', () => {
+    process.env.ANDROID_SDK_HOME = path.join(home, 'sdkhome');
+    expect(avdHome()).toBe(path.join(home, 'sdkhome', '.android', 'avd'));
+    process.env.ANDROID_USER_HOME = path.join(home, 'user');
+    expect(avdHome()).toBe(path.join(home, 'user', 'avd'));
+    process.env.ANDROID_EMULATOR_HOME = path.join(home, 'emu');
+    expect(avdHome()).toBe(path.join(home, 'emu', 'avd'));
+    process.env.ANDROID_AVD_HOME = path.join(home, 'avds');
+    expect(avdHome()).toBe(path.join(home, 'avds'));
+  });
+
+  it('copies an AVD from where its pointer says, never pointing back into it, and deletes only the copy', () => {
+    const avds = path.join(home, 'avds');
+    const elsewhere = path.join(home, 'disk2', 'Phone.avd');
+    fs.mkdirSync(avds, {recursive: true});
+    fs.mkdirSync(elsewhere, {recursive: true});
+    process.env.ANDROID_AVD_HOME = avds;
+    fs.writeFileSync(path.join(avds, 'Phone.ini'), `avd.ini.encoding=UTF-8\npath=${elsewhere}\npath.rel=avd/Phone.avd\ntarget=android-36\n`);
+    fs.writeFileSync(
+      path.join(elsewhere, 'config.ini'),
+      `AvdId=Phone\navd.ini.displayname=Phone\nimage.sysdir.1=system-images/android-36/google_apis/arm64-v8a/\nsdcard.path=${path.join(elsewhere, 'sdcard.img')}\nhw.lcd.density=420\n`,
+    );
+    // A folder left without its pointer still takes the name.
+    fs.mkdirSync(path.join(avds, 'Phone_pitbox_2.avd'));
+    expect(avdTaken('Phone_pitbox_2')).toBe(true);
+    createAvdLike('Phone', 'Phone_pitbox_3');
+    const config = fs.readFileSync(path.join(avds, 'Phone_pitbox_3.avd', 'config.ini'), 'utf8');
+    expect(config).toContain('AvdId=Phone_pitbox_3');
+    expect(config).toContain('image.sysdir.1=system-images/android-36/');
+    expect(config).toContain('hw.lcd.density=420');
+    expect(config).not.toContain(elsewhere);
+    expect(fs.readFileSync(path.join(avds, 'Phone_pitbox_3.ini'), 'utf8')).toContain(`path=${path.join(avds, 'Phone_pitbox_3.avd')}`);
+    expect(avdDir('Phone')).toBe(elsewhere);
+    expect(avdStamp('Phone_pitbox_3')).toMatch(/^\d+:\d+$/);
+    expect(() => createAvdLike('Phone', 'Phone_pitbox_3')).toThrow(/exists already/);
+    deleteAvd('Phone_pitbox_3');
+    expect(fs.readdirSync(avds).sort()).toEqual(['Phone.ini', 'Phone_pitbox_2.avd']);
+    expect(fs.existsSync(path.join(elsewhere, 'config.ini'))).toBe(true);
+  });
+});
+
