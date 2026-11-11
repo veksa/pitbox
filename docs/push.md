@@ -185,7 +185,8 @@ When the port is taken, `up` brings the rest of the stand up and reports `push g
 **Which device.** Only a device this session holds ([device leases](parallel.md)): never one another session
 holds, never one that runs with no lease. A token bound with `push bind <token> --device …` goes to that device
 while the session holds it (a binding to a device it no longer holds is skipped, and the verdict says so); so does
-one that came with a `device` in a `POST /push`. Bindings are kept in the state directory (`push-tokens.json`)
+one that came with a `device` in a `POST /push` — which the session must hold: the gateway never takes a device,
+and a device it does not hold is refused with its holder in the verdict. Bindings are kept in the state directory (`push-tokens.json`)
 across daemon restarts. Otherwise an APNs
 request goes to the booted simulator; an FCM request goes to the Android device online, or to the simulator when
 the token is an APNs token (64 hex digits) or no Android device is online — React Native Firebase registers FCM

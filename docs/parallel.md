@@ -9,11 +9,14 @@ left to each agent's discipline.
 
 - **A lease per device.** `~/.pitbox/leases/<platform>-<udid|serial>.json` (`PITBOX_HOME` moves `~/.pitbox`):
   the holder's label, its pid and the pid's start time, its project folder, what for, since when, whether pitbox
-  booted (or created) the device for it, and for Android the boot it was taken on. Every change to a lease happens
-  under that device's lock file and replaces the file whole: two sessions racing for one device cannot both get it.
+  booted (or created) the device for it, and for Android the emulator instance it was taken on. Every change to a
+  lease happens under that device's lock file and replaces the file whole: two sessions racing for one device
+  cannot both get it. The folder must be writable (else pitbox says so and asks for a writable `PITBOX_HOME`); on a
+  file system without hard links the lock files are created exclusively instead.
 - **An Android serial is not a device.** `emulator-5556` goes to the next emulator on that port; a lease names the
-  boot of the device (its kernel boot id), so a new emulator on a reused serial is free, and the session that held
-  the old one neither drives nor shuts down the new one.
+  emulator process (`adb emu avd discoverypath`, `pid_<N>.ini`), not the kernel boot id — a quickboot snapshot
+  restores that — so a new emulator on a reused serial is free, and the session that held the old one neither
+  drives nor shuts down the new one. pitbox asks once per adb connection and asks again after the device went offline.
 - **The holder is the project's daemon.** Sessions of one project share its daemon, and so its devices; parallel
   sessions of one project work from separate worktrees (each has its own config folder, daemon and stand ports).
   The label others see is the project's folder name, plus `PITBOX_SESSION` when the agent's environment sets one
@@ -36,7 +39,10 @@ left to each agent's discipline.
   When another session holds it, or it runs with no lease: a shut-down simulator of the same model and runtime that
   nobody holds, else a new one (`iPhone 17 (pitbox 2)`, named under a machine-wide lock and deleted again when the
   session gives it back — `devices.deleteCreated: false` keeps it; `pitbox devices clean` / `device action=clean`
-  deletes leftover ones that are shut down and held by nobody). For Android: the instance of the AVD this session
+  deletes leftover ones that are shut down and held by nobody). pitbox records each simulator it creates
+  (`$PITBOX_HOME/created-simulators.json`) and deletes only those, never one named like them by hand; cleaning runs
+  under the lock that creates them, so a simulator created a moment ago and not leased yet is never taken for a
+  leftover. For Android: the instance of the AVD this session
   holds, else a new one, started `-read-only` beside an instance that already runs (its changes go when it shuts
   down); an emulator it started that it cannot lease is shut down again, not left running. Before a new
   device starts, pitbox looks at free memory and load and prints a warning when another device is likely to make
@@ -51,16 +57,21 @@ left to each agent's discipline.
 - **Stale leases.** A lease lives as long as its holder process: the same pid with the same start time, so a pid
   the system reused for another program does not count, and a machine that slept does not lose its leases. Once the
   process is gone (after a minute's grace, in which a restarted daemon picks its devices up) the next session that
-  needs the device takes it over. Only a shell lease with no `--pid` expires by time. A daemon renews its leases
-  every 30 s on a timer of its own and gives back the devices that went away.
+  needs the device takes it over. The start time is kept as seconds since the epoch, so it reads the same whatever
+  the time zone or language of the session reading it (on Windows only the pid is checked). Only a shell lease with
+  no `--pid` expires by time. A daemon renews its leases every 30 s on a timer of its own and gives back the
+  devices that went away — only after three beats and 90 s missing from the device list (5 min when the whole list
+  comes back empty, as when adb restarts); an `offline` device counts as present, and a device back in the list
+  starts the count again. A different emulator on the serial ends the lease at once.
 - **One version per project.** Sessions of one project share its daemon. A session with another pitbox version
   replaces the daemon only when it is newer and the daemon is idle; otherwise it uses the daemon as it is and says
   so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
 - **Forwards follow leases.** The daemon applies `adb reverse` only on devices it holds, and removes only the
   ports it forwarded, never another stand's.
-- **The push gateway delivers only to this session's devices.** A gateway request goes to a device the session
-  holds; a token bound to a device it no longer holds is routed by kind instead, with a note in the verdict. With no
-  device of the session online the gateway answers 503.
+- **The push gateway delivers only to devices the session holds.** Never to another session's, never to one that
+  runs with no lease, and it never takes a device: a `POST /push` naming a device the session does not hold is
+  refused with the holder in the verdict. A token bound to a device it no longer holds is routed by kind instead,
+  with a note in the verdict. With no device of the session online the gateway answers 503.
 - **Shared caches.** The Apple runner, the fold helper and the Mac runner are built once per source and Xcode
   version under `~/Library/Caches/pitbox` and shared by every daemon. A version in use is marked
   (`.in-use-<pid>`), a build holds `<version>.lock` (a second daemon building the same version waits and finds it
