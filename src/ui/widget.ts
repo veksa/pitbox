@@ -394,12 +394,18 @@ const dragPreview = async (ui: DeviceUi, name: string, size: string): Promise<{x
     await touch('move', finger.x, finger.y);
     // The picker gives way to the home page with the widget under the finger and a Cancel target on top. The
     // workspace leaves the accessibility tree while something is dragged over it: the launcher's own root is the page.
-    const drag = await until(ui, 2500, s => (dragging(s) ? true : undefined));
+    let drag = await until(ui, 2500, s => (dragging(s) ? true : undefined));
+    if (!drag.hit) {
+      // A first drag out of a picker just opened can need a longer move to lift the preview.
+      finger = {x: finger.x + 40, y: finger.y + 40};
+      await touch('move', finger.x, finger.y);
+      drag = await until(ui, 2500, s => (dragging(s) ? true : undefined));
+    }
     if (!drag.hit) throw new Error(`holding the "${name}" preview did not start dragging it\nhint: this picker places widgets in a way pitbox does not drive; add it by hand`);
-    // Launcher3 says where the widget would land ("Move to row 2 column 1 in Home screen 1 of 1") once the cells
-    // under the finger can take it: dropped there, where the launcher chose. Otherwise the finger moves to the
-    // emptiest spot of the page and waits for that answer there.
-    const hint = (x: Snapshot) => (x.nodes.some(n => /^move to row \d+/i.test(n.d ?? '')) ? true : undefined);
+    // Launcher3 says where the widget would land ("Move to row 2 column 1 in Home screen 1 of 1", in the system's
+    // language) on the dragged view once the cells under the finger can take it: dropped there, where the launcher
+    // chose. Otherwise the finger moves to the emptiest spot of the page and waits for that answer there.
+    const hint = (x: Snapshot) => (x.nodes.some(n => dropHint(n, finger)) ? true : undefined);
     let ready = await until(ui, 1500, hint);
     if (!ready.hit) {
       const page = ready.snap.nodes[idOf(ready.snap, 'workspace') ?? idOf(ready.snap, 'drag_layer') ?? 0]!.b;
@@ -428,6 +434,13 @@ const dragPreview = async (ui: DeviceUi, name: string, size: string): Promise<{x
     throw e;
   }
 };
+
+/**
+ * The launcher's answer to where a dragged widget would land, in any language: the view under the finger, with no id
+ * and no text, described by a row and a column number.
+ */
+export const dropHint = (n: UiNode, at: {x: number; y: number}) =>
+  !n.id && !n.t && n.b[0] <= at.x && at.x <= n.b[2] && n.b[1] <= at.y && at.y <= n.b[3] && (n.d?.match(/\p{Nd}+/gu)?.length ?? 0) >= 2;
 
 /** A widget or an item is being dragged over the home screen: the drop targets are up, or the launcher says where it would go. */
 export const dragging = (s: Pick<Snapshot, 'nodes'>) =>

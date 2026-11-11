@@ -3,7 +3,7 @@ import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 import {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, type Bounds, type UiNode, type UiWindow} from './ui/snapshot.ts';
-import {freeSpot, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
+import {dropHint, freeSpot, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
 
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
@@ -144,6 +144,7 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
   let placed = false;
   let held = false;
   let carrying = false;
+  let finger = {x: 0, y: 0};
   const calls: string[] = [];
   const at = (b: Bounds, x: number, y: number) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
   const WIDGET: Bounds = [60, 900, 1020, 1400];
@@ -153,7 +154,7 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
     const homeNodes: UiNode[] = [root, {p: 0, w: 0, c: 'TextView', b: [60, 1500, 260, 1750], t: 'MyApp', d: 'MyApp', f: 'cl'}];
     if (placed) homeNodes.push({p: 0, w: 0, c: 'FrameLayout', b: WIDGET, d: 'Note'});
     if (screen === 'drag') homeNodes.push({p: 0, w: 0, c: 'Button', b: REMOVE, id: 'delete_target_text', t: 'Remove', f: 'c'});
-    if (screen === 'drag' && carrying) homeNodes.push({p: 0, w: 0, c: 'View', b: [60, 900, 600, 1400], d: 'Move to row 2 column 1 in Home screen 1 of 1'});
+    if (screen === 'drag' && carrying) homeNodes.push({p: 0, w: 0, c: 'View', b: [finger.x - 270, finger.y - 250, finger.x + 270, finger.y + 250], d: 'Move to row 2 column 1 in Home screen 1 of 1'});
     if (screen === 'home' || screen === 'drag') return {windows: launcher, nodes: homeNodes};
     if (screen === 'menu') return {windows: launcher, nodes: [...homeNodes, {p: 0, w: 0, c: 'Button', b: [300, 1000, 800, 1100], f: 'c'}, {p: 2 + Number(placed), w: 0, c: 'TextView', b: [320, 1020, 780, 1080], t: 'Widgets', id: 'bubble_text'}]};
     const picker: UiNode[] = [
@@ -182,6 +183,8 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
       else if (cmd === 'tap' && screen === 'chosen' && at([700, 2000, 900, 2100], x, y)) [screen, placed] = ['home', true];
       if (cmd === 'text') return {set: true};
       if (cmd === 'touch') {
+        // The dragged view hangs under the finger and carries the launcher's answer.
+        finger = {x, y};
         if (a.phase === 'down') held = at(WIDGET, x, y) || (screen === 'chosen' && at([0, 600, 540, 1100], x, y));
         if (a.phase === 'move' && held && screen === 'chosen') [screen, carrying] = ['drag', true];
         else if (a.phase === 'move' && held && placed) screen = 'drag';
@@ -201,6 +204,16 @@ const fakeLauncher = (opts: {addButton?: boolean} = {}) => {
 };
 
 describe('a widget on a Launcher3 home screen', () => {
+  it('reads where a dragged widget would land in any language, only on the view under the finger', () => {
+    const node = (d: string, extra: Partial<UiNode> = {}): UiNode => ({c: 'FrameLayout', b: [199, 688, 744, 1233], d, ...extra}) as UiNode;
+    const finger = {x: 400, y: 900};
+    expect(dropHint(node('Move to row 2 column 1 in Home screen 1 of 1'), finger)).toBe(true);
+    expect(dropHint(node('In Zeile 2, Spalte 2 verschoben'), finger)).toBe(true);
+    expect(dropHint(node('In Zeile 2, Spalte 2 verschoben'), {x: 900, y: 900})).toBe(false);
+    expect(dropHint(node('14:20', {t: '14:20'}), finger)).toBe(false);
+    expect(dropHint(node('Akku bei 100 Prozent.', {id: 'battery'}), finger)).toBe(false);
+  });
+
   it('is added through the picker\'s Add button and removed by dragging it to Remove', async () => {
     const l = fakeLauncher();
     const added = await widget(l.ui, 'android', parseWidget('add Note app=MyApp'));
