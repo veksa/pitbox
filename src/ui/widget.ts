@@ -501,6 +501,9 @@ const ADD_WIDGET_SYMBOL = 'widget.small.badge.plus';
 const GALLERY = 'add-sheet-collection-view';
 const REMOVE_ITEM = 'com.apple.springboardhome.application-shortcut-item.remove-widget';
 
+export const IOS_FOLDABLE =
+  'widget is not supported on a foldable iPhone simulator: its SpringBoard reports the home pages of both screens with frames turned against the lit one, and the simulator ignores the home button, so nothing on its home screen can be pressed where it is drawn\nhint: add the widget by hand';
+
 export const IOS_SIZES = ['small', 'medium', 'large', 'extra large', 'extra large portrait'];
 
 /** A widget on an iOS home page: an icon view with the widget's scrolling content inside (an app icon has none). */
@@ -580,22 +583,59 @@ export const iosGalleryPage = (snap: Pick<Snapshot, 'nodes'>, app: string): IosG
 const iosSnap = async (ui: DeviceUi) => steady(ui, 1500);
 
 /**
+ * Closes the widget gallery, which home leaves up on some screens: pulled down by its grabber, the short button with
+ * no id at the top of the sheet.
+ */
+const iosCloseSheet = async (ui: DeviceUi, snap: Snapshot) => {
+  const {height} = await ui.size();
+  const grabber = snap.nodes
+    .filter(n => n.c === 'Button' && !n.id && n.b[3] - n.b[1] < 40 && n.b[1] > 0 && n.b[1] < height * 0.4)
+    .sort((a, b) => a.b[1] - b.b[1])[0];
+  if (!grabber) return;
+  const c = centre(grabber.b);
+  await ui.swipe(`${c.x},${c.y},${c.x},${Math.round(height * 0.98)}`, 400);
+};
+
+/**
  * The first home page, out of editing, with nothing over it. Home leaves editing or a menu first, and goes to the
  * first page when pressed on another one.
  */
 const iosHome = async (ui: DeviceUi): Promise<Snapshot> => {
+  // A foldable iPhone's SpringBoard lists the home pages of both its screens, with frames turned against the lit
+  // one, and the simulator does not take the home button: nothing on it can be found where it is drawn.
+  const first = await ui.snapshot();
+  if (first.nodes.filter(n => n.id === HOME_ICONS && n.p < 0).length > 1) throw new Error(IOS_FOLDABLE);
   for (let i = 0; i < 5; i++) {
     await ui.key(['home']);
     const {snap, hit} = await until(ui, 2500, s => (s.windows[0]?.pkg === SPRINGBOARD && s.nodes.some(n => n.id === HOME_ICONS) ? true : undefined));
+    if (snap.windows[0]?.pkg === SPRINGBOARD && snap.nodes.some(n => n.id === 'PopoverDismissRegion')) {
+      await iosCloseSheet(ui, snap);
+      continue;
+    }
     if (!hit || iosEditing(snap) || snap.nodes.some(n => n.id === GALLERY || n.id === REMOVE_ITEM)) continue;
-    const settled = await iosSnap(ui);
+    let settled = await iosSnap(ui);
+    // Home does not always go back to the first page: swiped back to it.
+    for (let k = iosPages(settled).page; k > 1; k--) {
+      const prev = await iosPrevPage(ui, settled);
+      if (!prev) break;
+      settled = prev;
+    }
     if (iosPages(settled).page === 1) return settled;
   }
   const snap = await ui.snapshot();
   throw new Error(`home did not bring up the home screen (in front: ${snap.windows[0]?.pkg ?? 'nothing'})`);
 };
 
-/** Swipes to the next home page; false when the screen did not move. */
+/** Swipes back to the previous home page; undefined when the page did not change. */
+const iosPrevPage = async (ui: DeviceUi, snap: Snapshot): Promise<Snapshot | undefined> => {
+  const {page} = iosPages(snap);
+  const {width, height} = await ui.size();
+  await ui.swipe(`${Math.round(width * 0.15)},${Math.round(height * 0.5)},${Math.round(width * 0.85)},${Math.round(height * 0.5)}`);
+  const r = await until(ui, 2000, s => (iosPages(s).page !== page ? true : undefined));
+  return r.hit ? iosSnap(ui) : undefined;
+};
+
+/** Swipes to the next home page; undefined when the page did not change. */
 const iosNextPage = async (ui: DeviceUi, snap: Snapshot): Promise<Snapshot | undefined> => {
   const {page} = iosPages(snap);
   const {width, height} = await ui.size();
@@ -622,15 +662,19 @@ const iosMatches = (w: IosHomeWidget, label: string) => same(w.label, label);
 
 /** The Edit button of the home screen being edited (its menu holds "Add Widget"), then that item: the gallery opens. */
 const iosOpenGallery = async (ui: DeviceUi, spot: {x: number; y: number}): Promise<Snapshot> => {
-  const {height} = await ui.size();
-  // Two buttons with no id head the page being edited: Edit and Done, in reading order. Edit comes first in a
-  // left-to-right language; the other one is tried when the first was Done.
+  // Two buttons with no id of their own stand over the page being edited: Edit and Done (a row at the top of a
+  // phone, a column beside a foldable's side dock). Which comes first depends on the language and the screen: the
+  // first in reading order is tried, and the other one when that was Done.
   for (const side of ['first', 'last'] as const) {
     await ui.press(`${spot.x},${spot.y}`, 'longpress');
-    const edit = await until(ui, 3000, s => {
+    const edit = await until(ui, 4000, s => {
       if (!iosEditing(s)) return undefined;
-      const top = s.nodes.flatMap((n, i) => (n.c === 'Button' && !n.id && !n.d && n.b[3] < height * 0.12 ? [i] : [])).sort((x, y) => s.nodes[x]!.b[0] - s.nodes[y]!.b[0]);
-      return top.length ? (side === 'first' ? top[0] : top[top.length - 1]) : undefined;
+      const seen = new Set<string>();
+      const bar = s.nodes
+        .flatMap((n, i) => (n.c === 'Button' && !n.id && !n.d && n.t && !s.nodes.some(m => m.c === 'Icon' && inAncestry(s.nodes, n, s.nodes.indexOf(m))) ? [i] : []))
+        .filter(i => !seen.has(s.nodes[i]!.b.join(',')) && !!seen.add(s.nodes[i]!.b.join(',')))
+        .sort((x, y) => s.nodes[x]!.b[1] - s.nodes[y]!.b[1] || s.nodes[x]!.b[0] - s.nodes[y]!.b[0]);
+      return bar.length ? (side === 'first' ? bar[0] : bar[bar.length - 1]) : undefined;
     });
     if (edit.hit === undefined) throw new Error(`a long press on the home screen at ${spot.x},${spot.y} did not start editing it`);
     await ui.press(point(edit.snap, edit.hit));
@@ -719,9 +763,11 @@ const iosGalleryWalk = async (ui: DeviceUi, app: string, stop: (p: IosGalleryPag
 /** A spot to long-press on the home page in the tree: below the status bar, above the dock. */
 const iosSpot = async (ui: DeviceUi, snap: Snapshot) => {
   const {width, height} = await ui.size();
+  // The dock and the page dots below the icons; a dock at the side (a foldable's) is just one more thing to avoid.
+  const below = (n?: UiNode) => (n && n.b[1] > height / 2 ? n.b[1] : height);
   const dock = snap.nodes.find(n => n.t === 'Dock' || n.id === 'Dock');
   const pc = snap.nodes.find(n => n.id === 'Page control' || n.id === 'spotlight-pill');
-  const bottom = Math.min(dock?.b[1] ?? height, pc?.b[1] ?? height);
+  const bottom = Math.min(below(dock), below(pc));
   return freeSpot(snap, [0, Math.round(height * 0.08), width, bottom], {top: Math.round(height * 0.08)});
 };
 

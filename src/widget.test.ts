@@ -8,6 +8,7 @@ import {freeSpot, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPa
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
 const snap = (nodes: UiNode[], windows = launcher) => buildSnapshot(windows, nodes);
+const SB: UiWindow[] = [{type: 'app', title: '', pkg: 'com.apple.springboard'}];
 
 describe('widget commands', () => {
   it('parse a quoted name, the app and the size', () => {
@@ -206,6 +207,15 @@ describe('a widget on a Launcher3 home screen', () => {
     await expect(widget(new DeviceUi('dev', runner as never), 'android', parseWidget('add Note'))).rejects.toThrow(/launcher com\.example\.launcher is not supported/);
   }, 20_000);
 
+  it('is refused on a foldable iPhone, whose SpringBoard lists both screens', async () => {
+    const root = (b: Bounds): UiNode => ({p: -1, w: 0, c: 'Other', b, id: 'Home screen icons'});
+    const runner = {
+      call: async (cmd: string) => (cmd === 'tree' ? {windows: SB, nodes: [root([0, 0, 669, 951]), root([0, 0, 466, 678])]} : cmd === 'info' ? {width: 466, height: 678} : {idle: true}),
+      stop: async () => undefined,
+    };
+    await expect(widget(new DeviceUi('sim', runner as never), 'ios', parseWidget('list'))).rejects.toThrow(/not supported on a foldable iPhone/);
+  }, 20_000);
+
   it('refuses a size the platform does not have', async () => {
     const runner = {call: async () => ({}), stop: async () => undefined};
     await expect(widget(new DeviceUi('sim', runner as never), 'ios', parseWidget('add Note size=4x2'))).rejects.toThrow(/size on iOS is one of small/);
@@ -213,7 +223,6 @@ describe('a widget on a Launcher3 home screen', () => {
   });
 });
 
-const SB: UiWindow[] = [{type: 'app', title: '', pkg: 'com.apple.springboard'}];
 
 describe('the iOS home screen', () => {
   // Labels and values are in whatever language the device speaks: only ids, types and shapes are read.
