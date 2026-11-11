@@ -3,12 +3,14 @@
 // reused emulator serial, and the push gateway's routing. Leases live in a temporary PITBOX_HOME (src/test-setup.ts).
 
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {Engine} from './daemon/engine.ts';
-import type {AndroidDevice} from './drivers/android/driver.ts';
+import {AndroidDriver, type AndroidDevice} from './drivers/android/driver.ts';
 import type {Simulator} from './drivers/apple/driver.ts';
+import {isCreated, recordCreated} from './lease/created.ts';
 import {leaseDir, readLease} from './lease/lease.ts';
 import {PushCenter} from './push/push.ts';
 
@@ -74,7 +76,7 @@ class FakeAndroid {
     let port = 5554;
     while (this.devs.some(d => d.serial === `emulator-${port}`)) port += 2;
     const serial = `emulator-${port}`;
-    this.devs.push({serial, state: 'device', avd, emulator: true, bootId: `boot-${++this.#boots}`});
+    this.devs.push({serial, state: 'device', avd, emulator: true, instance: `pid:${++this.#boots}`});
     return {serial, ms: 1, already: false, ...(opts.newInstance ? {readOnly: true} : {})};
   };
   shutdown = async (serial: string) => {
@@ -89,10 +91,10 @@ class FakeAndroid {
 }
 
 const dirs: string[] = [];
-const session = async (name: string, drivers: {android?: FakeAndroid | null; apple?: FakeApple | null}) => {
+const session = async (name: string, drivers: {android?: FakeAndroid | null; apple?: FakeApple | null}, extra: Record<string, unknown> = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pitbox-${name}-`));
   dirs.push(dir);
-  fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({app: {android: 'com.example.app', apple: 'com.example.app'}}));
+  fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({app: {android: 'com.example.app', apple: 'com.example.app'}, ...extra}));
   return Engine.create(path.join(dir, 'pitbox.config.json'), undefined, {android: (drivers.android ?? null) as never, apple: (drivers.apple ?? null) as never});
 };
 
@@ -206,6 +208,28 @@ describe('simulators', () => {
     expect(apple.sims.map(s => s.state)).toEqual(['Shutdown', 'Booted']);
   });
 
+  it('cleans only the simulators it recorded creating, never one named like them by hand', async () => {
+    // A user's own simulator named like pitbox's, of another model so no session takes it as a twin.
+    const apple = new FakeApple([{}, {name: 'iPhone 17 (pitbox 3)', deviceType: 'iPhone-16e'}]);
+    const a = await session('alice', {apple});
+    const b = await session('bob', {apple});
+    await a.methods.boot({avd: 'iPhone 17'});
+    await b.methods.boot({avd: 'iPhone 17'});
+    expect(isCreated('NEW3')).toBe(true);
+    // bob's daemon goes away keeping its lease: a held simulator is not cleaned, even a created one.
+    await b.stopAll();
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: []});
+    await b.methods.release({});
+    expect(isCreated('NEW3')).toBe(false);
+    // One recorded but left behind (a daemon killed before it gave it back).
+    apple.sims.push({...apple.sims[0]!, udid: 'LEFT', name: 'iPhone 17 (pitbox 4)', state: 'Shutdown'});
+    recordCreated('LEFT', 'iPhone 17 (pitbox 4)');
+    recordCreated('GONE', 'iPhone 17 (pitbox 5)');
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: ['iPhone 17 (pitbox 4)']});
+    expect(apple.sims.map(s => s.name)).toEqual(['iPhone 17', 'iPhone 17 (pitbox 3)']);
+    expect(isCreated('GONE')).toBe(false);
+  });
+
   it('never shuts down a device another session holds when it stops', async () => {
     const apple = new FakeApple([{}]);
     const a = await session('alice', {apple});
@@ -253,7 +277,7 @@ describe('emulators', () => {
     const a = await session('alice', {android});
     const b = await session('bob', {android});
     await a.methods.boot({avd: 'Test_Phone_Lease'});
-    android.devs.push({serial: 'emulator-5580', state: 'device', avd: 'Other', emulator: true, bootId: 'x'});
+    android.devs.push({serial: 'emulator-5580', state: 'device', avd: 'Other', emulator: true, instance: 'pid:x'});
     const r = (await b.methods.devices({})) as {devices: {serial: string; holder?: string}[]};
     expect(r.devices.map(d => `${d.serial} ${d.holder}`)).toEqual([expect.stringMatching(/^emulator-5554 held by "pitbox-alice-/), 'emulator-5580 running, unleased']);
   });
@@ -270,5 +294,94 @@ describe('push gateway routing', () => {
     c.tokens.set('mine', 'emulator-5556');
     expect(await c.route('fcm', 'mine')).toEqual({device: 'emulator-5556'});
     expect(await center({android: [], apple: []}).route('apns')).toEqual({device: undefined});
+  });
+});
+
+const freePort = () =>
+  new Promise<number>(resolve => {
+    const srv = net.createServer().listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+  });
+
+describe('push gateway through the daemon', () => {
+  it("delivers only to the session's own device, and never takes a device for POST /push", async () => {
+    const android = new FakeAndroid();
+    const pa = await freePort();
+    const pb = await freePort();
+    const a = await session('alice', {android}, {mocks: {push: {port: pa}}});
+    const b = await session('bob', {android}, {mocks: {push: {port: pb}}});
+    try {
+      await a.methods.boot({avd: 'Test_Phone_Lease'});
+      await a.methods.up({});
+      await b.methods.up({});
+      const fcm = (port: number) =>
+        fetch(`http://127.0.0.1:${port}/v1/projects/p/messages:send`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({message: {token: 't1', notification: {title: 'hi'}}})});
+      // bob holds nothing: alice's emulator is not his to deliver to.
+      expect((await fcm(pb)).status).toBe(503);
+      // alice holds it: routed to it (whatever the fake makes of the delivery).
+      expect((await fcm(pa)).status).not.toBe(503);
+      // An explicit device on POST /push neither drives nor takes another session's emulator.
+      const r = await fetch(`http://127.0.0.1:${pb}/push`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({device: 'emulator-5554', title: 'hi'})});
+      expect(r.status).toBe(400);
+      expect(((await r.json()) as {verdict: string}).verdict).toMatch(/held by "pitbox-alice-/);
+      expect(readLease('android', 'emulator-5554')?.root).toMatch(/pitbox-alice-/);
+      // A running emulator nobody leased is not taken by POST /push either.
+      android.devs.push({serial: 'emulator-5580', state: 'device', avd: 'Other', emulator: true, instance: 'pid:x'});
+      const free = await fetch(`http://127.0.0.1:${pb}/push`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({device: 'emulator-5580', title: 'hi'})});
+      expect(free.status).toBe(400);
+      expect(readLease('android', 'emulator-5580')).toBeUndefined();
+    } finally {
+      await a.stopAll({release: true});
+      await b.stopAll({release: true});
+    }
+  });
+});
+
+describe('android driver: emulator identity', () => {
+  // A stand-in adb: `devices -l` prints the list file; `emu avd discoverypath` the path file; each emu call is counted.
+  const fakeAdb = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-adb-'));
+    dirs.push(dir);
+    const bin = path.join(dir, 'adb');
+    fs.writeFileSync(
+      bin,
+      `#!/bin/sh
+D=${JSON.stringify(dir)}
+[ "$1" = "-s" ] && shift 2
+case "$1 $2 $3" in
+  "devices -l "*) echo "List of devices attached"; cat "$D/list";;
+  "emu avd name") echo emu >> "$D/calls"; echo "Test_Phone_Lease"; echo OK;;
+  "emu avd discoverypath") echo emu >> "$D/calls"; cat "$D/path"; echo; echo OK;;
+esac
+`,
+      {mode: 0o755},
+    );
+    const set = (list: string, where = '') => {
+      fs.writeFileSync(path.join(dir, 'list'), list);
+      fs.writeFileSync(path.join(dir, 'path'), where);
+    };
+    const calls = () => (fs.existsSync(path.join(dir, 'calls')) ? fs.readFileSync(path.join(dir, 'calls'), 'utf8').split('\n').filter(Boolean).length : 0);
+    return {driver: new AndroidDriver(bin), set, calls};
+  };
+  const line = (transport: number, state = 'device') => `emulator-5554          ${state} product:sdk model:sdk_phone device:emu transport_id:${transport}\n`;
+
+  it.skipIf(process.platform === 'win32')('takes the instance from the emulator process, asks again on a new connection and after it went offline', async () => {
+    const adb = fakeAdb();
+    adb.set(line(1), '/Users/x/.android/avd/running/pid_4242.ini');
+    expect((await adb.driver.devices())[0]).toMatchObject({serial: 'emulator-5554', avd: 'Test_Phone_Lease', instance: 'pid:4242'});
+    await adb.driver.devices();
+    expect(adb.calls()).toBe(2);
+    // A quickboot snapshot brings back the same boot_id; the process is new, and so is adb's connection.
+    adb.set(line(2), '/Users/x/.android/avd/running/pid_5151.ini');
+    expect((await adb.driver.devices())[0]?.instance).toBe('pid:5151');
+    expect(adb.calls()).toBe(4);
+    // Offline: no answers kept, no instance claimed; back online on the same connection, asked again.
+    adb.set(line(2, 'offline'), '/Users/x/.android/avd/running/pid_6060.ini');
+    expect((await adb.driver.devices())[0]).toMatchObject({state: 'offline'});
+    expect((await adb.driver.devices())[0]?.instance).toBeUndefined();
+    adb.set(line(2), '/Users/x/.android/avd/running/pid_6060.ini');
+    expect((await adb.driver.devices())[0]?.instance).toBe('pid:6060');
   });
 });

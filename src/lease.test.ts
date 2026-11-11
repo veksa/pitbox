@@ -10,7 +10,7 @@ import {fileURLToPath} from 'node:url';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {DeviceLeases, sessionLabel, UNLEASED} from './lease/devices.ts';
 import {leaseCommand} from './lease/cli.ts';
-import {acquire, DEAD_GRACE_MS, heartbeat, leaseDir, listLeases, parseDuration, probe, readLease, refusal, release, staleReason, withLock, type Holder, type Lease} from './lease/lease.ts';
+import {acquire, DEAD_GRACE_MS, heartbeat, leaseDir, listLeases, parseDuration, parseElapsed, probe, readLease, refusal, release, staleReason, withLock, type Holder, type Lease} from './lease/lease.ts';
 import {availableFromMeminfo, availableFromVmStat, bootWarning} from './lease/resources.ts';
 
 const realProbe = {...probe};
@@ -51,15 +51,15 @@ describe('leases', () => {
   });
 
   it('never expires the lease of a holder that runs, however old its heartbeat (a laptop asleep)', () => {
-    const l: Lease = {...alice, pidStart: 'Mon Nov 11 10:00:00 2026', platform: 'apple', device: 'X', since: 0, heartbeat: 0, ttlMs: 600_000};
-    probe.start = () => 'Mon Nov 11 10:00:00 2026';
+    const l: Lease = {...alice, pidStart: 1_800_000_000, platform: 'apple', device: 'X', since: 0, heartbeat: 0, ttlMs: 600_000};
+    probe.start = () => 1_800_000_001;
     expect(staleReason(l, Date.now())).toBeUndefined();
   });
 
   it('counts a holder whose pid now runs another program as gone (pid reuse)', () => {
     const now = Date.now();
-    const l: Lease = {...alice, pidStart: 'Mon Nov 11 10:00:00 2026', platform: 'apple', device: 'X', since: now, heartbeat: now, ttlMs: 600_000};
-    probe.start = () => 'Tue Nov 12 09:00:00 2026';
+    const l: Lease = {...alice, pidStart: 1_800_000_000, platform: 'apple', device: 'X', since: now, heartbeat: now, ttlMs: 600_000};
+    probe.start = () => 1_800_003_600;
     expect(staleReason(l, now + 1000)).toBeUndefined(); // the grace a restarted daemon has
     expect(staleReason(l, now + DEAD_GRACE_MS + 1000)).toMatch(/pid .* is gone/);
   });
@@ -78,13 +78,39 @@ describe('leases', () => {
     expect(staleReason(shell, now + 120_000)).toMatch(/not renewed for 2 min/);
   });
 
+  it('reads elapsed times as ps prints them', () => {
+    expect(parseElapsed('   01:02\n')).toBe(62);
+    expect(parseElapsed('03:01:02')).toBe(10_862);
+    expect(parseElapsed('2-03:01:02')).toBe(183_662);
+    expect(parseElapsed('')).toBeUndefined();
+  });
+
+  it('reads the same start for a process whatever the reader\'s time zone and language', async () => {
+    const lease = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lease', 'lease.ts');
+    const script = `import {processStart} from ${JSON.stringify(lease)}; process.stdout.write(String(processStart(${process.pid})));`;
+    const read = (env: NodeJS.ProcessEnv) =>
+      new Promise<string>((resolve, reject) => {
+        const child = spawn(process.execPath, ['--input-type=module', '-e', script], {env: {...process.env, ...env}});
+        let out = '';
+        child.stdout.on('data', d => (out += d));
+        child.on('error', reject);
+        child.on('exit', () => resolve(out.trim()));
+      });
+    const [utc, almaty, ru] = await Promise.all([read({TZ: 'UTC'}), read({TZ: 'Asia/Almaty'}), read({LC_ALL: 'ru_RU.UTF-8', LANG: 'ru_RU.UTF-8', TZ: 'America/New_York'})]);
+    if (process.platform === 'win32') return;
+    for (const x of [almaty, ru]) expect(Math.abs(Number(x) - Number(utc))).toBeLessThanOrEqual(3);
+    // A holder whose start was read under another zone and language is still the same running holder.
+    const l: Lease = {...alice, pidStart: Number(ru), platform: 'apple', device: 'X', since: 0, heartbeat: 0, ttlMs: 1};
+    expect(staleReason(l, Date.now())).toBeUndefined();
+  });
+
   it('does not count a lease taken on an earlier boot of a reused serial', () => {
-    acquire('android', 'emulator-5556', alice, {instance: 'boot-a'});
-    const b = acquire('android', 'emulator-5556', bob, {instance: 'boot-b'});
+    acquire('android', 'emulator-5556', alice, {instance: 'pid:100'});
+    const b = acquire('android', 'emulator-5556', bob, {instance: 'pid:200'});
     expect(b.ok).toBe(true);
     if (b.ok) expect(b.replaced?.why).toMatch(/earlier boot/);
     // The old holder, asking with the device's current boot, finds it someone else's.
-    const again = acquire('android', 'emulator-5556', alice, {instance: 'boot-b'});
+    const again = acquire('android', 'emulator-5556', alice, {instance: 'pid:200'});
     expect(again.ok).toBe(false);
   });
 
@@ -113,6 +139,29 @@ describe('leases', () => {
     expect(heartbeat('apple', 'UDID-1', bob.owner)).toBe(false);
     expect(heartbeat('apple', 'UDID-1', alice.owner, {}, 9000)).toBe(true);
     expect(readLease('apple', 'UDID-1')?.heartbeat).toBe(9000);
+  });
+
+  it('says where to point PITBOX_HOME when the lease folder cannot be written', () => {
+    const blocked = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ro-'));
+    const previous = process.env.PITBOX_HOME;
+    // A file where the folder should be: every write under it fails.
+    fs.writeFileSync(path.join(blocked, 'home'), '');
+    process.env.PITBOX_HOME = path.join(blocked, 'home');
+    try {
+      expect(() => acquire('apple', 'U1', alice)).toThrow(/cannot write its device leases in .*home.leases \(ENOTDIR|EEXIST\)|set PITBOX_HOME to a writable folder/);
+    } finally {
+      process.env.PITBOX_HOME = previous;
+      fs.rmSync(blocked, {recursive: true, force: true});
+    }
+  });
+
+  it('never removes a live lock, and clears a lock left by a process that is gone', () => {
+    const live = path.join(leaseDir(), 'live.json');
+    fs.mkdirSync(leaseDir(), {recursive: true});
+    fs.writeFileSync(`${live}.lock`, JSON.stringify({pid: process.pid, start: probe.start(process.pid), at: Date.now()}));
+    expect(() => withLock(live, () => 'ran', 200)).toThrow(/stays locked by pid/);
+    expect(fs.existsSync(`${live}.lock`)).toBe(true);
+    fs.rmSync(`${live}.lock`);
   });
 
   it('clears a lock left by a process that is gone', () => {
@@ -225,27 +274,54 @@ describe("a daemon's leases", () => {
   it('lets a new emulator on a reused serial go to another session', () => {
     const a = new DeviceLeases('/work/alice', process.pid, 'alice');
     const b = new DeviceLeases('/work/bob', process.pid, 'bob');
-    a.claim('android', 'emulator-5556', {instance: 'boot-a'});
+    a.claim('android', 'emulator-5556', {instance: 'pid:100'});
     // alice's emulator is gone; bob's new one came up on the same serial
-    expect(b.holderOf('android', 'emulator-5556', 'boot-b')).toBeUndefined();
-    b.claim('android', 'emulator-5556', {instance: 'boot-b'});
-    expect(a.holds('android', 'emulator-5556', 'boot-b')).toBe(false);
-    const lost = a.beat([{platform: 'android', id: 'emulator-5556', instance: 'boot-b'}]);
+    expect(b.holderOf('android', 'emulator-5556', 'pid:200')).toBeUndefined();
+    b.claim('android', 'emulator-5556', {instance: 'pid:200'});
+    expect(a.holds('android', 'emulator-5556', 'pid:200')).toBe(false);
+    const lost = a.beat([{platform: 'android', id: 'emulator-5556', instance: 'pid:200'}]);
     expect(lost.map(h => h.id)).toEqual(['emulator-5556']);
     expect(readLease('android', 'emulator-5556')?.label).toBe('bob');
   });
 
-  it('drops and gives back a device that went away, but not one on its way up', () => {
+  it('gives back a device only once it has been gone for several beats and a while, never one on its way up', () => {
     const a = new DeviceLeases('/work/alice', process.pid, 'alice');
     a.claim('apple', 'GONE');
     a.claim('apple', 'BOOTING', {booted: true});
     a.claim('apple', 'HERE');
-    const lost = a.beat([{platform: 'apple', id: 'HERE'}], new Set(['BOOTING']));
-    expect(lost.map(h => h.id)).toEqual(['GONE']);
+    const t0 = Date.now();
+    const list = [{platform: 'apple' as const, id: 'HERE'}];
+    const busy = new Set(['BOOTING']);
+    expect(a.beat(list, busy, t0)).toEqual([]);
+    expect(a.beat(list, busy, t0 + 30_000)).toEqual([]);
+    // Lists that cannot be read judge nothing.
+    expect(a.beat(undefined, busy, t0 + 60_000)).toEqual([]);
+    expect(a.beat(list, busy, t0 + 60_000)).toEqual([]);
+    expect(a.beat(list, busy, t0 + 95_000).map(h => h.id)).toEqual(['GONE']);
     expect(readLease('apple', 'GONE')).toBeUndefined();
     expect(a.held().map(h => h.id).sort()).toEqual(['BOOTING', 'HERE']);
-    // Lists that cannot be read drop nothing.
-    expect(a.beat(undefined)).toEqual([]);
+  });
+
+  it('keeps a device that blinks out: back in the list, the count starts again', () => {
+    const a = new DeviceLeases('/work/alice', process.pid, 'alice');
+    a.claim('android', 'emulator-5554', {instance: 'pid:1'});
+    a.claim('apple', 'SIM');
+    const t0 = Date.now();
+    const sim = {platform: 'apple' as const, id: 'SIM'};
+    const emu = {platform: 'android' as const, id: 'emulator-5554'};
+    for (let i = 0; i < 3; i++) expect(a.beat([sim], new Set(), t0 + i * 40_000)).toEqual([]);
+    // offline: present, with no instance to compare
+    expect(a.beat([sim, emu], new Set(), t0 + 130_000)).toEqual([]);
+    expect(a.beat([sim], new Set(), t0 + 160_000)).toEqual([]);
+    expect(a.held().map(h => h.id).sort()).toEqual(['SIM', 'emulator-5554']);
+  });
+
+  it('waits much longer when a whole device list comes back empty (adb restarted)', () => {
+    const a = new DeviceLeases('/work/alice', process.pid, 'alice');
+    a.claim('android', 'emulator-5554', {instance: 'pid:1'});
+    const t0 = Date.now();
+    for (let i = 0; i <= 4; i++) expect(a.beat([], new Set(), t0 + i * 60_000)).toEqual([]);
+    expect(a.beat([], new Set(), t0 + 5 * 60_000 + 1).map(h => h.id)).toEqual(['emulator-5554']);
   });
 
   it('treats a shell lease taken in the same project as its own, and leaves it on release', async () => {
