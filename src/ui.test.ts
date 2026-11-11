@@ -719,6 +719,47 @@ describe('a keyboard still on its way up', () => {
     await new DeviceUi('sim', runner as never).press('id=send');
     expect(calls).toEqual(['tap {"x":370,"y":225}']);
   });
+
+  it('is waited for at the end of a fill when typing took it down for a moment', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const calls: string[] = [];
+    let top: number | undefined = 260;
+    let value = '';
+    let typed = 0;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (['key', 'tap', 'text'].includes(cmd)) calls.push(cmd);
+        if (cmd === 'text') {
+          value = String(args.text);
+          // The keys go while the text goes in, and come back a few hundred milliseconds later, rising.
+          top = undefined;
+          typed = Date.now();
+          return {set: true};
+        }
+        if (cmd === 'tree') {
+          if (typed) {
+            const since = Date.now() - typed;
+            top = since < 400 ? undefined : Math.max(260, 420 - (since - 400));
+          }
+          return screen(top, value);
+        }
+        if (cmd === 'info') return {width: 400, height: 500};
+        // Quiet once nothing changed for the quiet time, as a runner answers.
+        if (cmd === 'idle') await new Promise(r => setTimeout(r, Number(args.quiet ?? 0)));
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('sim', runner as never);
+    await ui.press('id=prompt');
+    await ui.fill('id=prompt', 'Make a carousel');
+    expect(ui.last?.windows.some(w => w.type === 'ime')).toBe(true);
+    expect(ui.last?.nodes.find(n => n.c === 'Keyboard')?.b[1]).toBe(260);
+    calls.length = 0;
+    await ui.press('id=send');
+    expect(calls).toEqual(['tap']);
+    expect(value).toBe('Make a carousel');
+  }, 15_000);
 });
 
 describe('a keyboard that comes up by itself', () => {

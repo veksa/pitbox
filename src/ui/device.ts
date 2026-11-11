@@ -122,9 +122,13 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       await new Promise(r => setTimeout(r, 600));
       snap = await read();
     }
+    if (snap.windows.some(w => w.type === 'ime')) this.#keyboards = true;
     this.last = snap;
     return this.last;
   }
+
+  /** Whether this device has shown an on-screen keyboard: one with a hardware keyboard never does. */
+  #keyboards = false;
 
   /**
    * Waits until the on-screen keyboard stands still — there or not, at the same height, with the target (when one
@@ -435,8 +439,22 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     const chosen = target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`;
     this.record(`fill ${chosen} ${quote(text)}`, chosen);
-    this.#typed = true;
-    const settled = await this.#settle(snap);
+    let settled = await this.#settle(snap);
+    // The keyboard can go while the text is typed and come back a moment after (an iOS simulator): the fill ends
+    // once it is back and still, so the next step does not read a screen with the keys on their way up.
+    const ime = (s?: Snapshot) => !!s?.windows.some(w => w.type === 'ime');
+    if (this.#keyboards && this.last && !ime(this.last)) {
+      let now = this.last;
+      const end = Date.now() + 1000;
+      while (!ime(now) && Date.now() < end) {
+        await new Promise(r => setTimeout(r, 150));
+        now = await this.snapshot();
+      }
+      if (ime(now)) await this.#keyboardStill(now);
+      settled = {...settled, diff: diffSnapshots(snap, this.last)};
+    }
+    // Without a keyboard yet, the next press still gives one a moment to come up.
+    this.#typed = !ime(this.last);
     return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }
 
