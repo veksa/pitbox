@@ -322,6 +322,12 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     // up focus on submit), and the keyboard goes with it.
     await this.runner.call('key', {code: 4}).catch(async (e: Error) => {
       if (!/no equivalent/.test(e.message)) throw e;
+      // In a multi-line field return is a new line in the text (or, where the app sends on return, the text sent)
+      // and the keyboard stays: never pressed there.
+      const focused = (await this.runner.call<{input?: UiNode}>('focus').catch(() => ({}) as {input?: UiNode})).input;
+      if (focused?.c === 'TextView') {
+        throw new Error(`${selector ? `"${selector}"` : 'the target'} is under the keyboard of a multi-line field, where return would type a new line: close the keyboard first with a control of the app (or a swipe down a list that closes it)`);
+      }
       await this.runner.call('key', {code: 66});
     });
     await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);

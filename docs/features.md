@@ -48,7 +48,8 @@ compact text.
 - **Actions that wait for the UI to settle** and answer with what changed. Exact gestures (double tap, swipe
   velocity), D-pad keys and focus for TV, a finger held across calls (inspect a scrubber mid-drag).
 - **Taps that land** — the visible part of a covered target is tapped and what covers its centre is named; a
-  keyboard over the target is closed first; system sheets that cover the app (permission requests, the save
+  keyboard over the target is closed first, once it stands still (on iOS never with return from a multi-line field, where
+  it would type a new line); system sheets that cover the app (permission requests, the save
   password offer) are named in snapshots and failed waits; React Native's warnings toast is kept away in apps on
   pitbox's dev server and closed elsewhere when it covers the target.
 - **Fast on busy screens** — taps on a screen with a playing video take milliseconds (the platform's
