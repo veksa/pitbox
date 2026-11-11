@@ -15,6 +15,14 @@ export default defineConfig({
   tools: {
     reset: {description: 'Zero the stand counter', run: `node -e "fetch('http://127.0.0.1:4100/reset').then(r => r.text()).then(console.log)"`},
     hits: {description: 'How many times the stand answered /hello', run: `node -e "fetch('http://127.0.0.1:4100/hits').then(r => r.text()).then(console.log)"`},
+    notify: {
+      description: 'The backend sends a push (FCM HTTP v1 to the stand push gateway)',
+      run: 'node ../stand/push.mjs {title} {body} {link}',
+      params: {title: 'Title', body: 'Body', link: {description: 'Link the tap opens (pitboxexample-rn://detail/<id>)', default: ''}},
+    },
   },
   routes: {detail: 'pitboxexample-rn://detail/{id}'},
+  // The push gateway: a server (here `tool notify`, ../stand/push.mjs) sends APNs / FCM requests to it instead of to
+  // Apple's and Google's services, and pitbox delivers them to the simulator or emulator.
+  mocks: {push: {port: 4980}},
 });

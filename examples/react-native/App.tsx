@@ -1,13 +1,42 @@
 // The React Native example pitbox's end-to-end run drives: what the native example has, plus a JS error, so the
 // dev server side (connect link, bytecode, the in-app channel, symbolicated stacks) is checked too.
 
-import React, {useEffect, useState} from 'react';
-import {Alert, BackHandler, Button, FlatList, Linking, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
+import React, {useCallback, useEffect, useState} from 'react';
+import {Alert, BackHandler, Button, FlatList, Linking, Platform, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 
 const rows = Array.from({length: 40}, (_, i) => `Row ${i + 1}`);
 
-const detailOf = (url: string | null) => /^pitboxexample-rn:\/\/detail\/(\w+)/.exec(url ?? '')?.[1];
+const detailOf = (url: string | null | undefined) => /^pitboxexample-rn:\/\/detail\/(\w+)/.exec(url ?? '')?.[1];
+
+type Push = {notification?: {title?: string}; data?: Record<string, unknown>};
+
+/**
+ * Pushes, for `pitbox push`: on Android through React Native Firebase (FCM, emulated by pitbox's connect
+ * library); on iOS AppDelegate.swift shows them and opens a tapped push's `link`. A push whose data has `link`
+ * opens that screen when tapped.
+ */
+const usePushes = (open: (url: string) => void): string => {
+  const [last, setLast] = useState('');
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const m = require('@react-native-firebase/messaging') as typeof import('@react-native-firebase/messaging');
+    const messaging = m.getMessaging();
+    const opened = (how: string) => (p: Push | null) => {
+      if (!p) return;
+      setLast(`${how}: ${p.notification?.title ?? JSON.stringify(p.data)}`);
+      if (typeof p.data?.link === 'string') open(p.data.link);
+    };
+    m.getInitialNotification(messaging).then(opened('opened cold'));
+    const offOpen = m.onNotificationOpenedApp(messaging, opened('opened'));
+    const offMessage = m.onMessage(messaging, p => setLast(`foreground: ${p.notification?.title ?? JSON.stringify(p.data)}`));
+    return () => {
+      offOpen();
+      offMessage();
+    };
+  }, [open]);
+  return last;
+};
 
 // Slow on purpose, so a CPU profile has an app function to name.
 function workHard(): number {
@@ -20,7 +49,7 @@ function failOnPurpose(): never {
   throw new Error('example js error');
 }
 
-function Main({onFetch, response}: {onFetch: () => void; response: string}) {
+function Main({onFetch, response, push}: {onFetch: () => void; response: string; push: string}) {
   const [name, setName] = useState('');
   const [greeting, setGreeting] = useState('');
   const [removed, setRemoved] = useState('');
@@ -48,6 +77,7 @@ function Main({onFetch, response}: {onFetch: () => void; response: string}) {
       <Button testID="busy" title="Work hard" onPress={() => workHard()} />
       <Button testID="remove" title="Remove" onPress={remove} />
       {removed ? <Text testID="removed">{removed}</Text> : null}
+      {push ? <Text testID="push">{push}</Text> : null}
     </View>
   );
 }
@@ -55,9 +85,11 @@ function Main({onFetch, response}: {onFetch: () => void; response: string}) {
 export default function App() {
   const [response, setResponse] = useState('');
   const [detail, setDetail] = useState<string | undefined>();
+  const push = usePushes(useCallback((url: string) => setDetail(detailOf(url)), []));
 
   useEffect(() => {
-    Linking.getInitialURL().then(url => setDetail(detailOf(url)));
+    // Only a link that opened the app: an empty one must not undo a screen a tapped push opened.
+    Linking.getInitialURL().then(url => url && setDetail(detailOf(url)));
     const sub = Linking.addEventListener('url', e => setDetail(detailOf(e.url)));
     return () => sub.remove();
   }, []);
@@ -92,7 +124,7 @@ export default function App() {
             testID="content-list"
             data={rows}
             keyExtractor={r => r}
-            ListHeaderComponent={<Main onFetch={ask} response={response} />}
+            ListHeaderComponent={<Main onFetch={ask} response={response} push={push} />}
             renderItem={({item}) => (
               <Text style={styles.row} accessibilityLabel={item.toLowerCase()}>
                 {item}

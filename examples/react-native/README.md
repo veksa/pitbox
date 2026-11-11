@@ -13,6 +13,16 @@ button that throws a JS error.
 | `smoke` | the app starts on pitbox's dev server (bytecode once compiled), input, the stand, a tool, scrolling, a deep link, back |
 | `js-error` | passes, and its verdict carries the JS error with its stack mapped to `App.tsx` |
 
+Push notifications: React Native Firebase on Android (with a placeholder `google-services.json`: no Firebase
+project, Play services or network needed), `UNUserNotificationCenter` in `AppDelegate.swift` on iOS. A push whose
+data has `link` opens that screen when tapped; one that arrives with the app in front shows as `#push`.
+
+```sh
+pitbox push title=Hi body=There data='{"link":"pitboxexample-rn://detail/7"}'
+pitbox push tap                                   # → Detail 7
+pitbox tool notify title=Hi body=There link=pitboxexample-rn://detail/7   # the backend, through the push gateway
+```
+
 The e2e run also checks `fresh` (the app runs the newest bundle) and `app-log` (the app's request to the stand,
 seen from inside the app).
 

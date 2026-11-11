@@ -8,6 +8,8 @@
     "start": "react-native start"
   },
   "dependencies": {
+    "@react-native-firebase/app": "26.4.0",
+    "@react-native-firebase/messaging": "26.4.0",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "^5.5.2"
