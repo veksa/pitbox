@@ -61,7 +61,19 @@ export const pickerEntries = (snap: Pick<Snapshot, 'nodes'>): PickerEntry[] => {
   };
   snap.nodes.forEach((n, i) => {
     const m = ENTRY.exec(say(n));
-    if (m) add(i, m[1]!, `${m[2]}x${m[3]}`);
+    if (m) return add(i, m[1]!, `${m[2]}x${m[3]}`);
+    // A Launcher3 cell (`WidgetCell`) in any language: its preview carries the widget's name alone, and the cell's
+    // label says the name and then the width and the height, in that order ("Widget "Clock", width: 4, height: 2").
+    if (n.c !== 'WidgetCell') return;
+    const named =
+      snap.nodes.find(k => k.id === 'widget_name' && k.t && inAncestry(snap.nodes, k, i))?.t ??
+      snap.nodes.find(k => k.d && !k.t && /^WidgetCell\$/.test(k.c) && snap.nodes[k.p]?.id === 'widget_preview_container' && inAncestry(snap.nodes, k, i))?.d;
+    const label = say(n);
+    const name = (named ?? '').trim();
+    if (!name) return;
+    const after = label.includes(name) ? label.slice(label.indexOf(name) + name.length) : label;
+    const nums = after.match(/\d+/g);
+    if (nums && nums.length >= 2) add(i, name, `${nums[0]}x${nums[1]}`);
   });
   snap.nodes.forEach(n => {
     if (n.id !== 'widget_name' || !n.t) return;
@@ -112,7 +124,7 @@ export const homeWidgets = (snap: Pick<Snapshot, 'nodes'>, workspace: Bounds): s
     found.push(n);
   }
   // A widget's own views can carry labels too: only the outermost labelled view is the widget.
-  for (const n of found) if (!found.some(m => m !== n && inside(n.b, m.b) && area(m.b) > area(n.b)) && !out.includes(n.d!)) out.push(n.d!);
+  for (const n of found) if (!found.some(m => m !== n && inside(n.b, m.b) && area(m.b) > area(n.b))) out.push(n.d!);
   return out;
 };
 
@@ -229,21 +241,55 @@ const androidHome = async (ui: DeviceUi): Promise<{snap: Snapshot; workspace: Bo
   if (hit === undefined) {
     throw new Error(`launcher ${launcherPkg(snap)} is not supported: ${LAUNCHER3}, and this one shows no Launcher3 workspace on the home screen`);
   }
+  // Home pressed on the home screen goes to its first page; pressed while an app or a drag was closing, it may
+  // only have brought the home screen back on the page it was on.
+  await steady(ui, 1500);
+  await ui.key(['home']);
+  ({snap, hit} = await until(ui, 3000, s => idOf(s, 'workspace')));
+  if (hit === undefined) throw new Error(`the home screen left after home was pressed again (launcher ${launcherPkg(snap)})`);
+  snap = await steady(ui, 1500);
+  hit = idOf(snap, 'workspace') ?? hit;
   return {snap, workspace: snap.nodes[hit]!.b, pkg: snap.windows[snap.nodes[hit]!.w]?.pkg ?? 'unknown'};
 };
+
+/**
+ * The items of the home screen's menu (Launcher3's `popup_container` of `system_shortcut` rows), in the order to
+ * try them for the widget picker: one that reads "Widgets" first, then the second row — where Launcher3 and Pixel
+ * Launcher put Widgets, after the wallpaper — then the rest. The rows carry no id of their own, and their words are
+ * in the launcher's language.
+ */
+export const menuItems = (snap: Pick<Snapshot, 'nodes'>): number[] => {
+  const popup = snap.nodes.findIndex(n => n.id === 'popup_container');
+  const rows = snap.nodes.flatMap((n, i) => (n.id === 'system_shortcut' && (popup < 0 || inAncestry(snap.nodes, n, popup)) ? [i] : []));
+  if (!rows.length) {
+    const word = snap.nodes.findIndex(n => same(n.t ?? n.d, 'widgets'));
+    return word >= 0 ? [word] : [];
+  }
+  const text = (r: number) => snap.nodes.find(m => m.id === 'bubble_text' && inAncestry(snap.nodes, m, r))?.t ?? snap.nodes[r]!.t;
+  const english = rows.filter(r => same(text(r), 'widgets'));
+  return [...new Set([...english, ...(rows.length > 1 ? [rows[1]!] : []), ...rows])];
+};
+
+const pickerShown = (s: Snapshot) => idOf(s, 'widgets_search_bar_edit_text') ?? (pickerEntries(s).length || s.nodes.some(n => n.id === 'widgets_list_header' || n.id === 'primary_widgets_list_view') ? -1 : undefined);
 
 /** Opens the widget picker from the home screen's menu (a long press on an empty spot, then "Widgets"). */
 const androidPicker = async (ui: DeviceUi): Promise<{snap: Snapshot; pkg: string; workspace: Bounds}> => {
   const home = await androidHome(ui);
   const spot = freeSpot(home.snap, home.workspace);
   if (!spot) throw new Error('no empty spot on the home screen to long-press for its menu\nhint: move an icon off the first home page, or open the widget picker by hand');
-  await ui.press(`${spot.x},${spot.y}`, 'longpress');
-  const menu = await until(ui, 3000, s => s.nodes.findIndex(n => same(n.t ?? n.d, 'widgets')) + 1 || undefined);
-  if (menu.hit === undefined) throw new Error(`a long press on the home screen at ${spot.x},${spot.y} showed no "Widgets" item (launcher ${home.pkg})`);
-  await ui.press(point(menu.snap, menu.hit - 1));
-  const picker = await until(ui, 5000, s => idOf(s, 'widgets_search_bar_edit_text') ?? (pickerEntries(s).length || s.nodes.some(n => n.id === 'widgets_list_header') ? -1 : undefined));
-  if (picker.hit === undefined) throw new Error(`"Widgets" opened no widget picker (launcher ${home.pkg})`);
-  return {snap: picker.snap, pkg: home.pkg, workspace: home.workspace};
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await ui.press(`${spot.x},${spot.y}`, 'longpress');
+    const menu = await until(ui, 3000, s => (menuItems(s).length ? true : undefined));
+    const items = menuItems(menu.snap);
+    if (!items.length) throw new Error(`a long press on the home screen at ${spot.x},${spot.y} showed no menu (launcher ${home.pkg})`);
+    if (attempt >= items.length) break;
+    await ui.press(point(menu.snap, items[attempt]!));
+    const picker = await until(ui, 4000, pickerShown);
+    if (picker.hit !== undefined) return {snap: picker.snap, pkg: home.pkg, workspace: home.workspace};
+    // Another item (wallpapers, settings, the app list): back to the home screen for the next one.
+    await androidHome(ui);
+  }
+  throw new Error(`no item of the home screen's menu opened a widget picker (launcher ${home.pkg})`);
 };
 
 /** Narrows the picker to one app and opens its widgets; the snapshot shows them. */
@@ -264,13 +310,20 @@ const androidAppWidgets = async (ui: DeviceUi, app: string, want?: (s: Snapshot)
       snap = await scrollPicker(ui, s => pickerHeader(s, app) !== undefined || shows(s));
       header = pickerHeader(snap, app);
     }
-    if (!shows(snap) && header !== undefined) {
+    // The header opens the app's widgets; pressed while a search left only them showing, it would fold them away.
+    if (!shows(snap) && header !== undefined && !(search !== undefined && pickerEntries(snap).length && !twoPane(snap))) {
       await ui.press(point(snap, header));
       snap = (await until(ui, 2000, s => (shows(s) ? true : undefined))).snap;
     }
     if (!shows(snap)) snap = await scrollPicker(ui, shows);
   }
   return snap;
+};
+
+/** A tablet's picker: apps in a list of their own beside the widgets of the one chosen. */
+const twoPane = (s: Snapshot) => {
+  const wide = Math.max(0, ...s.nodes.map(n => n.b[2]));
+  return s.nodes.some(n => n.id === 'widgets_list_header' && n.b[2] - n.b[0] < wide * 0.6);
 };
 
 /** Scrolls the picker down until `test` holds or the list stops moving. */
@@ -298,6 +351,7 @@ const androidAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     await ui.key(['home']);
     const offered = entries.map(e => `${e.name} ${e.size}`);
     if (sizes(entries, name).length) throw new Error(`no ${w.size} size of the "${name}" widget (it comes in ${sizes(entries, name).join(', ')})`);
+    if (!offered.length && pickerHeader(snap, app) === undefined) throw new Error(`no app "${app}" in the widget picker: it is not installed, or has no widgets\nhint: name the app with app=<label> as the picker lists it`);
     throw new Error(`no widget "${name}" in the picker for "${app}"${offered.length ? ` (it shows: ${offered.join(', ')})` : ''}\nhint: name the app with app=<label> as the picker lists it`);
   }
   // Android 15 and later: a tap on a widget shows an Add button. Older pickers place by dragging only. A first tap
@@ -407,13 +461,14 @@ const androidPlaced = async (ui: DeviceUi, w: WidgetOp, launcher: string, extra:
 /** Finds a widget on the home pages, swiping through them; the snapshot shows it. */
 const androidFind = async (ui: DeviceUi, name: string): Promise<{snap: Snapshot; index: number} | undefined> => {
   await androidHome(ui);
-  for (let page = 0; page < 6; page++) {
-    const snap = await steady(ui);
+  let snap = await steady(ui);
+  for (let page = 0; page < 8; page++) {
     const index = homeWidget(snap, name);
     if (index !== undefined) return {snap, index};
     const before = snap.lines.join('\n');
     await ui.swipe('left');
-    if ((await ui.snapshot()).lines.join('\n') === before) break;
+    snap = await steady(ui);
+    if (snap.lines.join('\n') === before) break;
   }
   return undefined;
 };
@@ -423,7 +478,7 @@ const androidRemove = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   let launcher = 'unknown';
   for (let attempt = 1; ; attempt++) {
     const found = await androidFind(ui, name);
-    if (!found) throw new Error(`no "${name}" widget on the home screen\nhint: widget list shows the widgets of the page on screen`);
+    if (!found) throw new Error(`no "${name}" widget on the home screen\nhint: widget list shows the widgets on every home page`);
     launcher = launcherPkg(found.snap);
     if (await dragToRemove(ui, found.snap, found.index)) break;
     // A drag that showed no Remove (a page still settling under the finger, a resize frame that took the touch):
@@ -471,12 +526,14 @@ const androidList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
     // Every home page, swiped through from the first.
     const {workspace} = await androidHome(ui);
     const widgets: string[] = [];
-    for (let page = 0; page < 6; page++) {
-      const snap = await steady(ui);
-      for (const n of homeWidgets(snap, workspace)) if (!widgets.includes(n)) widgets.push(n);
+    let snap = await steady(ui);
+    for (let page = 0; page < 8; page++) {
+      widgets.push(...homeWidgets(snap, workspace));
       const before = snap.lines.join('\n');
       await ui.swipe('left');
-      if ((await ui.snapshot()).lines.join('\n') === before) break;
+      // Read once the page has stopped: the same page again means this was the last one.
+      snap = await steady(ui);
+      if (snap.lines.join('\n') === before) break;
     }
     await ui.key(['home']);
     return {widgets};

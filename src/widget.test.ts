@@ -3,7 +3,7 @@ import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 import {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, type Bounds, type UiNode, type UiWindow} from './ui/snapshot.ts';
-import {freeSpot, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
+import {freeSpot, menuItems, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizes, parseWidget, springboardTurn, turnBounds, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
 
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
@@ -67,6 +67,32 @@ describe('the Android widget picker', () => {
       {p: 1, w: 0, c: 'TextView', b: [320, 1000, 520, 1050], id: 'widget_dims', t: '2 × 1'},
     ];
     expect(pickerEntries(snap(old))).toEqual([{index: 2, name: 'Note', size: '2x1'}]);
+  });
+
+  it('reads a cell in any language from its class, its name view and the numbers after the name', () => {
+    const cell: UiNode[] = [
+      {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400]},
+      {p: 0, w: 0, c: 'WidgetCell', b: [69, 843, 1011, 1532], d: 'Widget „Notizen 2“, Breite: 4, Höhe: 2 Zeigt 3 Notizen.', f: 'cf'},
+      {p: 1, w: 0, c: 'FrameLayout', b: [69, 885, 1011, 1345], id: 'widget_preview_container', f: 'clf'},
+      {p: 2, w: 0, c: 'WidgetCell$2', b: [69, 885, 1011, 1345], d: 'Notizen 2'},
+      {p: 0, w: 0, c: 'WidgetCell', b: [69, 1532, 529, 2122], d: 'Виджет "Заметка", ширина: 3, высота: 1', f: 'cf'},
+      {p: 4, w: 0, c: 'TextView', b: [190, 1987, 407, 2038], id: 'widget_name', t: 'Заметка'},
+    ];
+    expect(pickerEntries(snap(cell)).map(e => `${e.name} ${e.size}`)).toEqual(['Notizen 2 4x2', 'Заметка 3x1']);
+  });
+
+  it('tries the menu row that opens the picker by its place when its words are not English', () => {
+    const menu = (words: string[]): UiNode[] => [
+      {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400], id: 'drag_layer'},
+      {p: 0, w: 0, c: 'LinearLayout', b: [135, 996, 702, 1559], id: 'popup_container'},
+      ...words.flatMap((t, k): UiNode[] => [
+        {p: 1, w: 0, c: 'FrameLayout', b: [135, 996 + k * 140, 702, 1133 + k * 140], id: 'system_shortcut', f: 'clf'},
+        {p: 2 + k * 2, w: 0, c: 'TextView', b: [135, 996 + k * 140, 702, 1133 + k * 140], id: 'bubble_text', t},
+      ]),
+    ];
+    expect(menuItems(snap(menu(['Hintergrund', 'Widgets', 'Einstellungen'])))).toEqual([4, 2, 6]);
+    expect(menuItems(snap(menu(['Обои и стиль', 'Виджеты', 'Главный экран'])))).toEqual([4, 2, 6]);
+    expect(menuItems(snap(menu(['Wallpapers', 'Home settings', 'Widgets'])))).toEqual([6, 4, 2]);
   });
 
   it('finds the app\'s header by its title, not by the search text', () => {
