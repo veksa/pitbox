@@ -420,8 +420,11 @@ describe("a daemon's leases", () => {
 
   it('fills in the instance of a lease taken without one, and never changes one it has', () => {
     const a = new DeviceLeases('/work/alice', process.pid, 'alice');
-    a.claim('android', 'emulator-5554');
-    a.beat([{platform: 'android', id: 'emulator-5554', instance: 'pid:5'}]);
+    a.claim('android', 'emulator-5554', {name: 'Phone'});
+    // Another AVD on the port now: not taken for this lease's emulator.
+    a.beat([{platform: 'android', id: 'emulator-5554', name: 'Other', instance: 'pid:4'}]);
+    expect(readLease('android', 'emulator-5554')?.instance).toBeUndefined();
+    a.beat([{platform: 'android', id: 'emulator-5554', name: 'Phone', instance: 'pid:5'}]);
     expect(readLease('android', 'emulator-5554')?.instance).toBe('pid:5');
     expect(heartbeat('android', 'emulator-5554', readLease('android', 'emulator-5554')!.owner, {instance: 'pid:6'})).toBe(true);
     expect(readLease('android', 'emulator-5554')?.instance).toBe('pid:5');

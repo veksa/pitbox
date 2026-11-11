@@ -75,6 +75,9 @@ class FakeAndroid {
 
   devices = async () => this.devs.map(d => ({...d}));
   avds = () => this.avdNames.map(name => ({name, kind: 'phone'}));
+  /** Discovery files: emulators launched but not listed by adb yet. */
+  starting: {serial: string; avd: string; instance: string; readOnly: boolean}[] = [];
+  running = () => [...this.starting, ...this.devs.filter(d => d.avd && d.instance).map(d => ({serial: d.serial, avd: d.avd!, instance: d.instance!, readOnly: this.readOnly(d.instance)}))];
   readOnly = (instance?: string) => !!instance && this.readOnlyIds.has(instance);
   lockedBy = (avd: string) => this.locks.get(avd) ?? this.devs.find(d => d.avd === avd && !this.readOnly(d.instance))?.instance;
   avdTaken = (name: string) => this.avdNames.includes(name);
@@ -359,9 +362,31 @@ const freePort = () =>
 describe('AVD copies', () => {
   const grace = Engine.COPY_GRACE_MS;
   const letGo = Engine.AVD_LET_GO_MS;
+  const offlineWait = Engine.OWN_OFFLINE_WAIT_MS;
   afterEach(() => {
     Engine.COPY_GRACE_MS = grace;
     Engine.AVD_LET_GO_MS = letGo;
+    Engine.OWN_OFFLINE_WAIT_MS = offlineWait;
+  });
+
+  it('answers its own copy while it is offline instead of making another', async () => {
+    Engine.OWN_OFFLINE_WAIT_MS = 50;
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    const b = await session('bob', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await b.methods.boot({avd: 'Test_Phone_Lease'});
+    android.devs.find(d => d.serial === 'emulator-5556')!.state = 'offline';
+    expect(await b.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({serial: 'emulator-5556', already: true, avd: 'Test_Phone_Lease_pitbox_2', note: expect.stringMatching(/offline: still this session's/)});
+    expect(android.avdNames).toEqual(['Test_Phone_Lease', 'Test_Phone_Lease_pitbox_2']);
+  });
+
+  it('counts an instance adb does not list yet (seen by its discovery file) as running', async () => {
+    const android = new FakeAndroid();
+    const b = await session('bob', {android});
+    android.starting.push({serial: 'emulator-5554', avd: 'Test_Phone_Lease', instance: 'pid:s', readOnly: false});
+    expect(await b.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({avd: 'Test_Phone_Lease_pitbox_2'});
+    expect(android.bootOpts[0]).toMatchObject({newInstance: false, noSnapshot: true});
   });
 
   it('answers the copy it holds on the next boot instead of making another', async () => {
@@ -474,19 +499,23 @@ describe('push gateway through the daemon', () => {
 
 describe('android driver: emulator identity', () => {
   // A stand-in adb: `devices -l` prints the list file; `emu avd discoverypath` the path file; each emu call is counted.
-  const fakeAdb = () => {
+  const fakeAdb = (alive: Set<number> = new Set()) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-adb-'));
+    const running = path.join(dir, 'running');
+    fs.mkdirSync(running);
     dirs.push(dir);
     const bin = path.join(dir, 'adb');
     fs.writeFileSync(
       bin,
       `#!/bin/sh
 D=${JSON.stringify(dir)}
-[ "$1" = "-s" ] && shift 2
+SERIAL=""
+[ "$1" = "-s" ] && SERIAL="$2" && shift 2
 case "$1 $2 $3" in
   "devices -l "*) echo "List of devices attached"; cat "$D/list";;
   "emu avd name") echo emu >> "$D/calls"; echo "Test_Phone_Lease"; echo OK;;
   "emu avd discoverypath") echo emu >> "$D/calls"; cat "$D/path"; echo; grep -q '^KO' "$D/path" || echo OK;;
+  "emu kill "*) echo "$SERIAL" >> "$D/kills"; echo OK;;
 esac
 `,
       {mode: 0o755},
@@ -496,7 +525,13 @@ esac
       fs.writeFileSync(path.join(dir, 'path'), where);
     };
     const calls = () => (fs.existsSync(path.join(dir, 'calls')) ? fs.readFileSync(path.join(dir, 'calls'), 'utf8').split('\n').filter(Boolean).length : 0);
-    return {driver: new AndroidDriver(bin), set, calls};
+    /** A discovery file, as an emulator writes it when it starts. */
+    const discover = (pid: number, port: number, avd: string, readOnly = false) => {
+      alive.add(pid);
+      fs.writeFileSync(path.join(running, `pid_${pid}.ini`), `avd.id=${avd}\nport.serial=${port}\nport.adb=${port + 1}\navd.name=${avd}\ncmdline="/sdk/qemu" "-avd" "${avd}"${readOnly ? ' "-read-only"' : ''}\n`);
+    };
+    const kills = () => (fs.existsSync(path.join(dir, 'kills')) ? fs.readFileSync(path.join(dir, 'kills'), 'utf8').split('\n').filter(Boolean) : []);
+    return {driver: new AndroidDriver(bin, {runningDirs: [running], alive: pid => alive.has(pid)}), set, calls, discover, kills, alive};
   };
   const line = (transport: number, state = 'device') => `emulator-5554          ${state} product:sdk model:sdk_phone device:emu transport_id:${transport}\n`;
 
@@ -535,6 +570,62 @@ esac
     }
     // The name was kept: only the instance was asked again, once.
     expect(adb.calls()).toBe(3);
+  });
+
+  const launchOf = (over: Partial<Launch>): Launch => ({avd: 'Copy', t0: Date.now(), deadline: Date.now() + 3000, timeoutMs: 3000, readOnly: false, earlier: new Set(), earlierInstances: new Set(), ...over});
+
+  it.skipIf(process.platform === 'win32')('names the AVD and process of an offline emulator from its discovery file, without its console', async () => {
+    const adb = fakeAdb();
+    adb.set(line(3, 'offline'));
+    adb.discover(4100, 5554, 'Phone');
+    expect((await adb.driver.devices())[0]).toMatchObject({serial: 'emulator-5554', state: 'offline', avd: 'Phone', instance: 'pid:4100'});
+    expect(adb.calls()).toBe(0);
+    adb.discover(4200, 5556, 'Phone', true);
+    expect(adb.driver.readOnly('pid:4200')).toBe(true);
+    expect(adb.driver.readOnly('pid:4100')).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('lets other boots go as soon as the launched emulator writes its discovery file, before adb lists it', async () => {
+    const adb = fakeAdb();
+    adb.set('');
+    adb.discover(4100, 5554, 'Phone');
+    // The launcher runs (this test process stands in for it); its emulator is not up yet.
+    const l = launchOf({avd: 'Phone', pid: process.pid, earlierInstances: new Set(['pid:4100'])});
+    setTimeout(() => adb.discover(4300, 5556, 'Phone'), 300);
+    const t0 = Date.now();
+    await adb.driver.untilListed(l, 5000);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(l.instance).toBe('pid:4300');
+  });
+
+  it.skipIf(process.platform === 'win32')('never takes the next emulator on a serial its launch gave up for its own, and never kills it', async () => {
+    const adb = fakeAdb();
+    // The launch's copy came up as emulator-5556 and died; another session's emulator took the port.
+    adb.set('emulator-5556          device product:sdk model:sdk_phone device:emu transport_id:9\n');
+    adb.discover(5200, 5556, 'Other');
+    const l = launchOf({avd: 'Copy', serial: 'emulator-5556', instance: 'pid:5100', deadline: Date.now() + 2500});
+    await expect(adb.driver.untilBooted(l)).rejects.toThrow(/exited/);
+    await adb.driver.abort(l);
+    expect(adb.kills()).toEqual([]);
+    expect(adb.alive.has(5200)).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('kills its own launch by its serial while adb shows it as its own', async () => {
+    const adb = fakeAdb();
+    adb.set('emulator-5556          offline transport_id:9\n');
+    adb.discover(5100, 5556, 'Copy');
+    const l = launchOf({avd: 'Copy', serial: 'emulator-5556', instance: 'pid:5100'});
+    // The process is gone by the time the kill is seen.
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      adb.alive.delete(5100);
+      return true;
+    });
+    try {
+      await adb.driver.abort(l);
+    } finally {
+      kill.mockRestore();
+    }
+    expect(adb.kills()).toEqual(['emulator-5556']);
   });
 });
 
