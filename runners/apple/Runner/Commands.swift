@@ -633,7 +633,7 @@ final class Commands {
     let board = UIPasteboard.general
     let saved = board.items
     board.string = text
-    field.typeKey("v", modifierFlags: .command)
+    field.typeKey(XCUIKeyboardKey(rawValue: "v"), modifierFlags: .command)
     board.items = saved
     let pasted = count()
     if pasted == held + text.count { return ["set": true, "pasted": true] }
