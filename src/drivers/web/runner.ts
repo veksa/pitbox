@@ -513,14 +513,16 @@ export class WebRunner {
 
   /**
    * The page's downloads, newest last. With `waitMs`, waits for one no answer has shown yet (matching `grep`) to
-   * finish and answers with it alone; without, lists the last `limit` and counts them as shown.
+   * finish and answers with it alone; without, lists the last `limit` and counts the finished ones as shown.
    */
   async downloads(opts: {grep?: string; waitMs?: number; limit?: number} = {}): Promise<{downloads: WebDownload[]; dir: string; waited?: number}> {
     const dir = path.join(this.#stateDir, 'downloads', this.name);
     const re = opts.grep ? new RegExp(opts.grep, 'i') : undefined;
     const match = (d: WebDownload) => !re || re.test(d.name);
     if (opts.waitMs === undefined) {
-      this.#downloadsSeen = this.#downloads.length;
+      // Shown means finished and listed: one still saving, or left out by `grep`, is still new for a wait.
+      const pending = this.#downloads.findIndex((d, i) => i >= this.#downloadsSeen && (d.state === 'saving' || !match(d)));
+      this.#downloadsSeen = pending >= 0 ? pending : this.#downloads.length;
       return {downloads: this.#downloads.filter(match).slice(-(opts.limit ?? 10)), dir};
     }
     const t0 = Date.now();

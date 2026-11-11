@@ -36,6 +36,7 @@ body{margin:0;font-family:sans-serif} #pad{height:300px;background:#ddd} .row{he
 </style></head><body>
 <div id="pad" data-testid="pad">Pad</div>
 <a data-testid="get" href="/report.pdf">Get report</a>
+<a data-testid="slow" href="/slow.zip">Get archive</a>
 <a data-testid="blob" href="#" onclick="event.preventDefault();const a=document.createElement('a');a.href=window.URL.createObjectURL(new Blob(['a,b\\n1,2'],{type:'text/csv'}));a.download='table.csv';a.click()">Export</a>
 ${Array.from({length: 20}, (_, i) => `<div class="row">Row ${i + 1}</div>`).join('')}
 <script>
@@ -54,7 +55,10 @@ beforeAll(async () => {
       const name = new URL(req.url, 'http://x').searchParams.get('name');
       setTimeout(() => res.end(`Signed in as ${name}`), 200);
     } else if (req.url === '/touch') res.setHeader('content-type', 'text/html').end(touchPage);
-    else if (req.url === '/report.pdf') res.setHeader('content-type', 'application/pdf').setHeader('content-disposition', 'attachment; filename="report.pdf"').end('%PDF-1.4\n% a tiny file\n');
+    else if (req.url === '/slow.zip') {
+      res.setHeader('content-type', 'application/zip').setHeader('content-disposition', 'attachment; filename="slow.zip"').write('PK\x03\x04');
+      setTimeout(() => res.end('rest'), 1500);
+    } else if (req.url === '/report.pdf') res.setHeader('content-type', 'application/pdf').setHeader('content-disposition', 'attachment; filename="report.pdf"').end('%PDF-1.4\n% a tiny file\n');
     else if (req.url === '/second') res.end('<!doctype html><title>Second</title><h2 data-testid="second">Second page</h2><button onclick="boom()">Break</button><button onclick="setTimeout(() => location.reload(), 30)">Reload</button>');
     else res.setHeader('content-type', 'text/html').end(page);
   });
@@ -276,6 +280,14 @@ describe('web emulation', () => {
     expect((await runner.downloads({waitMs: 10_000, grep: 'csv'})).downloads[0]).toMatchObject({name: 'table.csv', type: 'text/csv', size: 7});
     const all = await runner.downloads();
     expect(all.downloads.map(d => path.basename(d.file!))).toEqual(['report.pdf', 'report-2.pdf', 'table.csv']);
+  });
+
+  it('waits for a download a listing showed while it was still saving', {timeout: 60_000}, async () => {
+    await ui.press('id=slow');
+    const t0 = Date.now();
+    while (!(await runner.downloads()).downloads.some(d => d.name === 'slow.zip') && Date.now() - t0 < 5000) await new Promise(r => setTimeout(r, 50));
+    expect((await runner.downloads({grep: 'slow'})).downloads.at(-1)).toMatchObject({name: 'slow.zip', state: 'saving'});
+    expect((await runner.downloads({waitMs: 10_000})).downloads[0]).toMatchObject({name: 'slow.zip', state: 'done'});
   });
 
   it('keeps the profile on a relaunch and starts clean when asked', {timeout: 60_000}, async () => {
