@@ -160,6 +160,28 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     });
   }
 
+  // From React Native 0.80 a debug build sends warnings to the debugger and shows, on the first one, a toast
+  // ("Open debugger to view warnings.") over the bottom of every screen until someone closes it: a tab bar or a
+  // send button under it takes no taps, and the tap that lands on it tries to open a debugger. The warnings are
+  // in the console ring above, so the toast tells nothing pitbox does not; LogBox's own ignore list keeps it away
+  // (its message is checked against that list before it is shown). Errors and red screens are left as they are.
+  var quietLogBox = function () {
+    var r = g.__r;
+    var mods = r && typeof r.getModules === 'function' ? r.getModules() : null;
+    if (!mods || typeof mods.forEach !== 'function') return;
+    var id: any = null;
+    mods.forEach(function (m: any, k: any) {
+      if (id === null && m && m.isInitialized && /(^|[\\/])Libraries[\\/]LogBox[\\/]LogBox\.js$/.test(m.verboseName || '')) id = k;
+    });
+    if (id === null) return;
+    var mod = r(id);
+    var LogBox = mod && (mod.default || mod);
+    if (LogBox && typeof LogBox.ignoreLogs === 'function') LogBox.ignoreLogs(['Open debugger to view warnings.']);
+  };
+  try {
+    quietLogBox();
+  } catch (x) {}
+
   var W = g.WebSocket;
   if (W) {
     var Patched: any = function (url: string, protocols: any, options: any) {

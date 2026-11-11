@@ -151,6 +151,37 @@ describe('the app console', () => {
   });
 });
 
+describe("React Native's warnings toast", () => {
+  const withModules = (entries: [number, {verboseName?: string; isInitialized: boolean}][], exports: Record<number, unknown>) => {
+    const require = Object.assign((id: number) => exports[id], {getModules: () => new Map(entries)});
+    const g: Record<string, unknown> = {setTimeout, Date, Math, JSON, Array, String, Map, Set, __r: require};
+    g.globalThis = g;
+    vm.createContext(g);
+    vm.runInContext(inAppScript(cfg), g);
+  };
+
+  it("is kept away through LogBox's ignore list, once the runtime has set LogBox up", () => {
+    const ignored: unknown[] = [];
+    const LogBox = {ignoreLogs: (p: unknown[]) => void ignored.push(...p)};
+    withModules(
+      [
+        [3, {verboseName: 'node_modules/react-native/Libraries/Core/InitializeCore.js', isInitialized: true}],
+        [7, {verboseName: 'node_modules/react-native/Libraries/LogBox/LogBox.js', isInitialized: true}],
+      ],
+      {7: {default: LogBox}},
+    );
+    expect(ignored).toEqual(['Open debugger to view warnings.']);
+  });
+
+  it('is not looked for in a bundle without module names or before LogBox is set up', () => {
+    const touched: number[] = [];
+    const exports = new Proxy({} as Record<number, unknown>, {get: (_t, k) => void touched.push(Number(k))});
+    withModules([[7, {verboseName: 'node_modules/react-native/Libraries/LogBox/LogBox.js', isInitialized: false}]], exports);
+    withModules([[7, {isInitialized: true}]], exports);
+    expect(touched).toEqual([]);
+  });
+});
+
 describe('react commits', () => {
   type Fiber = {tag: number; type: unknown; flags: number; actualDuration: number; memoizedProps?: unknown; memoizedState?: unknown; alternate?: Fiber | null; child?: Fiber | null; sibling?: Fiber | null};
   const fiber = (f: Partial<Fiber> & {type: unknown}): Fiber => ({tag: 0, flags: 0, actualDuration: 0, alternate: null, child: null, sibling: null, ...f});
