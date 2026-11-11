@@ -5,9 +5,20 @@
 import net from 'node:net';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {AndroidDriver} from './drivers/android/driver.ts';
-import {AndroidRunner, RUNNER_VERSION} from './drivers/android/runner.ts';
+import {AndroidError} from './drivers/android/driver.ts';
+import {AndroidRunner, RUNNER_VERSION, retriedRead} from './drivers/android/runner.ts';
 
-type Device = {version?: number; updated: number; running: boolean; out: string; installs: number; launches: number; kills: number};
+type Device = {
+  version?: number;
+  updated: number;
+  running: boolean;
+  out: string;
+  installs: number;
+  launches: number;
+  kills: number;
+  /** The runner's answer to a command; ok when not given. */
+  answer?: (cmd: string) => {ok: boolean; error?: string};
+};
 
 /** A device whose runner listens on a local port while `running`; installing or stopping it drops its connections. */
 const fakeDevice = async (init: Partial<Device> = {}) => {
@@ -22,10 +33,11 @@ const fakeDevice = async (init: Partial<Device> = {}) => {
       buf += d.toString();
       let k: number;
       while ((k = buf.indexOf('\n')) >= 0) {
-        const req = JSON.parse(buf.slice(0, k)) as {id: number};
+        const req = JSON.parse(buf.slice(0, k)) as {id: number; cmd: string};
         buf = buf.slice(k + 1);
+        const reply = dev.answer?.(req.cmd) ?? {ok: true};
         // A runner answers after a moment: long enough for another daemon to act in between.
-        setTimeout(() => s.writable && s.write(`${JSON.stringify({id: req.id, ok: true})}\n`), 30);
+        setTimeout(() => s.writable && s.write(`${JSON.stringify({id: req.id, ...reply})}\n`), 30);
       }
     });
   });
@@ -121,6 +133,42 @@ describe('the android runner on a device several daemons use', () => {
       expect({installs: dev.installs, launches: dev.launches, version: dev.version}).toEqual({installs: 1, launches: 1, version: RUNNER_VERSION});
     } finally {
       for (const r of runners) await r.stop();
+    }
+  }, 30_000);
+});
+
+describe('the android runner while windows are in transition', () => {
+  const npe = {ok: false, error: "NullPointerException: Attempt to invoke interface method 'int java.util.List.size()' on a null object reference"};
+
+  it('asks a read the framework failed on a null list once more instead of failing the command', async () => {
+    const asked: string[] = [];
+    const {driver, close} = await fakeDevice({
+      version: RUNNER_VERSION,
+      running: true,
+      answer: cmd => (asked.push(cmd), cmd === 'tree' && asked.filter(c => c === 'tree').length === 1 ? npe : {ok: true}),
+    });
+    closers.push(close);
+    const r = new AndroidRunner(driver, 'emulator-5554');
+    try {
+      await expect(r.call('tree')).resolves.toMatchObject({ok: true});
+      expect(asked.filter(c => c === 'tree')).toHaveLength(2);
+    } finally {
+      await r.stop();
+    }
+  }, 30_000);
+
+  it('answers the second failure, and never repeats a command that acts on the device', async () => {
+    const asked: string[] = [];
+    const {driver, close} = await fakeDevice({version: RUNNER_VERSION, running: true, answer: cmd => (asked.push(cmd), cmd === 'info' ? {ok: true} : npe)});
+    closers.push(close);
+    const r = new AndroidRunner(driver, 'emulator-5554');
+    try {
+      await expect(r.call('tree')).rejects.toThrow(/NullPointerException/);
+      await expect(r.call('text', {text: 'a'})).rejects.toThrow(/NullPointerException/);
+      expect(asked.filter(c => c !== 'info')).toEqual(['tree', 'tree', 'text']);
+      expect(retriedRead('tree', new AndroidError('runner: IllegalArgumentException: no node'))).toBe(false);
+    } finally {
+      await r.stop();
     }
   }, 30_000);
 });

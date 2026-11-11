@@ -22,6 +22,19 @@ export const runnerApk = (): string => {
   return path.resolve(here, '..', '..', '..', 'runners', 'android', 'pitbox-runner.apk');
 };
 
+/** Commands that only read the screen: asking one again changes nothing on the device. */
+const READS = new Set(['info', 'tree', 'focus', 'node-actions']);
+/** Long enough for a window transition (an app starting, the keyboard rising) to move on. */
+const TRANSITION_PAUSE_MS = 150;
+
+/**
+ * A read the framework failed on a null list while windows were in transition (a window gone between listing it
+ * and reading it): asked once more after a pause, instead of failing the command (`open`, `press`, `fill`) that
+ * needed it. A second failure is the answer.
+ */
+export const retriedRead = (cmd: string, e: unknown): boolean =>
+  READS.has(cmd) && e instanceof AndroidError && /^runner: NullPointerException\b/.test(e.message);
+
 /** A runner of this version or a newer one: newer runners serve older hosts. */
 const usable = (v?: number) => v !== undefined && v >= RUNNER_VERSION;
 
@@ -220,7 +233,13 @@ export class AndroidRunner {
 
   async call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {
     await this.start();
-    return this.#send<T>(cmd, args, timeoutMs);
+    try {
+      return await this.#send<T>(cmd, args, timeoutMs);
+    } catch (e) {
+      if (!retriedRead(cmd, e)) throw e;
+      await new Promise(r => setTimeout(r, TRANSITION_PAUSE_MS));
+      return this.#send<T>(cmd, args, timeoutMs);
+    }
   }
 
   #send<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown>, timeoutMs: number): Promise<T> {
