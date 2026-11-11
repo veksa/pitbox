@@ -232,7 +232,9 @@ describe('web emulation', () => {
 
   it('switches to a phone at run time and back, keeping cookies and storage', {timeout: 60_000}, async () => {
     await inPage('localStorage.setItem("token", "t1"); document.cookie = "sid=s1"; 1');
+    await inPage('await new Promise(r => { const q = indexedDB.open("db", 1); q.onupgradeneeded = () => q.result.createObjectStore("kv"); q.onsuccess = () => { const t = q.result.transaction("kv", "readwrite"); t.objectStore("kv").put("v1", "k"); t.oncomplete = () => { q.result.close(); r(1); }; }; })');
     const applied = await runner.emulate({device: 'Pixel 7'});
+    expect(await inPage('await new Promise(r => { const q = indexedDB.open("db", 1); q.onsuccess = () => { const g = q.result.transaction("kv").objectStore("kv").get("k"); g.onsuccess = () => r(g.result); }; })')).toBe('"v1"');
     expect(applied[0]).toBe('412x839 @2.625x mobile touch · Pixel 7');
     expect(applied[1]).toMatch(/cookies and storage kept, \/touch reloaded/);
     expect(await inPage('[innerWidth, navigator.maxTouchPoints > 0, localStorage.getItem("token"), document.cookie, /Android/.test(navigator.userAgent)]')).toBe('[412, true, "t1", "sid=s1", true]');
