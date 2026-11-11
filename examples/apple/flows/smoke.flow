@@ -5,6 +5,11 @@ wait id=title 30
 fill id=name "Ada"
 press id=greet
 expect text="Hello, Ada"
+# Clearing a longer text of several words empties the field wherever the tap left the cursor.
+fill id=name "A reel about my morning run"
+fill id=name ""
+press id=greet
+expect text="Hello, stranger"
 # A secure field holds the whole text even when the keyboard's layout has no keys for its letters.
 fill id=password "Secret-pass-1"
 expect text="Secret-pass-1"

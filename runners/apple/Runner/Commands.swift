@@ -563,12 +563,7 @@ final class Commands {
       }
     }
     guard field.exists else { return ["set": false] }
-    if !(req["append"] as? Bool ?? false) {
-      let current = (field.value as? String) ?? ""
-      if !current.isEmpty && current != (field.placeholderValue ?? "") {
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
-      }
-    }
+    if !(req["append"] as? Bool ?? false) { try clear(field) }
     let before = req["append"] as? Bool ?? false ? ((field.value as? String) ?? "") : ""
     if field.elementType == .secureTextField {
       return try secureText(field, text, held: before == (field.placeholderValue ?? "") ? 0 : before.count)
@@ -577,8 +572,7 @@ final class Commands {
     // A controlled React Native input re-renders between keystrokes and can drop one that XCUITest typed
     // meanwhile. Checked, and typed again key by key when the field does not hold what was typed.
     if let got = field.value as? String, got != before + text {
-      let shown = got == (field.placeholderValue ?? "") ? "" : got
-      if !shown.isEmpty { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: shown.count)) }
+      try clear(field)
       for ch in before + text {
         field.typeText(String(ch))
         Thread.sleep(forTimeInterval: 0.05)
@@ -586,6 +580,38 @@ final class Commands {
       return ["set": true, "retyped": true]
     }
     return ["set": true]
+  }
+
+  /// What a field holds: an empty one reports its placeholder as its value.
+  private func shown(_ field: XCUIElement) -> String {
+    let value = (field.value as? String) ?? ""
+    return value == (field.placeholderValue ?? "") ? "" : value
+  }
+
+  /// Empties a field and checks that it is empty. The tap that focused the field leaves the cursor where it landed —
+  /// inside a longer text — and delete keys remove only what is before the cursor, so the cursor goes to the end
+  /// first. A controlled React Native input can drop keys typed in one burst: what is left goes key by key, and
+  /// select-all takes whatever remains after that.
+  private func clear(_ field: XCUIElement) throws {
+    for attempt in 0..<3 {
+      let left = shown(field)
+      if left.isEmpty { return }
+      #if os(iOS) || os(visionOS)
+      field.typeKey(.downArrow, modifierFlags: .command)
+      field.typeKey(.rightArrow, modifierFlags: .command)
+      if attempt == 2 { field.typeKey(XCUIKeyboardKey(rawValue: "a"), modifierFlags: .command) }
+      #endif
+      if attempt == 0 {
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: left.count))
+      } else {
+        for _ in 0..<(attempt == 2 ? 1 : left.count) {
+          field.typeText(XCUIKeyboardKey.delete.rawValue)
+          Thread.sleep(forTimeInterval: 0.03)
+        }
+      }
+    }
+    let left = shown(field)
+    if !left.isEmpty { throw RunnerError("the field still holds \"\(left)\" after it was cleared") }
   }
 
   /// A secure field reports only bullets, one per character, so what it holds is checked by their count.
