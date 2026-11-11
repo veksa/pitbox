@@ -219,6 +219,14 @@ An OpenAI-compatible stand-in (`/v1/chat/completions`, `/v1/models`, streaming o
 `fixtures` is a JSON file or a directory of them: `[{"match": "regex", "reply": "text"}]`, matched against
 the last user message; no match answers `mock reply to: …`.
 
+```ts
+mocks: {push: {port: 4980}},   // port default 4980; host default 127.0.0.1
+```
+
+The push gateway: a stand-in for APNs and FCM that the project's server sends to in its local environment
+(`/3/device/<token>`, `/v1/projects/<id>/messages:send`, `/fcm/send`, `/push`), started by `up` and delivered to
+the running simulator or emulator. See [push.md](push.md#the-push-gateway).
+
 ## states
 
 ```ts

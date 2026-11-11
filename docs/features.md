@@ -68,6 +68,18 @@ compact text.
 - Crashes, ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files
   and lines by the bundler, bytecode included.
 
+## Push notifications
+
+- **`push` with no credentials** — title, body and data, or a raw APNs payload, FCM message or payload file,
+  converted for the platform: `simctl push` on simulators; on Android the message goes to the app's own
+  FirebaseMessagingService through the connect library's debug-only receiver, so expo-notifications and React
+  Native Firebase behave as with real FCM — in front, in the background, not running.
+- **A verdict, not a screenshot** — "notification posted … · channel …", "banner shown …", "delivered with the app
+  in front"; `push tap` opens the latest notification, `push clear`, `push grant`, `push status`.
+- **The push gateway** — the stand answers APNs (HTTP/2) and FCM (v1 and legacy) requests from the project's
+  server and delivers them to the running device; `@veksa/pitbox/push` has `sendToPitbox`.
+  See [push.md](push.md).
+
 ## Dev server
 
 - **Your bundler behind pitbox's proxy** (`yarn start` as it is): a native file watcher on every platform

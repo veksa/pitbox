@@ -19,6 +19,9 @@ extra reach inside the app.
 - **Checks instead of screenshots** — is the video playing, does the screen match its baseline, can the D-pad
   reach everything, which function made the frame janky.
 - **The stand** — services, mocks and backend states started from one config and kept warm between sessions.
+- **Push notifications with no credentials** — `push` on simulators and emulators, through the app's own FCM
+  client on Android; a one-line verdict from the system UI, `push tap` to open it, and a gateway that takes the
+  APNs and FCM requests of the project's server.
 - **Inside a React Native app with no app code** — fresh code or stale, the network log and rules, the
   console, `eval` and logpoints, hot updates, React renders.
 
@@ -70,6 +73,7 @@ export default defineConfig({
 | [Features](docs/features.md) | everything pitbox does, by area |
 | [Config](docs/config.md) | every field of `pitbox.config.ts` |
 | [Flows](docs/flows.md) | the flow language: steps, selectors, recording |
+| [Push notifications](docs/push.md) | `push` on simulators and emulators, the stand's push gateway, recipes |
 | [Using pitbox from an agent](docs/agents.md) | how an agent gets the most out of the tools |
 | [Benchmarks](bench/README.md) | what pitbox measures and how |
 | [Examples](examples) | sample Android, Apple and React Native apps with their flows |

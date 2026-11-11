@@ -180,6 +180,11 @@ tree as native controls, with the page's `id`s as `id=` selectors.
   reply came from; `reply text=…`, `fail status=429`, `delay ms=…` force an answer, a provider error or a slow
   answer for prompts matching `match` (or all; `once=true` for one request); `clear` drops the rules. Tests the
   paths around a model without editing fixtures.
+- `push` — a push notification with no credentials: `title`, `body`, `data` (or `file`, `apns`, `fcm`) answers
+  with what the system showed ("notification posted", "banner shown", "delivered with the app in front"), so no
+  screenshot is needed; `action=tap` opens the latest notification, `action=log` lists what the backend sent
+  through the stand's push gateway (`mocks.push`). Test the app in front, in the background (`key home` first)
+  and not running (`app action=stop` first). See [push.md](push.md).
 - `trace` — what the backend did for the last action (or `id=`, an action's `trace` in its JSON answer): every action stamps
   one W3C trace id on the app's requests, and this finds it in all stand services' and actors' logs. The
   backend has to log the trace id of the `traceparent` header for it to be found.
