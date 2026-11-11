@@ -32,6 +32,7 @@ export const parseWidget = (value: string, extra: {app?: string; size?: string} 
 
 const normSize = (s: string) => s.trim().toLowerCase().replace(/\s*[×x*]\s*/, 'x').replace(/\s+/g, ' ');
 
+const norm = (s?: string) => (s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 const say = (n: UiNode) => (n.d ?? n.t ?? '').replace(/\s+/g, ' ').trim();
 const same = (a?: string, b?: string) => (a ?? '').replace(/\s+/g, ' ').trim().toLowerCase() === (b ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 const area = (b: Bounds) => Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
@@ -489,129 +490,320 @@ const androidList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
 };
 
 // ———————————————————————————————————————— iOS / iPadOS ————————————————————————————————————————
+// SpringBoard is read by what does not change with the system language: the ids of its views and of the SF Symbols
+// beside its menu items (`widget.small.badge.plus`, `…application-shortcut-item.remove-widget`), node types and
+// where things sit. The words it shows are never matched, except the names the caller gives (the app's label, the
+// widget's name), which are in the device's language anyway.
 
-const IOS_SIZES = ['small', 'medium', 'large', 'extra large'];
+const SPRINGBOARD = 'com.apple.springboard';
+const HOME_ICONS = 'Home screen icons';
+const ADD_WIDGET_SYMBOL = 'widget.small.badge.plus';
+const GALLERY = 'add-sheet-collection-view';
+const REMOVE_ITEM = 'com.apple.springboardhome.application-shortcut-item.remove-widget';
 
+export const IOS_SIZES = ['small', 'medium', 'large', 'extra large', 'extra large portrait'];
+
+/** A widget on an iOS home page: an icon view with the widget's scrolling content inside (an app icon has none). */
+export type IosHomeWidget = {index: number; label: string; stack?: string[]};
+
+/**
+ * The widgets on the home page in the tree, in reading order. SpringBoard labels each with its app's name. A widget
+ * is an icon view with the widget's content inside; while the page is being edited the content leaves the tree, and
+ * a widget is told from an app icon by its size (an icon takes well under 4% of the screen, a small widget about 9%).
+ */
+export const iosHomeWidgets = (snap: Pick<Snapshot, 'nodes'>): IosHomeWidget[] => {
+  const root = snap.nodes.find(n => n.id === HOME_ICONS)?.b;
+  const screen = root ? area(root) : Math.max(0, ...snap.nodes.map(n => area(n.b)));
+  const out: IosHomeWidget[] = [];
+  snap.nodes.forEach((icon, k) => {
+    if (icon.c !== 'Icon') return;
+    const content = snap.nodes.some(m => m.c === 'ScrollView' && inAncestry(snap.nodes, m, k));
+    if (!content && !(screen > 0 && area(icon.b) >= screen * 0.04)) return;
+    // A stack names the widgets in it in its own view's id: `widget-stack:<Calendar,News,Photos>`.
+    const stackId = snap.nodes.find(m => m.p === k && /^widget-stack:/.test(m.id ?? ''))?.id;
+    const stack = stackId ? /^widget-stack:<(.*)>$/.exec(stackId)?.[1]?.split(',') : undefined;
+    out.push({index: k, label: (icon.t ?? icon.id ?? '').replace(/\s+/g, ' ').trim(), ...(stack ? {stack} : {})});
+  });
+  return out.sort((x, y) => snap.nodes[x.index]!.b[1] - snap.nodes[y.index]!.b[1] || snap.nodes[x.index]!.b[0] - snap.nodes[y.index]!.b[0]);
+};
+
+/** The home page on screen and how many there are, from the page control's numbers ("Page 2 of 3" in any language). */
+export const iosPages = (snap: Pick<Snapshot, 'nodes'>): {page: number; pages: number} => {
+  const pc = snap.nodes.find(n => n.id === 'Page control');
+  const nums = `${pc?.t ?? ''} ${pc?.d ?? ''}`.match(/\d+/g)?.map(Number) ?? [];
+  if (nums.length < 2) return {page: 1, pages: 1};
+  const pages = Math.max(nums[0]!, nums[1]!);
+  return {page: Math.min(nums[0]!, nums[1]!), pages};
+};
+
+/** The home screen is being edited (icons jiggle): every icon has its delete badge. */
+const iosEditing = (snap: Pick<Snapshot, 'nodes'>) => snap.nodes.some(n => n.id === 'DeleteButton');
+
+/**
+ * The size of a widget in the gallery, from its preview's shape: small and large are square, medium and extra
+ * large twice as wide as high, extra large portrait taller than wide; small and medium are one row high, the
+ * others two. `ref` is the width of the gallery's content (its Add button).
+ */
+export const iosSizeOf = (b: Bounds, ref: number): string => {
+  const w = b[2] - b[0];
+  const h = b[3] - b[1];
+  if (w <= 0 || h <= 0 || ref <= 0) return 'unknown';
+  const aspect = w / h;
+  if (aspect < 0.8) return 'extra large portrait';
+  if (aspect < 1.4) return w / ref > 0.65 ? 'large' : 'small';
+  return h / ref > 0.6 ? 'extra large' : 'medium';
+};
+
+/** One page of an app's widget gallery: the widget's preview, its name and size, and the Add button under it. */
+export type IosGalleryPage = {preview: number; add?: number; name: string; size: string};
+
+/**
+ * The page of the gallery on screen. The preview is a button labelled "<App>, <Widget>" (its value says "Widget,
+ * <size>" in the device's language); the Add button is the wide button with no id below it.
+ */
+export const iosGalleryPage = (snap: Pick<Snapshot, 'nodes'>, app: string): IosGalleryPage | undefined => {
+  const prefix = `${norm(app)}, `;
+  const preview = snap.nodes.findIndex(n => n.c === 'Button' && !n.id && norm(n.t).startsWith(prefix));
+  const alone = preview >= 0 ? preview : snap.nodes.findIndex(n => n.c === 'Button' && !n.id && same(n.t, app) && area(n.b) > 0 && n.b[3] - n.b[1] > 100);
+  if (alone < 0) return undefined;
+  const pb = snap.nodes[alone]!.b;
+  const below = snap.nodes
+    .flatMap((n, i) => (n.c === 'Button' && !n.id && i !== alone && n.b[1] >= pb[3] - 4 ? [i] : []))
+    .sort((x, y) => (snap.nodes[y]!.b[2] - snap.nodes[y]!.b[0]) - (snap.nodes[x]!.b[2] - snap.nodes[x]!.b[0]));
+  const add = below[0];
+  const ref = add !== undefined ? snap.nodes[add]!.b[2] - snap.nodes[add]!.b[0] : pb[2] - pb[0];
+  const label = (snap.nodes[alone]!.t ?? '').replace(/\s+/g, ' ').trim();
+  const name = norm(label).startsWith(prefix) ? label.slice(prefix.length).trim() : label;
+  return {preview: alone, ...(add !== undefined ? {add} : {}), name, size: iosSizeOf(pb, ref)};
+};
+
+const iosSnap = async (ui: DeviceUi) => steady(ui, 1500);
+
+/** The first home page, out of editing, with nothing over it. */
 const iosHome = async (ui: DeviceUi): Promise<Snapshot> => {
-  await ui.key(['home']);
-  const {snap} = await until(ui, 2000, s => (s.windows[0]?.pkg === 'com.apple.springboard' ? true : undefined));
-  if (snap.windows[0]?.pkg !== 'com.apple.springboard') throw new Error(`home did not bring up the home screen (in front: ${snap.windows[0]?.pkg ?? 'nothing'})`);
-  return snap;
-};
-
-const findLabel = (s: Snapshot, re: RegExp, pred: (n: UiNode) => boolean = () => true) => {
-  const i = s.nodes.findIndex(n => re.test(say(n)) && pred(n));
-  return i >= 0 ? i : undefined;
-};
-
-const iosDone = async (ui: DeviceUi) => {
-  const s = await ui.snapshot();
-  const done = findLabel(s, /^done$/i, n => n.c === 'Button');
-  if (done !== undefined) await ui.press(point(s, done));
-};
-
-/** The page of the iOS widget gallery for one size, by the size name the gallery shows under it. */
-export const iosSizePage = (snap: Pick<Snapshot, 'nodes'>): string | undefined => {
-  for (const n of snap.nodes) {
-    const s = say(n).toLowerCase();
-    if (IOS_SIZES.includes(s)) return s;
+  for (let i = 0; i < 3; i++) {
+    await ui.key(['home']);
+    const {snap, hit} = await until(ui, 2500, s => (s.windows[0]?.pkg === SPRINGBOARD && s.nodes.some(n => n.id === HOME_ICONS) ? true : undefined));
+    if (hit && !iosEditing(snap) && !snap.nodes.some(n => n.id === GALLERY || n.id === REMOVE_ITEM)) return iosSnap(ui);
   }
-  return undefined;
+  const snap = await ui.snapshot();
+  throw new Error(`home did not bring up the home screen (in front: ${snap.windows[0]?.pkg ?? 'nothing'})`);
 };
 
-/** A widget on the iOS home screen: SpringBoard labels it with the widget's name (or its app's). */
-export const iosHomeWidget = (snap: Pick<Snapshot, 'nodes'>, name: string): number | undefined => {
-  const i = snap.nodes.findIndex(n => n.c !== 'Icon' && (same(n.d, name) || same(n.t, name) || same(n.id, name)) && n.c !== 'Button' && n.c !== 'StaticText');
-  if (i >= 0) return i;
-  const j = snap.nodes.findIndex(n => n.c !== 'Icon' && n.c !== 'StaticText' && (n.id ?? '').toLowerCase().includes('widget') && say(n).toLowerCase().includes(name.toLowerCase()));
-  return j >= 0 ? j : undefined;
+/** Swipes to the next home page; false when the screen did not move. */
+const iosNextPage = async (ui: DeviceUi, snap: Snapshot): Promise<Snapshot | undefined> => {
+  const {page} = iosPages(snap);
+  const {width, height} = await ui.size();
+  await ui.swipe(`${Math.round(width * 0.85)},${Math.round(height * 0.5)},${Math.round(width * 0.15)},${Math.round(height * 0.5)}`);
+  const r = await until(ui, 2000, s => (iosPages(s).page !== page ? true : undefined));
+  return r.hit ? iosSnap(ui) : undefined;
+};
+
+/** Every home page from the first, with the widgets on it. */
+const iosEachPage = async (ui: DeviceUi, visit: (snap: Snapshot, page: number) => boolean | void): Promise<void> => {
+  let snap = await iosHome(ui);
+  const {pages} = iosPages(snap);
+  for (let page = 1; ; page++) {
+    if (visit(snap, page) === true || page >= pages) return;
+    const next = await iosNextPage(ui, snap);
+    if (!next) return;
+    snap = next;
+  }
+};
+
+/** Matches a home widget by the label the caller gave: its app's name, which is how SpringBoard labels it. */
+const iosMatches = (w: IosHomeWidget, label: string) => same(w.label, label);
+
+/** The Edit button of the home screen being edited (its menu holds "Add Widget"), then that item: the gallery opens. */
+const iosOpenGallery = async (ui: DeviceUi, spot: {x: number; y: number}): Promise<Snapshot> => {
+  const {height} = await ui.size();
+  // Two buttons with no id head the page being edited: Edit and Done, in reading order. Edit comes first in a
+  // left-to-right language; the other one is tried when the first was Done.
+  for (const side of ['first', 'last'] as const) {
+    await ui.press(`${spot.x},${spot.y}`, 'longpress');
+    const edit = await until(ui, 3000, s => {
+      if (!iosEditing(s)) return undefined;
+      const top = s.nodes.flatMap((n, i) => (n.c === 'Button' && !n.id && !n.d && n.b[3] < height * 0.12 ? [i] : [])).sort((x, y) => s.nodes[x]!.b[0] - s.nodes[y]!.b[0]);
+      return top.length ? (side === 'first' ? top[0] : top[top.length - 1]) : undefined;
+    });
+    if (edit.hit === undefined) throw new Error(`a long press on the home screen at ${spot.x},${spot.y} did not start editing it`);
+    await ui.press(point(edit.snap, edit.hit));
+    const item = await until(ui, 2500, s => idOf(s, ADD_WIDGET_SYMBOL));
+    if (item.hit !== undefined) {
+      await ui.press(point(item.snap, item.hit));
+      const gallery = await until(ui, 4000, s => idOf(s, GALLERY));
+      if (gallery.hit === undefined) throw new Error('"Add Widget" opened no widget gallery');
+      return iosSnap(ui);
+    }
+    // That was Done: the home screen is out of editing again.
+  }
+  throw new Error('the home screen\'s Edit menu has no "Add Widget" item');
+};
+
+/** A row of the gallery's list of apps: a cell (a button on some versions) with the app's name. */
+const galleryRow = (n: UiNode) => (n.c === 'Cell' || n.c === 'Button') && !!n.t;
+
+/** In the gallery's list of apps: the app's row, scrolled to. */
+const iosGalleryApp = async (ui: DeviceUi, app: string): Promise<{snap: Snapshot; index?: number; seen: string[]}> => {
+  let snap = await iosSnap(ui);
+  const seen: string[] = [];
+  for (let k = 0; k < 20; k++) {
+    const list = idOf(snap, GALLERY);
+    if (list === undefined) break;
+    const rows = snap.nodes.flatMap((n, i) => (galleryRow(n) && inAncestry(snap.nodes, n, list) ? [i] : []));
+    for (const r of rows) if (!seen.includes(snap.nodes[r]!.t!)) seen.push(snap.nodes[r]!.t!);
+    const index = rows.find(r => same(snap.nodes[r]!.t, app));
+    if (index !== undefined) return {snap, index, seen};
+    const lb = snap.nodes[list]!.b;
+    const {height} = await ui.size();
+    const bottom = Math.min(lb[3], height);
+    const x = Math.round((lb[0] + lb[2]) / 2);
+    const before = rows.map(r => snap.nodes[r]!.t).join('|');
+    await ui.swipe(`${x},${Math.round(lb[1] + (bottom - lb[1]) * 0.8)},${x},${Math.round(lb[1] + (bottom - lb[1]) * 0.25)}`);
+    snap = await iosSnap(ui);
+    const list2 = idOf(snap, GALLERY);
+    if (list2 === undefined) break;
+    const after = snap.nodes.flatMap(n => (galleryRow(n) && inAncestry(snap.nodes, n, list2) ? [n.t] : [])).join('|');
+    if (after === before) break;
+  }
+  return {snap, seen};
+};
+
+/** Opens the gallery of one app; the snapshot shows its first page. */
+const iosAppGallery = async (ui: DeviceUi, app: string, spot: {x: number; y: number}): Promise<Snapshot> => {
+  await iosOpenGallery(ui, spot);
+  const row = await iosGalleryApp(ui, app);
+  if (row.index === undefined) {
+    await iosHome(ui);
+    const some = row.seen.slice(0, 12);
+    throw new Error(`no app "${app}" among the apps the widget gallery offers${some.length ? ` (it lists: ${some.join(', ')}${row.seen.length > some.length ? ', …' : ''})` : ''}\nhint: name the app with app=<label> as the gallery lists it`);
+  }
+  await ui.press(point(row.snap, row.index));
+  const page = await until(ui, 4000, s => iosGalleryPage(s, app));
+  if (!page.hit) {
+    await iosHome(ui);
+    throw new Error(`the gallery of "${app}" showed no widget`);
+  }
+  return iosSnap(ui);
+};
+
+/** Walks the pages of an app's gallery until `stop` holds; every page seen, in order. */
+const iosGalleryWalk = async (ui: DeviceUi, app: string, stop: (p: IosGalleryPage) => boolean): Promise<{snap: Snapshot; page?: IosGalleryPage; seen: IosGalleryPage[]}> => {
+  let snap = await iosSnap(ui);
+  const seen: IosGalleryPage[] = [];
+  for (let k = 0; k < 40; k++) {
+    const page = iosGalleryPage(snap, app);
+    if (!page) break;
+    seen.push(page);
+    if (stop(page)) return {snap, page, seen};
+    const pb = snap.nodes[page.preview]!.b;
+    const sig = `${snap.nodes[page.preview]!.t}|${snap.nodes[page.preview]!.d}|${pb.join(',')}|${snap.lines.join('\n')}`;
+    const {width} = await ui.size();
+    const y = Math.round((pb[1] + pb[3]) / 2);
+    await ui.swipe(`${Math.round(width * 0.85)},${y},${Math.round(width * 0.15)},${y}`);
+    snap = await iosSnap(ui);
+    const next = iosGalleryPage(snap, app);
+    if (!next) break;
+    const nb = snap.nodes[next.preview]!.b;
+    if (`${snap.nodes[next.preview]!.t}|${snap.nodes[next.preview]!.d}|${nb.join(',')}|${snap.lines.join('\n')}` === sig) break;
+  }
+  return {snap, seen};
+};
+
+/** A spot to long-press on the home page in the tree: below the status bar, above the dock. */
+const iosSpot = async (ui: DeviceUi, snap: Snapshot) => {
+  const {width, height} = await ui.size();
+  const dock = snap.nodes.find(n => n.t === 'Dock' || n.id === 'Dock');
+  const pc = snap.nodes.find(n => n.id === 'Page control' || n.id === 'spotlight-pill');
+  const bottom = Math.min(dock?.b[1] ?? height, pc?.b[1] ?? height);
+  return freeSpot(snap, [0, Math.round(height * 0.08), width, bottom], {top: Math.round(height * 0.08)});
 };
 
 const iosAdd = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
   const name = w.name!;
   const app = w.app ?? name;
-  const home = await iosHome(ui);
-  const {width, height} = await ui.size();
-  const spot = freeSpot(home, [0, 0, width, height], {top: Math.round(height * 0.1)});
-  if (!spot) throw new Error('no empty spot on the home screen to long-press');
-  await ui.press(`${spot.x},${spot.y}`, 'longpress');
-  // iOS 18 and later: Edit, then Add Widget; iOS 17: a + button that adds a widget.
-  const edit = await until(ui, 3000, s => findLabel(s, /^(edit|add widget)$/i, n => n.c === 'Button'));
-  if (edit.hit === undefined) throw new Error('a long press on the home screen did not start editing it (no Edit button)');
-  await ui.press(point(edit.snap, edit.hit));
-  if (/^edit$/i.test(say(edit.snap.nodes[edit.hit]!))) {
-    const add = await until(ui, 3000, s => findLabel(s, /^add widget$/i));
-    if (add.hit === undefined) throw new Error('the Edit menu has no "Add Widget" item');
-    await ui.press(point(add.snap, add.hit));
+  // The last home page: the one with room, where a new widget moves the fewest icons.
+  let snap = await iosHome(ui);
+  for (let k = iosPages(snap).pages; k > 1; k--) {
+    const next = await iosNextPage(ui, snap);
+    if (!next) break;
+    snap = next;
   }
-  const search = await until(ui, 4000, s => s.nodes.findIndex(n => n.c === 'SearchField' || (n.f ?? '').includes('e')) + 1 || undefined);
-  if (search.hit === undefined) {
-    await iosDone(ui);
-    throw new Error('the widget gallery opened with no search field');
+  const {page} = iosPages(snap);
+  const before = iosHomeWidgets(snap).filter(x => !x.stack && iosMatches(x, app)).length;
+  const spot = await iosSpot(ui, snap);
+  if (!spot) throw new Error('no empty spot on the last home page to long-press\nhint: move an icon off it, or add the widget by hand');
+  await iosAppGallery(ui, app, spot);
+  const walk = await iosGalleryWalk(ui, app, p => same(p.name, name) && (!w.size || p.size === w.size));
+  if (!walk.page || walk.page.add === undefined) {
+    await iosHome(ui);
+    const kinds = walk.seen.filter(p => same(p.name, name)).map(p => p.size);
+    if (kinds.length && w.size) throw new Error(`no ${w.size} size of the "${name}" widget (it comes in ${kinds.join(', ')})`);
+    const offered = [...new Set(walk.seen.map(p => `${p.name} ${p.size}`))];
+    throw new Error(`no widget "${name}" in the gallery of "${app}"${offered.length ? ` (it shows: ${offered.join(', ')})` : ''}`);
   }
-  await ui.fill(point(search.snap, search.hit - 1), app);
-  const result = await until(ui, 4000, s => findLabel(s, new RegExp(`^${escape(app)}$`, 'i'), n => n.c !== 'SearchField' && !(n.f ?? '').includes('e')));
-  if (result.hit === undefined) {
-    await iosDone(ui);
-    throw new Error(`no app "${app}" among the widgets the gallery offers\nhint: name the app with app=<label> as the gallery lists it`);
-  }
-  await ui.press(point(result.snap, result.hit));
-  // The app's gallery: one page per widget kind and size, each with its name and size, and an Add Widget button.
-  let page = await until(ui, 4000, s => findLabel(s, /^add widget$/i, n => n.c === 'Button'));
-  if (page.hit === undefined) {
-    await iosDone(ui);
-    throw new Error(`the gallery of "${app}" showed no Add Widget button`);
-  }
-  const want = w.size;
-  const matchesPage = (s: Snapshot) => s.nodes.some(n => same(n.t ?? n.d, name)) && (!want || iosSizePage(s) === want);
-  for (let k = 0; k < 12 && !matchesPage(page.snap); k++) {
-    const before = page.snap.lines.join('\n');
-    await ui.swipe('left');
-    page = await until(ui, 1500, s => findLabel(s, /^add widget$/i, n => n.c === 'Button'));
-    if (page.hit === undefined || page.snap.lines.join('\n') === before) break;
-  }
-  if (!matchesPage(page.snap) || page.hit === undefined) {
-    await iosDone(ui);
-    throw new Error(`no "${name}" widget${want ? ` in ${want} size` : ''} in the gallery of "${app}"`);
-  }
-  const shown = iosSizePage(page.snap);
-  await ui.press(point(page.snap, page.hit));
-  await sleep(800);
-  await iosDone(ui);
-  const placed = await until(ui, 5000, s => iosHomeWidget(s, name));
-  if (placed.hit === undefined) throw new Error(`no "${name}" widget on the home screen after adding it`);
-  return {widget: name, ...(shown ? {size: shown} : {}), on: 'home'};
+  await ui.press(point(walk.snap, walk.page.add));
+  const placed = await until(ui, 6000, s => (s.nodes.some(n => n.id === HOME_ICONS) && iosHomeWidgets(s).filter(x => !x.stack && iosMatches(x, app)).length > before ? true : undefined));
+  await iosHome(ui);
+  if (!placed.hit) throw new Error(`no "${app}" widget on the home screen after adding "${name}"`);
+  return {widget: name, size: walk.page.size, label: app, on: `home page ${page}`};
 };
 
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const iosFind = async (ui: DeviceUi, name: string): Promise<{snap: Snapshot; index: number} | undefined> => {
-  await iosHome(ui);
-  for (let page = 0; page < 6; page++) {
-    const snap = await ui.snapshot();
-    const index = iosHomeWidget(snap, name);
-    if (index !== undefined) return {snap, index};
-    const before = snap.lines.join('\n');
-    await ui.swipe('left');
-    if ((await ui.snapshot()).lines.join('\n') === before) break;
-  }
-  return undefined;
+/**
+ * The widget to remove: the first one with the label in reading order (pages from the first, top to bottom, left
+ * to right), as on Android. A stack is never taken: it holds other widgets too.
+ */
+const iosFind = async (ui: DeviceUi, label: string): Promise<{snap: Snapshot; index: number; page: number; count: number} | undefined> => {
+  let hit: {snap: Snapshot; index: number; page: number; count: number} | undefined;
+  await iosEachPage(ui, (snap, page) => {
+    const mine = iosHomeWidgets(snap).filter(x => !x.stack && iosMatches(x, label));
+    if (mine.length) hit = {snap, index: mine[0]!.index, page, count: mine.length};
+    return !!hit;
+  });
+  return hit;
 };
 
 const iosRemove = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
-  const name = w.name!;
-  const found = await iosFind(ui, name);
-  if (!found) throw new Error(`no "${name}" widget on the home screen`);
+  const label = w.app ?? w.name!;
+  const found = await iosFind(ui, label);
+  if (!found) throw new Error(`no "${label}" widget on the home screen\nhint: on iOS a home-screen widget is labelled with its app's name; widget list shows them`);
   await ui.press(point(found.snap, found.index), 'longpress');
-  const item = await until(ui, 3000, s => findLabel(s, /^remove widget$/i));
-  if (item.hit === undefined) throw new Error(`a long press on the "${name}" widget showed no "Remove Widget" item`);
+  const item = await until(ui, 3000, s => idOf(s, REMOVE_ITEM));
+  if (item.hit === undefined) {
+    await iosHome(ui);
+    throw new Error(`a long press on the "${label}" widget showed no Remove Widget item`);
+  }
   await ui.press(point(item.snap, item.hit));
-  const confirm = await until(ui, 3000, s => findLabel(s, /^remove$/i, n => n.c === 'Button'));
-  if (confirm.hit !== undefined) await ui.press(point(confirm.snap, confirm.hit));
-  await iosDone(ui);
-  const gone = await until(ui, 4000, s => (iosHomeWidget(s, name) === undefined ? true : undefined));
-  if (!gone.hit) throw new Error(`the "${name}" widget is still on the home screen after removing it`);
-  return {widget: name, removed: true};
+  // "Remove "<widget>"?" — the destructive button comes last.
+  const alert = await until(ui, 3000, s => {
+    const a = s.nodes.findIndex(n => n.c === 'Alert');
+    if (a < 0) return undefined;
+    const buttons = s.nodes.flatMap((n, i) => (n.c === 'Button' && inAncestry(s.nodes, n, a) ? [i] : []));
+    return buttons.length ? buttons[buttons.length - 1] : undefined;
+  });
+  if (alert.hit !== undefined) await ui.press(point(alert.snap, alert.hit));
+  const gone = await until(ui, 4000, s => (s.nodes.some(n => n.id === HOME_ICONS) && !s.nodes.some(n => n.c === 'Alert') && iosHomeWidgets(s).filter(x => !x.stack && iosMatches(x, label)).length < found.count ? true : undefined));
+  await iosHome(ui);
+  if (!gone.hit) throw new Error(`the "${label}" widget is still on the home screen after removing it`);
+  return {widget: label, removed: true, page: found.page};
+};
+
+const iosList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
+  if (!w.app) {
+    const widgets: string[] = [];
+    await iosEachPage(ui, snap => {
+      for (const x of iosHomeWidgets(snap)) widgets.push(x.stack ? `${x.label} (stack: ${x.stack.join(', ')})` : x.label);
+    });
+    await iosHome(ui);
+    return {widgets};
+  }
+  const snap = await iosHome(ui);
+  const spot = await iosSpot(ui, snap);
+  if (!spot) throw new Error('no empty spot on the first home page to long-press');
+  await iosAppGallery(ui, w.app, spot);
+  const walk = await iosGalleryWalk(ui, w.app, () => false);
+  await iosHome(ui);
+  return {app: w.app, widgets: [...new Set(walk.seen.map(p => `${p.name} ${p.size}`))]};
 };
 
 // ———————————————————————————————————————— entry ————————————————————————————————————————
@@ -622,20 +814,11 @@ export type WidgetPlatform = 'android' | 'ios';
 export const widget = (ui: DeviceUi, platform: WidgetPlatform, w: WidgetOp): Promise<Done> =>
   asOneStep(ui, stepLine(w), async () => {
     const t0 = Date.now();
-    // The SpringBoard path below is written but not yet checked on a simulator: refused until it is.
-    if (platform === 'ios') throw new Error('widget is not supported on iOS simulators yet: pitbox drives Android launchers (Launcher3, Pixel Launcher) for now');
-    if (w.size && IOS_SIZES.includes(w.size)) throw new Error(`size ${w.size} is an iOS size: on Android it is the picker's cells, like 4x2`);
-    if (platform === 'android' && w.size && !/^\d+x\d+$/.test(w.size)) throw new Error('size on Android is the picker\'s cells, like 4x2');
+    if (platform === 'android' && w.size && !/^\d+x\d+$/.test(w.size)) throw new Error(`size on Android is the picker's cells, like 4x2${IOS_SIZES.includes(w.size) ? ` (${w.size} is an iOS size)` : ''}`);
+    if (platform === 'ios' && w.size && !IOS_SIZES.includes(w.size)) throw new Error(`size on iOS is one of ${IOS_SIZES.join(', ')}`);
     const r =
       platform === 'android'
         ? w.op === 'add' ? await androidAdd(ui, w) : w.op === 'remove' ? await androidRemove(ui, w) : await androidList(ui, w)
         : w.op === 'add' ? await iosAdd(ui, w) : w.op === 'remove' ? await iosRemove(ui, w) : await iosList(ui, w);
     return {serial: ui.serial, ...r, ms: Date.now() - t0};
   });
-
-const iosList = async (ui: DeviceUi, w: WidgetOp): Promise<Done> => {
-  if (w.app) throw new Error('widget list <app> reads the Android picker; on iOS widget list shows the widgets on the home page');
-  const snap = await iosHome(ui);
-  const widgets = snap.nodes.filter(n => n.c !== 'Icon' && (n.id ?? '').toLowerCase().includes('widget')).map(say).filter(Boolean);
-  return {widgets: [...new Set(widgets)]};
-};

@@ -3,7 +3,7 @@ import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 import {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, type Bounds, type UiNode, type UiWindow} from './ui/snapshot.ts';
-import {freeSpot, homeWidget, homeWidgets, parseWidget, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
+import {freeSpot, homeWidget, homeWidgets, iosGalleryPage, iosHomeWidgets, iosPages, iosSizeOf, parseWidget, pickEntry, pickerEntries, pickerHeader, widget} from './ui/widget.ts';
 
 const LAUNCHER = 'com.android.launcher3';
 const launcher: UiWindow[] = [{type: 'app', title: '', pkg: LAUNCHER}];
@@ -206,8 +206,75 @@ describe('a widget on a Launcher3 home screen', () => {
     await expect(widget(new DeviceUi('dev', runner as never), 'android', parseWidget('add Note'))).rejects.toThrow(/launcher com\.example\.launcher is not supported/);
   }, 20_000);
 
-  it('is refused on an iOS simulator until that path is checked', async () => {
+  it('refuses a size the platform does not have', async () => {
     const runner = {call: async () => ({}), stop: async () => undefined};
-    await expect(widget(new DeviceUi('sim', runner as never), 'ios', parseWidget('add Note'))).rejects.toThrow(/not supported on iOS simulators yet/);
+    await expect(widget(new DeviceUi('sim', runner as never), 'ios', parseWidget('add Note size=4x2'))).rejects.toThrow(/size on iOS is one of small/);
+    await expect(widget(new DeviceUi('dev', runner as never), 'android', parseWidget('add Note size=medium'))).rejects.toThrow(/medium is an iOS size/);
+  });
+});
+
+const SB: UiWindow[] = [{type: 'app', title: '', pkg: 'com.apple.springboard'}];
+
+describe('the iOS home screen', () => {
+  // Labels and values are in whatever language the device speaks: only ids, types and shapes are read.
+  const home: UiNode[] = [
+    {p: -1, w: 0, c: 'Other', b: [0, 0, 402, 874], id: 'Home screen icons'},
+    {p: 0, w: 0, c: 'Icon', b: [210, 88, 378, 279], t: 'MyApp', d: 'Widget, Stack', id: 'MyApp', f: 'c'},
+    {p: 1, w: 0, c: 'Other', b: [212, 90, 376, 254], id: 'widget-stack:<MyApp,Other app>'},
+    {p: 2, w: 0, c: 'ScrollView', b: [212, 90, 376, 254], f: 's'},
+    {p: 0, w: 0, c: 'Icon', b: [24, 88, 193, 279], t: 'Notes', d: 'Widget', id: 'Notes', f: 'c'},
+    {p: 4, w: 0, c: 'ScrollView', b: [26, 90, 191, 254], f: 's'},
+    {p: 0, w: 0, c: 'Icon', b: [20, 289, 104, 379], t: 'MyApp', d: 'Wednesday', id: 'MyApp', f: 'c'},
+    {p: 0, w: 0, c: 'Icon', b: [121, 289, 189, 379], t: 'Tools folder', d: '2 apps', id: 'Tools', f: 'c'},
+    {p: 0, w: 0, c: 'Other', b: [163, 704, 239, 739], t: 'Seite 2 von 3', id: 'Page control'},
+  ];
+
+  it('tells widgets from app icons and folders by the content inside them', () => {
+    expect(iosHomeWidgets(snap(home, SB))).toEqual([
+      {index: 4, label: 'Notes'},
+      {index: 1, label: 'MyApp', stack: ['MyApp', 'Other app']},
+    ]);
+  });
+
+  it('finds widgets by their size while the page is being edited and their content is out of the tree', () => {
+    const editing: UiNode[] = [
+      {p: -1, w: 0, c: 'Other', b: [0, 0, 402, 874], id: 'Home screen icons'},
+      {p: 0, w: 0, c: 'Button', b: [36, 19, 102, 47], t: 'Bearbeiten', f: 'c'},
+      {p: 0, w: 0, c: 'Icon', b: [24, 88, 193, 279], t: 'Notes', d: 'Widget', id: 'Notes', f: 'c'},
+      {p: 2, w: 0, c: 'Button', b: [20, 83, 46, 109], id: 'DeleteButton', f: 'c'},
+      {p: 0, w: 0, c: 'Icon', b: [210, 88, 378, 279], t: 'MyApp', d: 'Widget', id: 'MyApp', f: 'c'},
+      {p: 0, w: 0, c: 'Icon', b: [28, 289, 96, 379], t: 'Other app', id: 'Other app', f: 'c'},
+      {p: 5, w: 0, c: 'Button', b: [20, 281, 46, 307], id: 'DeleteButton', f: 'c'},
+    ];
+    expect(iosHomeWidgets(snap(editing, SB)).map(x => x.label)).toEqual(['Notes', 'MyApp']);
+  });
+
+  it('reads the page from the page control\'s numbers in any language', () => {
+    expect(iosPages(snap(home, SB))).toEqual({page: 2, pages: 3});
+    expect(iosPages(snap(home.slice(0, 8), SB))).toEqual({page: 1, pages: 1});
+  });
+});
+
+describe('the iOS widget gallery', () => {
+  const page = (b: Bounds, label = 'MyApp, Up next'): UiNode[] => [
+    {p: -1, w: 0, c: 'Other', b: [-402, -874, 804, 1748], id: 'PopoverDismissRegion'},
+    {p: 0, w: 0, c: 'CollectionView', b: [0, 306, 402, 729], f: 's'},
+    {p: 1, w: 0, c: 'Button', b, t: label, d: 'Widget, Klein', f: 'c'},
+    {p: 0, w: 0, c: 'PageIndicator', b: [24, 735, 378, 766], t: '1 / 8'},
+    {p: 0, w: 0, c: 'Button', b: [24, 766, 378, 816], t: 'Widget hinzufügen', f: 'c'},
+    {p: 0, w: 0, c: 'Button', b: [359, 153, 381, 174], t: 'Close', f: 'c'},
+  ];
+
+  it('reads the widget\'s name after the app\'s and finds the Add button below it', () => {
+    expect(iosGalleryPage(snap(page([119, 435, 283, 600]), SB), 'myapp')).toEqual({preview: 2, add: 4, name: 'Up next', size: 'small'});
+    expect(iosGalleryPage(snap(page([119, 435, 283, 600], 'Other app, Up next'), SB), 'MyApp')).toBeUndefined();
+  });
+
+  it('tells the size from the preview\'s shape', () => {
+    const ref = 354;
+    expect(iosSizeOf([119, 435, 283, 600], ref)).toBe('small');
+    expect(iosSizeOf([45, 444, 357, 591], ref)).toBe('medium');
+    expect(iosSizeOf([45, 355, 357, 680], ref)).toBe('large');
+    expect(iosSizeOf([89, 336, 314, 699], ref)).toBe('extra large portrait');
   });
 });
