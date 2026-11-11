@@ -98,10 +98,15 @@ class PitboxPushReceiver : BroadcastReceiver() {
       val task = processor.getConstructor(Context::class.java).newInstance(context).let { processor.getMethod("process", Intent::class.java).invoke(it, message) }
       val tasks = Class.forName("com.google.android.gms.tasks.Tasks")
       val task0 = Class.forName("com.google.android.gms.tasks.Task")
-      val result = tasks.getMethod("await", task0, Long::class.javaPrimitiveType, TimeUnit::class.java).invoke(null, task, 10L, TimeUnit.SECONDS) as Int
+      val result = tasks.getMethod("await", task0, Long::class.javaPrimitiveType, TimeUnit::class.java).invoke(null, task, 7L, TimeUnit.SECONDS) as Int
       return if (result == -1) 1 to "ok service=${service.className}" else 2 to "error service-start ${result}: Firebase could not start or bind ${service.className}"
     }
-    val starter = Class.forName("com.google.firebase.messaging.ServiceStarter")
+    // Both missing means R8 renamed them: the consumer rules in this library keep them unless the app strips those too.
+    val starter = try {
+      Class.forName("com.google.firebase.messaging.ServiceStarter")
+    } catch (e: ClassNotFoundException) {
+      return 2 to "error firebase-obfuscated: neither FcmBroadcastProcessor nor ServiceStarter is in the app (renamed by R8?)"
+    }
     val getInstance = starter.getDeclaredMethod("getInstance").apply { isAccessible = true }
     val result = starter.getMethod("startMessagingService", Context::class.java, Intent::class.java).invoke(getInstance.invoke(null), context, message) as Int
     return if (result == -1) 1 to "ok service=${service.className}" else 2 to "error service-start ${result}: Android refused to start ${service.className}"

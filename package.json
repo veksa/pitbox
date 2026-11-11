@@ -33,6 +33,7 @@
     "runners/apple/PitboxRunner.xcodeproj/project.pbxproj",
     "runners/apple/PitboxRunner.xcodeproj/xcshareddata",
     "android/build.gradle",
+    "android/proguard-rules.pro",
     "android/src",
     "react-native.config.js",
     "PitboxConnect.podspec",
