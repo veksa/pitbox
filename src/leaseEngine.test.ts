@@ -63,8 +63,22 @@ class FakeAndroid {
   stopped: string[] = [];
   #boots = 0;
 
+  avdNames = ['Test_Phone_Lease'];
+  deletedAvds: string[] = [];
+  /** Instances started -read-only (the emulator runs a second instance of an AVD only beside read-only ones). */
+  readOnlyIds = new Set<string>();
+
   devices = async () => this.devs.map(d => ({...d}));
-  avds = () => [{name: 'Test_Phone_Lease', kind: 'phone'}];
+  avds = () => this.avdNames.map(name => ({name, kind: 'phone'}));
+  readOnly = (instance?: string) => !!instance && this.readOnlyIds.has(instance);
+  createLike = (like: string, name: string) => {
+    if (!this.avdNames.includes(like) || this.avdNames.includes(name)) throw new Error('bad clone');
+    this.avdNames.push(name);
+  };
+  deleteAvd = (name: string) => {
+    this.avdNames = this.avdNames.filter(n => n !== name);
+    this.deletedAvds.push(name);
+  };
   resolve = async (sel?: string) => {
     const hit = this.devs.filter(d => !sel || d.serial === sel || d.avd === sel);
     if (hit.length !== 1) throw new Error(`no online device matches "${sel ?? ''}"`);
@@ -76,7 +90,12 @@ class FakeAndroid {
     let port = 5554;
     while (this.devs.some(d => d.serial === `emulator-${port}`)) port += 2;
     const serial = `emulator-${port}`;
-    this.devs.push({serial, state: 'device', avd, emulator: true, instance: `pid:${++this.#boots}`});
+    if (!this.avdNames.includes(avd)) throw new Error(`unknown AVD "${avd}"`);
+    // The emulator's own rule: a second instance only when it and every running one are -read-only.
+    if (this.devs.some(d => d.avd === avd && !(opts.newInstance && this.readOnly(d.instance)))) throw new Error('Another emulator instance is running');
+    const instance = `pid:${++this.#boots}`;
+    if (opts.newInstance || opts.readOnly) this.readOnlyIds.add(instance);
+    this.devs.push({serial, state: 'device', avd, emulator: true, instance});
     return {serial, ms: 1, already: false, ...(opts.newInstance ? {readOnly: true} : {})};
   };
   shutdown = async (serial: string) => {
@@ -242,18 +261,33 @@ describe('simulators', () => {
 });
 
 describe('emulators', () => {
-  it('starts a second instance beside one another session holds, and never drives it', async () => {
+  it('creates an AVD of its own beside a writable instance another session holds, deleted when given back', async () => {
     const android = new FakeAndroid();
     const a = await session('alice', {android});
     const b = await session('bob', {android});
     expect(await a.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({serial: 'emulator-5554', already: false});
-    const r = (await b.methods.boot({avd: 'Test_Phone_Lease'})) as {serial: string; instead: string; note: string};
-    expect(android.bootOpts.map(o => o.newInstance)).toEqual([false, true]);
-    expect(r.serial).toBe('emulator-5556');
-    expect(r.instead).toMatch(/^Test_Phone_Lease runs for "pitbox-alice-.*\); started another instance/);
-    expect(r.note).toMatch(/-read-only/);
+    const r = (await b.methods.boot({avd: 'Test_Phone_Lease'})) as {serial: string; avd: string; instead: string};
+    expect(r).toMatchObject({serial: 'emulator-5556', avd: 'Test_Phone_Lease_pitbox_2'});
+    expect(android.bootOpts.map(o => o.newInstance)).toEqual([false, false]);
+    expect(r.instead).toMatch(/^Test_Phone_Lease runs for "pitbox-alice-.*\); created Test_Phone_Lease_pitbox_2 instead/);
+    expect(readLease('android', 'emulator-5556')).toMatchObject({created: true, name: 'Test_Phone_Lease_pitbox_2'});
     expect(await b.methods.stopApp({})).toEqual({serial: 'emulator-5556'});
     await expect(b.methods.stopApp({device: 'emulator-5554'})).rejects.toThrow(/held by "pitbox-alice-/);
+    expect(await b.methods.release({})).toMatchObject({released: 'Test_Phone_Lease_pitbox_2', gone: true});
+    expect(android.deletedAvds).toEqual(['Test_Phone_Lease_pitbox_2']);
+    expect(android.devs.map(d => d.serial)).toEqual(['emulator-5554']);
+  });
+
+  it('starts a second -read-only instance beside one that runs -read-only', async () => {
+    const android = new FakeAndroid();
+    const b = await session('bob', {android});
+    android.devs.push({serial: 'emulator-5554', state: 'device', avd: 'Test_Phone_Lease', emulator: true, instance: 'pid:ro'});
+    android.readOnlyIds.add('pid:ro');
+    const r = (await b.methods.boot({avd: 'Test_Phone_Lease'})) as {serial: string; instead: string; note: string};
+    expect(r.serial).toBe('emulator-5556');
+    expect(r.instead).toMatch(/runs without a lease .*: left alone; started another instance/);
+    expect(r.note).toMatch(/-read-only/);
+    expect(android.avdNames).toEqual(['Test_Phone_Lease']);
   });
 
   it('does not let a lease follow a serial to the next emulator', async () => {
