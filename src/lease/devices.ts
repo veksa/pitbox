@@ -5,7 +5,7 @@ import path from 'node:path';
 import {acquire, DAEMON_TTL_MS, describeHolder, heartbeat, listLeases, processStart, readLease, refusal, release, staleReason, type Holder, type Lease, type Platform} from './lease.ts';
 
 /** A device online now. `instance` is its current boot (Android), to tell a reused serial from the leased device. */
-export type Candidate = {platform: Platform; id: string; name?: string; instance?: string};
+export type Candidate = {platform: Platform; id: string; name?: string; instance?: string; offline?: boolean};
 
 export type Held = {platform: Platform; id: string; name?: string; instance?: string; booted: boolean; created: boolean};
 
@@ -103,27 +103,37 @@ export class DeviceLeases {
   static readonly ABSENT_MS = 90_000;
   /** When a whole platform's list comes back empty (adb restarted, CoreSimulator restarting): much longer. */
   static readonly EMPTY_LIST_MS = 5 * 60_000;
+  /** An emulator or phone offline this long counts as gone: one stuck offline does not hold its lease forever. */
+  static readonly OFFLINE_MS = 10 * 60_000;
   readonly #absent = new Map<string, {since: number; count: number}>();
+  readonly #offline = new Map<string, number>();
 
   /**
    * Renews the leases, and gives back the devices that went away for good: missing from the lists for several beats
    * in a row and a while (a device that blinks out — adb restarted by another session, an emulator offline under
    * load, a reboot, a USB reconnect — keeps its lease), or an emulator serial now another emulator's (at once).
-   * `online` lists every device the drivers report in any state (offline counts as present); undefined when the
-   * lists could not be read: then nothing is judged. `busy`: devices on their way up. Returns the dropped devices.
+   * `online` lists every device the drivers report in any state (offline counts as present, for up to OFFLINE_MS);
+   * undefined when no list could be read, and `unread` names a platform whose list could not: its devices are not
+   * judged. `busy`: devices on their way up. Returns the dropped devices.
    */
-  beat(online?: Candidate[], busy: Set<string> = new Set(), now = Date.now()): Held[] {
+  beat(online?: Candidate[], busy: Set<string> = new Set(), now = Date.now(), unread: Set<Platform> = new Set()): Held[] {
     const lost: Held[] = [];
     const drop = (k: string, h: Held) => {
       const l = readLease(h.platform, h.id);
       if (l && l.owner === this.holder.owner && (!h.instance || !l.instance || l.instance === h.instance)) release(h.platform, h.id, this.isMine);
       this.#held.delete(k);
       this.#absent.delete(k);
+      this.#offline.delete(k);
       lost.push(h);
     };
     for (const [k, h] of this.#held) {
-      if (online && !busy.has(h.id)) {
-        const here = online.find(c => c.platform === h.platform && c.id === h.id);
+      if (online && !busy.has(h.id) && !unread.has(h.platform)) {
+        let here = online.find(c => c.platform === h.platform && c.id === h.id);
+        if (here?.offline) {
+          const since = this.#offline.get(k) ?? now;
+          this.#offline.set(k, since);
+          if (now - since >= DeviceLeases.OFFLINE_MS) here = undefined;
+        } else this.#offline.delete(k);
         if (here && h.instance && here.instance && h.instance !== here.instance) {
           drop(k, h);
           continue;
@@ -138,9 +148,11 @@ export class DeviceLeases {
             continue;
           }
         } else this.#absent.delete(k);
-      } else if (online) this.#absent.delete(k);
+        // A lease taken while the emulator's instance was unknown gets it now.
+        if (here?.instance && !h.instance) h.instance = here.instance;
+      } else if (online && !unread.has(h.platform)) this.#absent.delete(k);
       const l = readLease(h.platform, h.id);
-      if (heartbeat(h.platform, h.id, this.holder.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart})) continue;
+      if (heartbeat(h.platform, h.id, this.holder.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart, ...(h.instance ? {instance: h.instance} : {})})) continue;
       // A shell lease of this project that this daemon used: still ours, not renewed by us.
       if (l && this.isMine(l)) continue;
       this.#held.delete(k);

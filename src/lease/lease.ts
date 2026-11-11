@@ -267,6 +267,9 @@ const tryLock = (lock: string): boolean => {
   return false;
 };
 
+/** For tests: the lock primitive, and the switch to `wx` locks on a file system without hard links. */
+export const lockInternals = {tryLock, usesLinks: () => !noLinks, resetLinks: () => void (noLinks = false)};
+
 const unlock = (lock: string) => {
   if (readLock(lock)?.pid === process.pid) fs.rmSync(lock, {force: true});
 };
@@ -389,12 +392,14 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
 };
 
 /** Refreshes the heartbeat of the holder's own lease; false when it is no longer theirs. */
-export const heartbeat = (platform: Platform, device: string, owner: string, patch: Partial<Pick<Lease, 'pid' | 'pidStart' | 'label'>> = {}, now = Date.now()): boolean => {
+export const heartbeat = (platform: Platform, device: string, owner: string, patch: Partial<Pick<Lease, 'pid' | 'pidStart' | 'label' | 'instance'>> = {}, now = Date.now()): boolean => {
   const file = leaseFile(platform, device);
   return withLock(file, () => {
     const current = parse(file);
     if (!current || current.owner !== owner) return false;
-    writeWhole(file, JSON.stringify({...current, ...patch, heartbeat: now}, null, 1));
+    // An instance only fills in one the lease was taken without: it never moves a lease to another emulator.
+    const {instance, ...rest} = patch;
+    writeWhole(file, JSON.stringify({...current, ...rest, instance: current.instance ?? instance, heartbeat: now}, null, 1));
     return true;
   });
 };
