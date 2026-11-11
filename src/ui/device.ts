@@ -221,6 +221,20 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return {diff, idle: r.idle};
   }
 
+  /**
+   * Opens a link into the app with `open` and returns once what it does shows. The system hands a link to an app
+   * already running and returns at once, before the app has acted on it (a JS handler that hides an overlay or
+   * moves to a screen): a step right after would read, or tap, the screen the link is about to change. Waits for
+   * a change, the UI to go quiet and requests in flight to end; a link that changes nothing on screen costs the
+   * grace time.
+   */
+  async afterLink<T>(open: () => Promise<T>, graceMs = 1000): Promise<T> {
+    const before = await this.snapshot();
+    const r = await open();
+    await this.#settle(before, 250, 1200, graceMs);
+    return r;
+  }
+
   /** Text went into a field: a keyboard may still be on its way up. */
   #typed = false;
 

@@ -289,7 +289,9 @@ export class Engine {
       },
       ui: () => this.ui(device),
       open: async (target, relaunch) => {
-        const r = (await this.methods.open({device, target, relaunch})) as {totalMs?: number; jsMs?: number};
+        const open = async () => (await this.methods.open({device, target, relaunch})) as {totalMs?: number; jsMs?: number};
+        // A link into the app (not a start or a restart): the next step sees what the link did.
+        const r = target?.includes('://') && !relaunch ? await (await this.ui(device)).afterLink(open) : await open();
         (await this.ui(device)).record(`open${relaunch ? '!' : ''}${target ? ` ${JSON.stringify(target)}` : ''}`);
         return {activityMs: r.totalMs, jsMs: r.jsMs};
       },
@@ -327,7 +329,7 @@ export class Engine {
     const template = this.config.routes?.[route];
     if (!template) throw new Error(`unknown route: ${route} (known: ${Object.keys(this.config.routes ?? {}).join(', ') || 'none'})`);
     const url = fillRoute(route, template, params);
-    await this.methods.open({device, target: url});
+    await (await this.ui(device)).afterLink(() => this.methods.open({device, target: url}));
     (await this.ui(device)).record(`goto ${route}${Object.entries(params).map(([k, v]) => ` ${k}=${JSON.stringify(v)}`).join('')}`);
     return url;
   }
