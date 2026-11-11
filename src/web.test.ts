@@ -3,7 +3,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
-import {contextOptions, describeEmulation, fileType, presetName, WebError, WebRunner, webKey} from './drivers/web/runner.ts';
+import {contextOptions, describeEmulation, fileType, keepsIndexedDb, presetName, WebError, WebRunner, webKey} from './drivers/web/runner.ts';
+import {webTouch} from './doctor/rules.ts';
 import {DeviceUi} from './ui/device.ts';
 import {formatResult} from './format.ts';
 import {freePort} from './util/net.ts';
@@ -37,6 +38,7 @@ body{margin:0;font-family:sans-serif} #pad{height:300px;background:#ddd} .row{he
 <div id="pad" data-testid="pad">Pad</div>
 <a data-testid="get" href="/report.pdf">Get report</a>
 <a data-testid="slow" href="/slow.zip">Get archive</a>
+<a data-testid="pop" href="/report.pdf" target="_blank">Report in a new tab</a>
 <a data-testid="blob" href="#" onclick="event.preventDefault();const a=document.createElement('a');a.href=window.URL.createObjectURL(new Blob(['a,b\\n1,2'],{type:'text/csv'}));a.download='table.csv';a.click()">Export</a>
 ${Array.from({length: 20}, (_, i) => `<div class="row">Row ${i + 1}</div>`).join('')}
 <script>
@@ -206,6 +208,22 @@ describe('web emulation', () => {
     expect(() => contextOptions([{viewport: 'wide'}], devices)).toThrow(/not a size/);
   });
 
+  it('knows which Playwright keeps IndexedDB in the storage state', () => {
+    expect(keepsIndexedDb('1.50.1')).toBe(false);
+    expect(keepsIndexedDb('1.51.0')).toBe(true);
+    expect(keepsIndexedDb('2.0.0')).toBe(true);
+    expect(keepsIndexedDb(undefined)).toBe(false);
+  });
+
+  it('warns in doctor about touch asked of a browser that takes only the mouse', async () => {
+    const config = {web: {a: {url: 'http://a.test', browser: 'webkit', device: 'iPhone 15'}, b: {url: 'http://b.test', touch: true}, c: {url: 'http://c.test', browser: 'firefox', touch: true}, d: {url: 'http://d.test', browser: 'firefox', device: 'Pixel 7', touch: false}}};
+    const found = await webTouch.check({config} as never);
+    expect(found.map(f => f.message)).toEqual([
+      "web:a asks for touch (device iPhone 15) in webkit: press, swipe and touch stay the mouse's there",
+      "web:c asks for touch in firefox: press, swipe and touch stay the mouse's there",
+    ]);
+  });
+
   it("tells a downloaded file's type by its first bytes, then its extension", () => {
     expect(fileType(Buffer.from('89504e470d0a1a0a', 'hex'), 'x.bin')).toBe('image/png');
     expect(fileType(Buffer.from('%PDF-1.7'), 'x')).toBe('application/pdf');
@@ -246,6 +264,11 @@ describe('web emulation', () => {
     await runner.emulate({reset: true});
     expect(await inPage('[innerWidth, navigator.maxTouchPoints, localStorage.getItem("token")]')).toBe('[800, 0, "t1"]');
     await expect(runner.emulate({})).rejects.toThrow(/nothing to change/);
+    await expect(runner.emulate({scale: Number('abc')})).rejects.toThrow(/not a scale: NaN/);
+    // density=reset alone: the scale goes back to the config's, the size set at run time stays.
+    await runner.emulate({viewport: '360x640', scale: 2});
+    expect(await runner.emulate({unset: ['scale']})).toContain('360x640 mouse');
+    await runner.emulate({reset: true});
   });
 
   it('taps, long-presses and swipes with touch events when the page has touch', {timeout: 60_000}, async () => {
@@ -282,6 +305,19 @@ describe('web emulation', () => {
     expect((await runner.downloads({waitMs: 10_000, grep: 'csv'})).downloads[0]).toMatchObject({name: 'table.csv', type: 'text/csv', size: 7});
     const all = await runner.downloads();
     expect(all.downloads.map(d => path.basename(d.file!))).toEqual(['report.pdf', 'report-2.pdf', 'table.csv']);
+  });
+
+  it('saves a popup\'s download, and never over a file an earlier browser left', {timeout: 60_000}, async () => {
+    // Another runner on the same state folder: a daemon started again, its list empty, the files still there.
+    const again = new WebRunner('touchy', {url: `http://127.0.0.1:${port}/touch`, viewport: '800x600'}, dir, state());
+    try {
+      const page = await again.page();
+      await page.click('[data-testid=pop]');
+      const got = await again.downloads({waitMs: 10_000});
+      expect(path.basename(got.downloads[0]!.file!)).toBe('report-3.pdf');
+    } finally {
+      await again.stop();
+    }
   });
 
   it('waits for a download a listing showed while it was still saving', {timeout: 60_000}, async () => {

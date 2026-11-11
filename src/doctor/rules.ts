@@ -411,4 +411,19 @@ export const daemonVersions: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions];
+/** Touch input goes through Chromium's input protocol: a web app with touch in another browser gets the mouse. */
+export const webTouch: Rule = {
+  id: 'web-touch',
+  title: 'web apps with touch run in Chromium',
+  check: async ctx =>
+    Object.entries(ctx.config.web ?? {})
+      .filter(([, w]) => w.browser && w.browser !== 'chromium' && (w.touch === true || (w.device !== undefined && w.touch !== false)))
+      .map(([name, w]) => ({
+        rule: 'web-touch',
+        severity: 'warn' as const,
+        message: `web:${name} asks for touch${w.touch ? '' : ` (device ${w.device})`} in ${w.browser}: press, swipe and touch stay the mouse's there`,
+        hint: `browser: 'chromium' (default) for touch input, or touch: false to say the mouse is meant`,
+      })),
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch];

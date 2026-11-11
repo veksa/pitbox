@@ -164,8 +164,11 @@ app in a new one, as a phone app is closed and opened again: cookies, local stor
 survives), the page's memory and session storage go. `app action=open fresh=true` (`open --fresh`) starts from a
 clean profile, and `app action=clear` clears cookies and storage in place. `settings` changes the emulation at run
 time — `emulate="Pixel 7"`, `size=390x844`, `density=3`, `touch`, `mobile`, `userAgent`, `dark`, `locale`,
-`emulate=reset` for the config's — in a new browser context that takes over the cookies and storage and reloads the
-page that was open. Files the page downloads are saved to `.pitbox/downloads/<app>/` (`app action=downloads`). With no device named, a call goes to
+`emulate=reset` for the config's, `size=reset` / `density=reset` for that field alone — in a new browser context that
+takes over the cookies and storage (IndexedDB with Playwright 1.51 or later; the answer says when it is lost) and
+reloads the page that was open. Files the page downloads, popups and new tabs included, are saved to
+`.pitbox/downloads/<app>/`, never over a file already there (`-2`, `-3`; `app action=downloads`). Touch needs
+Chromium: `doctor` warns about a web app that asks for touch (or a device preset) in Firefox or WebKit. With no device named, a call goes to
 the only web app when no phone, emulator or simulator is online.
 
 ## mac

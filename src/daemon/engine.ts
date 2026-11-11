@@ -1820,7 +1820,8 @@ export class Engine {
         const emulate = str(p, 'emulate');
         const density = str(p, 'density');
         const applied = await this.#webRunner(web).emulate({
-          reset: emulate === 'reset' || size === 'reset',
+          reset: emulate === 'reset',
+          unset: [...(size === 'reset' ? (['viewport'] as const) : []), ...(density === 'reset' ? (['scale'] as const) : [])],
           device: emulate && emulate !== 'reset' ? emulate : undefined,
           viewport: size && size !== 'reset' ? size : undefined,
           scale: density && density !== 'reset' ? Number(density) : undefined,

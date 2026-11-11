@@ -68,6 +68,25 @@ export class WebError extends Error {
   }
 }
 
+/** The version of the Playwright package a resolved entry file belongs to; undefined when its package.json is not found. */
+const playwrightVersion = (file: string): string | undefined => {
+  for (let dir = path.dirname(file), i = 0; i < 4; dir = path.dirname(dir), i++) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as {name?: string; version?: string};
+      if (pkg.name === 'playwright-core' || pkg.name === 'playwright') return pkg.version;
+    } catch {
+      // up
+    }
+  }
+  return undefined;
+};
+
+/** Whether a Playwright version saves IndexedDB with the storage state (1.51 and later). */
+export const keepsIndexedDb = (version?: string): boolean => {
+  const [major = 0, minor = 0] = (version ?? '').split('.').map(Number);
+  return major > 1 || (major === 1 && minor >= 51);
+};
+
 /** `playwright-core` or `playwright`, from the project first (its own version), then pitbox's install. */
 const loadPlaywright = async (root: string): Promise<Pw> => {
   const tries = [createRequire(path.join(root, 'package.json')), createRequire(import.meta.url)];
@@ -76,7 +95,8 @@ const loadPlaywright = async (root: string): Promise<Pw> => {
       try {
         const file = req.resolve(name);
         const mod = await import(pathToFileURL(file).href);
-        return mod.default ?? mod;
+        const pw = mod.default ?? mod;
+        return Object.assign(Object.create(pw), {version: playwrightVersion(file)});
       } catch {
         // next
       }
@@ -453,6 +473,8 @@ export class WebRunner {
     // Firefox has no mobile mode: its viewport and touch still apply.
     if (this.cfg.browser === 'firefox') delete (opts as Partial<WebContextOptions>).isMobile;
     this.#context = await this.#browser.newContext({...opts, acceptDownloads: true, ...(storageState ? {storageState} : {})});
+    // Every page of the context, popups and new tabs included, saves its downloads.
+    this.#context.on('page', (p: Pw) => p.on('download', (d: Pw) => this.#download(d)));
     this.#opts = o;
     return this.#newPage();
   }
@@ -463,7 +485,6 @@ export class WebRunner {
     page.on('console', (m: Pw) => {
       if (m.type() === 'error') this.#event(m.text());
     });
-    page.on('download', (d: Pw) => this.#download(d));
     this.#page = page;
     this.#cdp = undefined;
     return page;
@@ -483,7 +504,8 @@ export class WebRunner {
     const taken = new Set(this.#downloads.map(x => x.file));
     const ext = path.extname(name);
     let file = path.join(dir, name);
-    for (let i = 2; taken.has(file); i++) file = path.join(dir, `${name.slice(0, name.length - ext.length)}-${i}${ext}`);
+    // A file left by an earlier browser (a restarted daemon, a download dropped from the list) is not overwritten either.
+    for (let i = 2; taken.has(file) || fs.existsSync(file); i++) file = path.join(dir, `${name.slice(0, name.length - ext.length)}-${i}${ext}`);
     rec.file = file;
     this.#downloads.push(rec);
     if (this.#downloads.length > 50) {
@@ -588,12 +610,15 @@ export class WebRunner {
    * place; anything else needs a new context, which takes over the cookies and storage (IndexedDB too) and reloads
    * the page that was open.
    */
-  async emulate(change: WebEmulation & {reset?: boolean}): Promise<string[]> {
-    const {reset, ...set} = change;
+  async emulate(change: WebEmulation & {reset?: boolean; unset?: (keyof WebEmulation)[]}): Promise<string[]> {
+    const {reset, unset = [], ...set} = change;
     const given = Object.fromEntries(Object.entries(set).filter(([, v]) => v !== undefined)) as WebEmulation;
-    if (!reset && !Object.keys(given).length) throw new WebError('nothing to change', 'settings emulate="iPhone 15" | size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR | emulate=reset');
+    if (given.scale !== undefined && !(Number.isFinite(given.scale) && given.scale > 0 && given.scale <= 10)) throw new WebError(`not a scale: ${given.scale}`, 'density=<device scale factor>, like 2 or 3; density=reset for the preset\'s or the config\'s');
+    if (!reset && !unset.length && !Object.keys(given).length) throw new WebError('nothing to change', 'settings emulate="iPhone 15" | size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR | emulate=reset');
     // A new preset replaces the earlier run-time size, scale and flags; dark and the locale stay.
-    const kept = reset ? {} : given.device ? {dark: this.#over.dark, locale: this.#over.locale} : this.#over;
+    const kept: WebEmulation = reset ? {} : given.device ? {dark: this.#over.dark, locale: this.#over.locale} : {...this.#over};
+    // `size=reset`, `density=reset`: back to the preset's or the config's value for that field alone.
+    for (const k of unset) delete kept[k];
     const over = {...kept, ...given};
     const pw = await loadPlaywright(this.#root);
     const next = contextOptions([this.#base, over], pw.devices ?? {});
@@ -619,7 +644,8 @@ export class WebRunner {
     const page = await this.#openContext(next, state);
     const back = url && /^https?:/.test(url) ? url : this.cfg.url;
     await page.goto(back, {waitUntil: 'domcontentloaded', timeout: 60_000});
-    return [describeEmulation(next), `new browser context: cookies and storage kept, ${new URL(page.url()).pathname} reloaded (session storage and the page's memory are gone)`, ...mouseOnly];
+    const storage = keepsIndexedDb(pw.version) ? 'cookies and storage kept' : `cookies and local storage kept, IndexedDB lost (Playwright ${pw.version ?? 'of unknown version'} keeps it from 1.51)`;
+    return [describeEmulation(next), `new browser context: ${storage}, ${new URL(page.url()).pathname} reloaded (session storage and the page's memory are gone)`, ...mouseOnly];
   }
 
   /** The device-protocol session for touch input: Chromium with touch on; undefined otherwise (input stays the mouse). */
