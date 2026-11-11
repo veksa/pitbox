@@ -1,5 +1,5 @@
 // Host side of the Apple runner: builds the XCUITest bundle once per platform and source hash (a cache under
-// ~/Library/Caches/pitbox), runs it with `xcodebuild test-without-building`, and talks to it over one TCP
+// ~/Library/Caches/pitbox, shared by every daemon on the Mac: util/cache.ts), runs it with `xcodebuild test-without-building`, and talks to it over one TCP
 // connection. A simulator shares the Mac's network, so the runner's port is reached directly on 127.0.0.1.
 
 import {spawn, type ChildProcess} from 'node:child_process';
@@ -9,6 +9,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
 import {run} from '../../util/proc.ts';
 import {AppleError, type AppleDriver, type SimKind} from './driver.ts';
 
@@ -80,10 +81,20 @@ const build = async (kind: SimKind): Promise<Built> => {
     const products = path.join(dir, 'Build', 'Products');
     return fs.existsSync(products) ? fs.readdirSync(products).find(f => f.endsWith('.xctestrun')) : undefined;
   };
-  // Builds of older runner sources or another Xcode are never used again (each is hundreds of MB).
-  if (fs.existsSync(cache)) for (const v of fs.readdirSync(cache)) if (v !== version) fs.rmSync(path.join(cache, v), {recursive: true, force: true});
-  const existing = find();
-  if (existing) return {xctestrun: path.join(dir, 'Build', 'Products', existing), built: false, ms: Date.now() - t0};
+  // Marked before anything else: another daemon's GC then leaves this version alone for as long as this one runs.
+  markInUse(path.join(cache, version));
+  // Builds of older runner sources or another Xcode (hundreds of MB each) go once nobody uses them; another
+  // daemon, of another project or pitbox version, may be running its runner from one right now.
+  gcVersions(cache, version);
+  // Two daemons building into one derived data folder corrupt it: the second waits and finds the build done.
+  return withBuildLock(cache, version, async () => {
+    const existing = find();
+    if (existing) return {xctestrun: path.join(dir, 'Build', 'Products', existing), built: false, ms: Date.now() - t0};
+    return buildInto(dir, src, destination, find, t0);
+  });
+};
+
+const buildInto = async (dir: string, src: string, destination: string, find: () => string | undefined, t0: number): Promise<Built> => {
   fs.mkdirSync(dir, {recursive: true});
   const r = await run(
     'xcodebuild',

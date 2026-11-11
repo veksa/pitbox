@@ -10,6 +10,7 @@ import {spawn, type ChildProcess} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
 import {run} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 import {runnerSources, sourceHash} from '../apple/runner.ts';
@@ -115,10 +116,17 @@ const buildRunner = async (): Promise<string> => {
   const cache = path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'mac-runner');
   const version = `${sourceHash(src)}-${xcode}`;
   const bin = path.join(cache, version, 'pitbox-mac');
-  if (fs.existsSync(bin)) return bin;
-  if (fs.existsSync(cache)) for (const v of fs.readdirSync(cache)) if (v !== version) fs.rmSync(path.join(cache, v), {recursive: true, force: true});
-  fs.mkdirSync(path.dirname(bin), {recursive: true});
-  const r = await run('xcrun', ['swiftc', '-O', ...files.map(f => path.join(src, f)), '-o', bin], {timeoutMs: 300_000});
+  // In use for this process's life; older versions go only once nobody uses them (util/cache.ts).
+  markInUse(path.dirname(bin));
+  gcVersions(cache, version);
+  return withBuildLock(cache, version, async () => (fs.existsSync(bin) ? bin : compile(src, files, bin)));
+};
+
+const compile = async (src: string, files: string[], bin: string): Promise<string> => {
+  // Built beside its place and moved in when whole: a build cut short leaves no binary that looks finished.
+  const partial = `${bin}.partial`;
+  const r = await run('xcrun', ['swiftc', '-O', ...files.map(f => path.join(src, f)), '-o', partial], {timeoutMs: 300_000});
+  if (r.code === 0 && fs.existsSync(partial)) fs.renameSync(partial, bin);
   if (r.code !== 0 || !fs.existsSync(bin)) {
     const why = r.stderr.trim().split('\n').filter(l => /error:/.test(l)).slice(0, 2).join(' ') || r.stderr.trim().split('\n').pop();
     throw new MacError(`Mac runner build failed: ${why}`, /xcrun|developer tools/i.test(r.stderr) ? 'install Xcode or the command line tools (xcode-select --install)' : undefined);

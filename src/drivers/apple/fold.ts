@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
 import {run} from '../../util/proc.ts';
 import {AppleError} from './driver.ts';
 import {runnerSources, sourceHash} from './runner.ts';
@@ -27,17 +28,24 @@ const build = async (): Promise<string> => {
   const cache = path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'apple-fold');
   const version = `${sourceHash(src)}-${xcode}`;
   const bin = path.join(cache, version, 'fold');
-  if (fs.existsSync(bin)) return bin;
-  if (fs.existsSync(cache)) for (const v of fs.readdirSync(cache)) if (v !== version) fs.rmSync(path.join(cache, v), {recursive: true, force: true});
-  fs.mkdirSync(path.dirname(bin), {recursive: true});
+  // In use for this process's life; older versions go only once nobody uses them (util/cache.ts).
+  markInUse(path.dirname(bin));
+  gcVersions(cache, version);
+  return withBuildLock(cache, version, async () => (fs.existsSync(bin) ? bin : compile(src, bin)));
+};
+
+const compile = async (src: string, bin: string): Promise<string> => {
+  // Built and signed beside its place, moved in when whole: a build cut short leaves no binary that looks finished.
+  const partial = `${bin}.partial`;
   // A simulator binary carries its entitlements in a section of its own, not in the signature.
   const swift = await run(
     'xcrun',
-    ['-sdk', 'iphonesimulator', 'swiftc', '-O', '-target', `${process.arch === 'x64' ? 'x86_64' : 'arm64'}-apple-ios17.0-simulator`, '-import-objc-header', path.join(src, 'Fold.h'), path.join(src, 'fold.swift'), '-o', bin, '-framework', 'IOKit', '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__entitlements', '-Xlinker', path.join(src, 'fold.entitlements')],
+    ['-sdk', 'iphonesimulator', 'swiftc', '-O', '-target', `${process.arch === 'x64' ? 'x86_64' : 'arm64'}-apple-ios17.0-simulator`, '-import-objc-header', path.join(src, 'Fold.h'), path.join(src, 'fold.swift'), '-o', partial, '-framework', 'IOKit', '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__entitlements', '-Xlinker', path.join(src, 'fold.entitlements')],
     {timeoutMs: 300_000},
   );
   if (swift.code !== 0) throw new AppleError(`fold helper build failed: ${swift.stderr.trim().split('\n').filter(l => /error:/.test(l)).slice(0, 2).join(' ') || swift.stderr.trim().split('\n').pop()}`);
-  const sign = await run('codesign', ['-s', '-', '-f', bin], {timeoutMs: 30_000});
+  const sign = await run('codesign', ['-s', '-', '-f', partial], {timeoutMs: 30_000});
   if (sign.code !== 0) throw new AppleError(`fold helper signing failed: ${sign.stderr.trim()}`);
+  fs.renameSync(partial, bin);
   return bin;
 };
