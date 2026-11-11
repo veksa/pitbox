@@ -3,10 +3,10 @@
 import http2 from 'node:http2';
 import {describe, expect, it} from 'vitest';
 import {parseArgs, toCall} from './cli.ts';
-import {parseBroadcast, parseNotifications} from './push/android.ts';
+import {assertPackage, parseBroadcast, parseNotifications} from './push/android.ts';
 import {handlePush, PushGateway} from './push/gateway.ts';
 import {fromApns, fromFcm, fromPayloadFile, toApns, toFcmExtras, toMessage} from './push/payload.ts';
-import type {PushOptions, PushResult} from './push/push.ts';
+import {PushUnregistered, type PushOptions, type PushResult} from './push/push.ts';
 import {freePort} from './util/net.ts';
 
 describe('push payloads', () => {
@@ -149,15 +149,19 @@ describe('push command line', () => {
   });
 });
 
-/** A push center that records what it was asked and answers like a delivered push. */
-const fakeCenter = (route: (kind: string, token?: string) => string | undefined = () => 'dev1') => {
+/** A push center that records what it was asked and answers like a delivered push, or as `answer` says. */
+const fakeCenter = (route: (kind: string, token?: string) => string | undefined = () => 'dev1', answer?: (r: PushResult) => PushResult) => {
   const sent: {opts: PushOptions; source: string; token?: string}[] = [];
+  const bound = new Map<string, string>();
   return {
     sent,
-    route: async (kind: 'apns' | 'fcm', token?: string) => route(kind, token),
+    bound,
+    route: async (kind: 'apns' | 'fcm', token?: string) => ({device: route(kind, token)}),
+    bind: (token: string, device: string) => void bound.set(token, device),
     send: async (opts: PushOptions, source = 'push', token?: string): Promise<PushResult> => {
       sent.push({opts, source, token});
-      return {id: 'm1', platform: 'android', device: opts.device!, app: opts.app ?? 'com.example.app', sent: 'x', ok: true, verdict: 'notification posted "T" — "B" · channel c'};
+      const r: PushResult = {id: 'm1', platform: 'android', device: opts.device!, app: opts.app ?? 'com.example.app', sent: 'x', ok: true, verdict: 'notification posted "T" — "B" · channel c'};
+      return answer ? answer(r) : r;
     },
   };
 };
@@ -197,7 +201,7 @@ describe('push gateway', () => {
     const g = new PushGateway(c, port, () => apps);
     await g.start();
     try {
-      const h1 = await fetch(`http://127.0.0.1:${port}/push`, {method: 'POST', body: JSON.stringify({title: 'T', token: 'x'})});
+      const h1 = await fetch(`http://127.0.0.1:${port}/push`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({title: 'T', token: 'x'})});
       expect(((await h1.json()) as PushResult).ok).toBe(true);
       // What an APNs client does: HTTP/2 with prior knowledge.
       const client = http2.connect(`http://127.0.0.1:${port}`);
@@ -213,5 +217,78 @@ describe('push gateway', () => {
     } finally {
       await g.stop();
     }
+  });
+
+  it('answers 200 when delivered but not shown, and a dead token only when the app cannot take pushes', async () => {
+    const denied = fakeCenter(undefined, r => ({...r, ok: false, verdict: 'delivered, but notifications are off for the app'}));
+    const fcm = {method: 'POST', path: '/v1/projects/p/messages:send', headers: {}, body: '{"message":{"token":"t","notification":{"title":"T"}}}'};
+    expect((await handlePush(denied, fcm, apps)).status).toBe(200);
+    const apnsReq = {method: 'POST', path: '/3/device/abc', headers: {'apns-topic': 'com.example.app'}, body: '{"aps":{"alert":"hi"}}'};
+    expect((await handlePush(denied, apnsReq, apps)).status).toBe(200);
+
+    const noFcm = fakeCenter(undefined, r => ({...r, ok: false, reason: 'unregistered', verdict: 'error no-fcm-service'}));
+    const v1 = await handlePush(noFcm, fcm, apps);
+    expect(v1.status).toBe(404);
+    expect(JSON.stringify(v1.body)).toContain('UNREGISTERED');
+    const missing = {...fakeCenter(), send: async () => Promise.reject(new PushUnregistered('com.example.app is not installed'))};
+    expect(await handlePush(missing, apnsReq, apps)).toMatchObject({status: 400, body: {reason: 'BadDeviceToken'}});
+    const legacy = await handlePush(missing, {method: 'POST', path: '/fcm/send', headers: {}, body: '{"to":"t","data":{"k":"v"}}'}, apps);
+    expect(legacy.body).toMatchObject({success: 0, failure: 1, results: [{error: 'NotRegistered'}]});
+    const broken = {...fakeCenter(), send: async () => Promise.reject(new Error('adb went away'))};
+    expect((await handlePush(broken, fcm, apps)).status).toBe(500);
+  });
+
+  it('refuses payloads over 4 KB as APNs and FCM do', async () => {
+    const c = fakeCenter();
+    const big = 'x'.repeat(5000);
+    const apnsBig = await handlePush(c, {method: 'POST', path: '/3/device/abc', headers: {'apns-topic': 'com.example.app'}, body: JSON.stringify({aps: {alert: big}})}, apps);
+    expect(apnsBig).toMatchObject({status: 413, body: {reason: 'PayloadTooLarge'}});
+    const fcmBig = await handlePush(c, {method: 'POST', path: '/v1/projects/p/messages:send', headers: {}, body: JSON.stringify({message: {token: 't', data: {big}}})}, apps);
+    expect(fcmBig).toMatchObject({status: 400, body: {error: {status: 'INVALID_ARGUMENT'}}});
+    expect(c.sent).toHaveLength(0);
+  });
+
+  it('binds a token sent with its device', async () => {
+    const c = fakeCenter();
+    await handlePush(c, {method: 'POST', path: '/push', headers: {}, body: JSON.stringify({token: 'tok', device: 'dev2', title: 'T'})}, apps);
+    expect(c.bound.get('tok')).toBe('dev2');
+  });
+
+  it('refuses browser requests and non-JSON posts, and stops with an open HTTP/2 session', async () => {
+    const c = fakeCenter();
+    const port = await freePort();
+    const g = new PushGateway(c, port, () => apps);
+    await g.start();
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    try {
+      const url = `http://127.0.0.1:${port}/push`;
+      expect((await fetch(url, {method: 'POST', headers: {'content-type': 'application/json', origin: 'https://evil.example'}, body: '{"title":"T"}'})).status).toBe(403);
+      expect((await fetch(url, {method: 'POST', headers: {'content-type': 'text/plain'}, body: '{"title":"T"}'})).status).toBe(415);
+      expect((await fetch(url, {method: 'POST', headers: {'content-type': 'application/json'}, body: 'x'.repeat(70 * 1024)})).status).toBe(413);
+      expect(c.sent).toHaveLength(0);
+      // An APNs client keeps its session open; stop must not wait for it.
+      await new Promise<void>((resolve, reject) => {
+        const req = client.request({':method': 'GET', ':path': '/health'});
+        req.on('response', () => resolve());
+        req.on('error', reject);
+        req.end();
+      });
+      client.on('error', () => undefined);
+      const t0 = Date.now();
+      await g.stop();
+      expect(Date.now() - t0).toBeLessThan(1000);
+      expect(g.running).toBe(false);
+    } finally {
+      client.destroy();
+      await g.stop();
+    }
+  });
+});
+
+describe('push input checks', () => {
+  it('lets only package names through to the shell', () => {
+    expect(() => assertPackage('com.example.app')).not.toThrow();
+    expect(() => assertPackage('com.example.app_2')).not.toThrow();
+    for (const bad of ['com.example.app; reboot', 'com.example.$(id)', 'app', '.com.example', 'com..example', "com.example'x"]) expect(() => assertPackage(bad), bad).toThrow();
   });
 });

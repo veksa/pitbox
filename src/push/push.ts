@@ -4,10 +4,12 @@
 // system shows instead of a screenshot. The stand's push gateway (gateway.ts) sends through the same path.
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type {AndroidDriver} from '../drivers/android/driver.ts';
 import type {AppleDevices} from '../remote/appleRemote.ts';
 import type {ActResult, DeviceUi} from '../ui/device.ts';
-import {appState, callReceiver, grantNotifications, missingReceiver, notifications, notificationsAllowed, type AppState, type PostedNotification} from './android.ts';
+import {appState, assertPackage, callReceiver, grantNotifications, missingReceiver, notifications, notificationsAllowed, type AppState, type PostedNotification} from './android.ts';
 import {describe, toApns, toFcmExtras, toMessage, type PushInput, type PushMessage} from './payload.ts';
 
 export type PushTarget = {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices};
@@ -20,7 +22,14 @@ export type PushDeps = {
   androidApp?: () => string | undefined;
   appleApp?: () => string | undefined;
   ui: (device: string) => Promise<DeviceUi>;
+  /** The device's UI only when its runner already runs: the gateway must not wait minutes for a runner build. */
+  liveUi?: (device: string) => DeviceUi | undefined;
+  /** Where token bindings are kept across daemon restarts (read on first use: the config may load later). */
+  tokenFile?: () => string | undefined;
 };
+
+/** The device cannot take pushes for this app at all: not installed, no receiver, no FCM client. */
+export class PushUnregistered extends Error {}
 
 export type PushOptions = PushInput & {
   device?: string;
@@ -34,6 +43,10 @@ export type PushOptions = PushInput & {
   grant?: boolean | string;
   /** How long to watch for the notification, ms. */
   wait?: number | string;
+  /** Sent by the stand's gateway: answer without starting a runner. */
+  fromGateway?: boolean;
+  /** How the gateway chose the device, when the choice was a guess. */
+  routeNote?: string;
 };
 
 export type PushResult = {
@@ -51,6 +64,8 @@ export type PushResult = {
   /** The notification the system shows for it, when it shows one. */
   shown?: {title?: string; text?: string; channel?: string; importance?: number};
   ok: boolean;
+  /** `unregistered`: the device cannot take pushes for the app at all (the gateway answers as for a dead token). */
+  reason?: 'unregistered';
   verdict: string;
   notes?: string[];
   count?: number;
@@ -73,12 +88,35 @@ const fresh = (before: PostedNotification[], after: PostedNotification[]): Poste
 export class PushCenter {
   readonly log: PushRecord[] = [];
   /** Device tokens bound to a device by `push bind` or learned from a gateway request with a device. */
-  readonly tokens = new Map<string, string>();
+  #tokens?: Map<string, string>;
   readonly #deps: PushDeps;
+  readonly #timers = new Set<NodeJS.Timeout>();
   #seq = 0;
 
   constructor(deps: PushDeps) {
     this.#deps = deps;
+  }
+
+  get tokens(): Map<string, string> {
+    if (this.#tokens) return this.#tokens;
+    this.#tokens = new Map();
+    try {
+      const file = this.#deps.tokenFile?.();
+      if (file && fs.existsSync(file)) {
+        for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>)) this.#tokens.set(k, v);
+      }
+    } catch {
+      // a broken file only loses the bindings
+    }
+    return this.#tokens;
+  }
+
+  /** Drops delayed pushes that have not gone out (on `down` and daemon exit). */
+  cancelScheduled(): number {
+    const n = this.#timers.size;
+    for (const timer of this.#timers) clearTimeout(timer);
+    this.#timers.clear();
+    return n;
   }
 
   #record(r: PushResult, token?: string) {
@@ -89,6 +127,9 @@ export class PushCenter {
   #app(t: PushTarget, given?: string): string {
     const app = given ?? (t.platform === 'android' ? this.#deps.androidApp?.() : this.#deps.appleApp?.());
     if (!app) throw new Error(`no app: pass app=<${t.platform === 'android' ? 'package' : 'bundle id'}> or set app.${t.platform} in the config`);
+    // The id ends up in adb shell commands (Android) and simctl arguments: nothing but an id passes.
+    if (t.platform === 'android') assertPackage(app);
+    else if (!/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(app)) throw new Error(`not a bundle id: ${JSON.stringify(app)}`);
     return app;
   }
 
@@ -102,14 +143,18 @@ export class PushCenter {
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
     const delay = Number(opts.delay ?? 0);
-    const repeat = Math.max(1, Math.min(50, Number(opts.repeat ?? 1) || 1));
+    if (!Number.isFinite(delay) || delay < 0 || delay > 3600) throw new Error('delay: seconds, 0 to 3600');
+    const repeat = Number(opts.repeat ?? 1);
+    if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20) throw new Error('repeat: 1 to 20');
     if (delay > 0) {
       const id = this.#messageId();
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        this.#timers.delete(timer);
         void this.#sendNow(t, app, msg, opts, repeat, source, token).catch(e =>
           this.#record({id, platform: t.platform, device: t.id, app, sent: describe(msg), ok: false, verdict: `delayed push failed: ${(e as Error).message}`, source}, token),
         );
       }, delay * 1000);
+      this.#timers.add(timer);
       return {id, platform: t.platform, device: t.id, app, sent: describe(msg), ok: true, verdict: `scheduled in ${delay}s (push log shows how it went)`, scheduled: delay, source};
     }
     return this.#sendNow(t, app, msg, opts, repeat, source, token);
@@ -118,9 +163,12 @@ export class PushCenter {
   async #sendNow(t: PushTarget, app: string, msg: PushMessage, opts: PushOptions, repeat: number, source: string, token?: string): Promise<PushResult> {
     let r: PushResult | undefined;
     for (let i = 0; i < repeat; i++) {
-      r = t.platform === 'android' ? await this.#android(t.a, t.id, app, msg, opts) : await this.#apple(t.s, t.id, app, msg, opts);
+      // Only the last copy waits for its notification: the call should not take a wait per copy.
+      const o = i < repeat - 1 ? {...opts, wait: 0} : opts;
+      r = t.platform === 'android' ? await this.#android(t.a, t.id, app, msg, o) : await this.#apple(t.s, t.id, app, msg, o);
     }
-    const result = {...r!, count: repeat > 1 ? repeat : undefined, source};
+    const notes = [...(r!.notes ?? []), ...(opts.routeNote ? [opts.routeNote] : [])];
+    const result = {...r!, notes: notes.length ? notes : undefined, count: repeat > 1 ? repeat : undefined, source};
     this.#record(result, token);
     return result;
   }
@@ -128,13 +176,15 @@ export class PushCenter {
   async #android(a: AndroidDriver, serial: string, pkg: string, msg: PushMessage, opts: PushOptions): Promise<PushResult> {
     const notes: string[] = [];
     if (yes(opts.grant)) notes.push(await grantNotifications(a, serial, pkg));
-    const [state, before] = await Promise.all([appState(a, serial, pkg), notifications(a, serial, pkg)]);
+    const [{state, stopped}, before] = await Promise.all([appState(a, serial, pkg), notifications(a, serial, pkg)]);
+    // pitbox delivers to a force-stopped app too (a cold start from a push is worth testing); real FCM does not.
+    if (stopped) notes.push('the app was force-stopped: real FCM would not deliver to it until it is opened again');
     const id = this.#messageId();
     const r = await callReceiver(a, serial, pkg, 'deliver', toFcmExtras(msg, {messageId: id, pkg}));
     const base = {id, platform: 'android' as const, device: serial, app: pkg, sent: describe(msg), title: msg.title ?? msg.body, state};
     if (r.code !== 1) {
-      if (!r.data) throw new Error(await missingReceiver(a, serial, pkg));
-      return {...base, ok: false, verdict: r.data.replace(/^error /, 'not delivered: '), notes};
+      if (!r.data) throw new PushUnregistered(await missingReceiver(a, serial, pkg));
+      return {...base, ok: false, reason: /no-fcm-service/.test(r.data) ? ('unregistered' as const) : undefined, verdict: r.data.replace(/^error /, 'not delivered: '), notes};
     }
     const via = [/service=(\S+)/.exec(r.data ?? '')?.[1], /receivers=(\S+)/.exec(r.data ?? '')?.[1]].filter(Boolean).map(s => s!.split(',').map(x => x.split('.').pop()).join(', ')).join(' + ');
     // Firebase posts the notification itself only when the app is not in front; a data message posts nothing
@@ -160,8 +210,11 @@ export class PushCenter {
   async #apple(s: AppleDevices, udid: string, bundleId: string, msg: PushMessage, opts: PushOptions): Promise<PushResult> {
     const id = this.#messageId();
     const notes: string[] = [];
+    // From the gateway the banner is checked only by a runner that already runs: building one takes minutes,
+    // and the server's request would time out waiting.
+    const ui = opts.fromGateway ? this.#deps.liveUi?.(udid) : await this.#deps.ui(udid).catch(() => undefined);
     // The shell's banners read once before the push: a first read during the banner's arrival can come back empty.
-    if (!msg.silent) await (await this.#deps.ui(udid).catch(() => undefined))?.runner.call('banners').catch(() => undefined);
+    if (!msg.silent) await ui?.runner.call('banners').catch(() => undefined);
     if (yes(opts.grant)) notes.push('iOS has no way to grant notifications from outside: allow them in the app\'s prompt (press "Allow")');
     if (msg.collapseId) notes.push('simctl push has no apns-collapse-id: the simulator shows each push on its own');
     if (msg.silent) notes.push('a background push may not wake a suspended app on the simulator');
@@ -177,13 +230,16 @@ export class PushCenter {
     }
     if (msg.silent) return {...base, ok: true, verdict: 'delivered (background push: nothing shown)', notes};
     const title = msg.title ?? msg.body;
-    const banner = title ? await this.#banner(udid, title, Number(opts.wait ?? 3000)) : undefined;
-    if (banner) return {...base, ok: true, state: banner.state, shown: {title: msg.title, text: msg.body}, verdict: `banner shown${msg.title ? ` "${msg.title}"` : ''}${msg.body ? ` — "${msg.body}"` : ''}`, notes};
+    if (!ui) return {...base, ok: true, verdict: 'delivered (banner not checked: no runner on this simulator yet)', notes};
+    const banner = title ? await this.#banner(ui, title, Number(opts.wait ?? 3000)) : undefined;
+    const state = (front?: string): AppState | undefined => (front === undefined ? undefined : front === bundleId ? 'foreground' : 'background');
+    if (banner?.seen) return {...base, ok: true, state: state(banner.front), shown: {title: msg.title, text: msg.body}, verdict: `banner shown${msg.title ? ` "${msg.title}"` : ''}${msg.body ? ` — "${msg.body}"` : ''}`, notes};
+    const inFront = banner?.front === bundleId;
     return {
       ...base,
       ok: true,
-      state: banner === undefined ? undefined : 'foreground',
-      verdict: 'delivered; no banner seen — the app is in front (its notification handler decides), or notifications are not allowed for it',
+      state: state(banner?.front),
+      verdict: inFront ? "delivered; no banner — the app is in front and its notification handler shows none" : 'delivered; no banner seen — notifications may be off for the app, or its banners turned off',
       notes,
     };
   }
@@ -192,18 +248,17 @@ export class PushCenter {
    * Looks for the banner: the runner lists the shell's notification banners, which sit over the app in front
    * and are not in its tree. Undefined when the screen cannot be read; null when no banner showed in time.
    */
-  async #banner(udid: string, title: string, waitMs: number): Promise<{text: string; state: AppState} | null | undefined> {
-    const ui = await this.#deps.ui(udid).catch(() => undefined);
-    if (!ui) return undefined;
-    const deadline = Date.now() + waitMs;
-    while (Date.now() < deadline) {
+  async #banner(ui: DeviceUi, title: string, waitMs: number): Promise<{seen: boolean; front?: string} | undefined> {
+    const deadline = Date.now() + Math.max(waitMs, 1);
+    let front: string | undefined;
+    do {
       const r = await ui.runner.call<{banners?: string[]; front?: string}>('banners').catch(() => undefined);
       if (!r?.banners) return undefined;
-      const hit = r.banners.find(b => b.includes(title));
-      if (hit) return {text: hit, state: r.front && !/^com\.apple\./.test(r.front) ? 'foreground' : 'background'};
+      front = r.front;
+      if (r.banners.some(b => b.includes(title))) return {seen: true, front};
       await sleep(300);
-    }
-    return null;
+    } while (Date.now() < deadline);
+    return {seen: false, front};
   }
 
   /** Taps the app's latest notification (Android: in the shade; iOS: its banner or Notification Center). */
@@ -254,7 +309,7 @@ export class PushCenter {
       return {device: t.id, app, tapped: title, screen: snap.lines.slice(0, 12)};
     }
     const r = await ui.press(`text~=${title}`);
-    const state = await appState(t.a, t.id, app);
+    const {state} = await appState(t.a, t.id, app);
     return {device: t.id, app, tapped: title!, state, act: r};
   }
 
@@ -299,16 +354,29 @@ export class PushCenter {
   }
 
   /** Which device a gateway request goes to: a bound token, else by the kind of request and what is online. */
-  async route(kind: 'apns' | 'fcm', token?: string): Promise<string | undefined> {
-    if (token && this.tokens.has(token)) return this.tokens.get(token);
+  async route(kind: 'apns' | 'fcm', token?: string): Promise<{device?: string; note?: string}> {
+    if (token && this.tokens.has(token)) return {device: this.tokens.get(token)};
     const online = await this.#deps.online();
-    if (kind === 'apns') return online.apple[0];
+    if (kind === 'apns') return {device: online.apple[0]};
     // An APNs device token is 64 hex digits; an FCM token is not.
-    if (token && /^[0-9a-f]{64}$/i.test(token) && online.apple.length) return online.apple[0];
-    return online.android[0] ?? online.apple[0];
+    if (token && /^[0-9a-f]{64}$/i.test(token) && online.apple.length) return {device: online.apple[0]};
+    const device = online.android[0] ?? online.apple[0];
+    const note =
+      online.android.length && online.apple.length
+        ? `an FCM token with an emulator and a simulator online went to ${device}: \`push bind <token> --device …\` picks the other`
+        : undefined;
+    return {device, note};
   }
 
   bind(token: string, device: string) {
     this.tokens.set(token, device);
+    const file = this.#deps.tokenFile?.();
+    if (!file) return;
+    try {
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      fs.writeFileSync(file, JSON.stringify(Object.fromEntries(this.tokens), null, 2));
+    } catch {
+      // kept in memory still
+    }
   }
 }

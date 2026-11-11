@@ -6,6 +6,15 @@ import type {AndroidDriver} from '../drivers/android/driver.ts';
 
 export const PUSH_RECEIVER = 'dev.pitbox.connect.PitboxPushReceiver';
 
+/**
+ * Every function here puts the package into an `adb shell` command line: a package name and nothing else may
+ * pass (a name from the stand's gateway comes from whatever sent the request).
+ */
+export const assertPackage = (pkg: string): string => {
+  if (!/^[A-Za-z]\w*(\.\w+)+$/.test(pkg)) throw new Error(`not an Android package name: ${JSON.stringify(pkg)}`);
+  return pkg;
+};
+
 /** A notification the app has posted, as `dumpsys notification --noredact` lists it. */
 export type PostedNotification = {key: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean};
 
@@ -51,11 +60,13 @@ export const parseBroadcast = (out: string): {code: number; data?: string} => {
 
 export type AppState = 'foreground' | 'background' | 'not running';
 
-export const appState = async (a: AndroidDriver, serial: string, pkg: string): Promise<AppState> => {
-  const out = await a.shell(serial, `pidof ${pkg}; dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | head -2`).catch(() => '');
-  const [pid, ...rest] = out.split('\n');
-  if (rest.join('\n').includes(`${pkg}/`)) return 'foreground';
-  return /^\d+/.test(pid?.trim() ?? '') ? 'background' : 'not running';
+/** Where the app is, and whether it was force-stopped (real FCM does not deliver to a stopped app). */
+export const appState = async (a: AndroidDriver, serial: string, pkg: string): Promise<{state: AppState; stopped: boolean}> => {
+  assertPackage(pkg);
+  const out = await a.shell(serial, `pidof ${pkg}; echo ---; dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | head -2; echo ---; dumpsys package ${pkg} | grep -m1 -o 'stopped=[a-z]*'`).catch(() => '');
+  const [pid = '', resumed = '', stopped = ''] = out.split('---\n');
+  const state: AppState = resumed.includes(`${pkg}/`) ? 'foreground' : /^\d+/.test(pid.trim()) ? 'background' : 'not running';
+  return {state, stopped: /stopped=true/.test(stopped)};
 };
 
 export const notifications = async (a: AndroidDriver, serial: string, pkg: string): Promise<PostedNotification[]> =>
@@ -63,6 +74,7 @@ export const notifications = async (a: AndroidDriver, serial: string, pkg: strin
 
 /** Whether the app may post notifications: the runtime permission (Android 13+) and the user's switch. */
 export const notificationsAllowed = async (a: AndroidDriver, serial: string, pkg: string): Promise<{allowed: boolean; reason?: string}> => {
+  assertPackage(pkg);
   const out = await a.shell(serial, `dumpsys package ${pkg} | grep -m1 'android.permission.POST_NOTIFICATIONS: granted='; cmd appops get ${pkg} POST_NOTIFICATION 2>/dev/null; getprop ro.build.version.sdk`).catch(() => '');
   const sdk = Number(out.trim().split('\n').pop());
   if (sdk >= 33 && /POST_NOTIFICATIONS: granted=false/.test(out)) return {allowed: false, reason: 'POST_NOTIFICATIONS not granted'};
@@ -71,6 +83,7 @@ export const notificationsAllowed = async (a: AndroidDriver, serial: string, pkg
 };
 
 export const grantNotifications = async (a: AndroidDriver, serial: string, pkg: string): Promise<string> => {
+  assertPackage(pkg);
   const sdk = Number((await a.shell(serial, 'getprop ro.build.version.sdk')).trim());
   if (sdk < 33) {
     await a.shell(serial, `cmd appops set ${pkg} POST_NOTIFICATION allow`).catch(() => '');
@@ -89,6 +102,7 @@ const base64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
  * stopped packages, so an app force-stopped by `app stop` still gets it (real FCM would not wake it; see docs).
  */
 export const callReceiver = async (a: AndroidDriver, serial: string, pkg: string, op: 'deliver' | 'probe' | 'clear', payload?: Record<string, string>): Promise<{code: number; data?: string}> => {
+  assertPackage(pkg);
   const extras = [`--es op ${op}`, payload ? `--es payload ${base64(JSON.stringify(payload))}` : ''].filter(Boolean).join(' ');
   // 0x10000020: FLAG_RECEIVER_FOREGROUND | FLAG_INCLUDE_STOPPED_PACKAGES.
   const cmd = `cmd deviceidle tempwhitelist -d 20000 ${pkg} >/dev/null 2>&1; am broadcast -f 0x10000020 -n ${pkg}/${PUSH_RECEIVER} ${extras}`;
@@ -97,6 +111,7 @@ export const callReceiver = async (a: AndroidDriver, serial: string, pkg: string
 
 /** Why a receiver call came back empty: no app, or an app built without the push receiver. */
 export const missingReceiver = async (a: AndroidDriver, serial: string, pkg: string): Promise<string> => {
+  assertPackage(pkg);
   const installed = (await a.shell(serial, `pm path ${pkg}`).catch(() => '')).includes('package:');
   if (!installed) return `${pkg} is not installed on ${serial}`;
   return `${pkg} has no pitbox push receiver\nhint: rebuild the debug build with a @veksa/pitbox that has push (the connect library is autolinked into React Native apps; native apps add it with debugImplementation)`;

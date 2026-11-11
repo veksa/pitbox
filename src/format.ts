@@ -67,11 +67,11 @@ export const fmtDev = (d: DevserverStatus, detailed = false): string[] => {
   return out;
 };
 
-export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; push?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; simulators?: SimRow[]; exposed: number[]; dev?: DevserverStatus}): string => {
+export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; push?: {port: number; running: boolean; requests: number; error?: string}; devices: AndroidDevice[]; simulators?: SimRow[]; exposed: number[]; dev?: DevserverStatus}): string => {
   const out = [...fmtServices(r.services)];
   if (r.dev) out.push(...fmtDev(r.dev));
   if (r.mock) out.push(`${r.mock.running ? '✓' : '·'} llm-mock :${r.mock.port} ${r.mock.running ? `${r.mock.requests} requests` : 'stopped'}`);
-  if (r.push) out.push(`${r.push.running ? '✓' : '·'} push gateway :${r.push.port} ${r.push.running ? `${r.push.requests} requests` : 'stopped'}`);
+  if (r.push) out.push(`${r.push.running ? '✓' : '·'} push gateway :${r.push.port} ${r.push.running ? `${r.push.requests} requests` : (r.push.error ?? 'stopped')}`);
   out.push(...fmtActors(r.actors));
   out.push(...fmtDevices(r.devices, undefined, r.simulators));
   if (r.exposed.length) out.push(`forwarded to devices: ${r.exposed.join(', ')}`);
@@ -235,8 +235,8 @@ export const formatResult = (method: string, r: unknown): string => {
       const lines = fmtServices(x.services as ServiceState[]);
       const mock = x.mock as {port: number} | undefined;
       if (mock) lines.push(`✓ llm-mock :${mock.port}`);
-      const push = x.push as {port: number} | undefined;
-      if (push) lines.push(`✓ push gateway :${push.port}`);
+      const push = x.push as {port: number; running: boolean; error?: string} | undefined;
+      if (push) lines.push(push.running ? `✓ push gateway :${push.port}` : `⚠ push gateway :${push.port} not started: ${push.error ?? 'unknown error'}`);
       for (const f of (x.forwards as {serial: string; ports: number[]}[]) ?? []) lines.push(`forwarded ${f.ports.join(',')} → ${f.serial}`);
       lines.push(...fmtPrewarm(x.prewarm as Prewarm | undefined));
       return lines.join('\n');

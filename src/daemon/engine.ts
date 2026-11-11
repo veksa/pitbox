@@ -76,6 +76,7 @@ export class Engine {
   readonly actors: ActorManager;
   #mock?: LlmMock;
   #gateway?: PushGateway;
+  #pushError?: string;
   readonly #pushes = new PushCenter({
     target: device => this.#target(device),
     online: async () => ({
@@ -85,6 +86,8 @@ export class Engine {
     androidApp: () => this.config.app?.android,
     appleApp: () => this.config.app?.apple,
     ui: device => this.ui(device),
+    liveUi: device => this.#uis.get(device),
+    tokenFile: () => path.join(this.#loaded.stateDir, 'push-tokens.json'),
   });
   #android?: AndroidDriver | null;
   #apple?: AppleDevices | null;
@@ -720,6 +723,7 @@ export class Engine {
     if (this.#watchTimer) clearTimeout(this.#watchTimer);
     this.actors.stopAll();
     await this.#mock?.stop();
+    this.#pushes.cancelScheduled();
     await this.#gateway?.stop();
     await this.#dev?.stop();
     for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
@@ -742,12 +746,15 @@ export class Engine {
     const m = this.config.mocks?.push;
     if (!m) return undefined;
     const port = m.port ?? 4980;
-    if (!this.#gateway || this.#gateway.port !== port) {
+    const host = m.host ?? '127.0.0.1';
+    if (!this.#gateway || this.#gateway.port !== port || this.#gateway.host !== host) {
       await this.#gateway?.stop();
-      this.#gateway = new PushGateway(this.#pushes, port, () => ({android: this.config.app?.android, apple: this.config.app?.apple}), m.host ?? '127.0.0.1');
+      this.#gateway = new PushGateway(this.#pushes, port, () => ({android: this.config.app?.android, apple: this.config.app?.apple}), host);
     }
-    if (!this.#gateway.running) await this.#gateway.start();
-    return {port, running: this.#gateway.running};
+    // A port someone else holds must not fail the whole stand: the rest comes up, the gateway says why it did not.
+    if (!this.#gateway.running) await this.#gateway.start().catch((e: NodeJS.ErrnoException) => (this.#pushError = e.code === 'EADDRINUSE' ? `port ${port} is in use` : e.message));
+    if (this.#gateway.running) this.#pushError = undefined;
+    return {port, running: this.#gateway.running, error: this.#pushError};
   }
 
   /** RPC entry point. */
@@ -771,7 +778,7 @@ export class Engine {
         services,
         actors: this.actors.list(),
         mock: this.config.mocks?.llm ? {port: this.config.mocks.llm.port, running: this.#mock?.running ?? false, requests: this.#mock?.requests ?? 0} : undefined,
-        push: this.config.mocks?.push ? {port: this.config.mocks.push.port ?? 4980, running: this.#gateway?.running ?? false, requests: this.#gateway?.requests ?? 0} : undefined,
+        push: this.config.mocks?.push ? {port: this.config.mocks.push.port ?? 4980, running: this.#gateway?.running ?? false, requests: this.#gateway?.requests ?? 0, error: this.#pushError} : undefined,
         devices,
         simulators: simulators.length ? simulators.map(x => ({udid: x.udid, name: x.name, os: x.os})) : undefined,
         exposed: exposedPorts(this.config),
@@ -798,6 +805,7 @@ export class Engine {
       if (!names.length) {
         this.actors.stopAll();
         await this.#mock?.stop();
+        this.#pushes.cancelScheduled();
         await this.#gateway?.stop();
       }
       const services = await this.services.down(names);
