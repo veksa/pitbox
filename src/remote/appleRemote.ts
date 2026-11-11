@@ -13,7 +13,7 @@ import type {CrashSource, UiRunner} from '../ui/device.ts';
 /** What the engine uses of an Apple driver; the local driver and the remote one both provide it. */
 export type AppleDevices = Pick<
   AppleDriver,
-  'simulators' | 'booted' | 'resolve' | 'boot' | 'shutdown' | 'install' | 'open' | 'stop' | 'clear' | 'uninstall' | 'packages' | 'logs' | 'settings' | 'screenshot' | 'info' | 'perf' | 'setDefaults' | 'fold' | 'turn' | 'appStateSave' | 'appStateRestore' | 'appStateDelete'
+  'simulators' | 'booted' | 'resolve' | 'boot' | 'shutdown' | 'install' | 'open' | 'stop' | 'clear' | 'uninstall' | 'packages' | 'logs' | 'settings' | 'screenshot' | 'info' | 'perf' | 'setDefaults' | 'fold' | 'turn' | 'appStateSave' | 'appStateRestore' | 'appStateDelete' | 'push'
 >;
 
 export class RemoteApple implements AppleDevices {
@@ -82,6 +82,7 @@ export class RemoteApple implements AppleDevices {
   setDefaults = async (udid: string, bundleId: string, values: Record<string, string>) => void (await this.call('setDefaults', {udid, bundleId, values}));
   fold = (udid: string, posture: string) => this.call<Awaited<ReturnType<AppleDriver['fold']>>>('fold', {udid, posture}, 120_000);
   turn = (udid: string, rotation: string) => this.call<void>('turn', {udid, rotation}, 60_000);
+  push = async (udid: string, bundleId: string, payload: Record<string, unknown>) => void (await this.call('push', {udid, bundleId, payload}));
 
   async screenshot(udid: string, file: string): Promise<{file: string; bytes: number}> {
     const r = await this.call<{png: string}>('screenshot', {udid});

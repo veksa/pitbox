@@ -343,6 +343,15 @@ export class AppleDriver {
     await this.#ok(['uninstall', udid, bundleId], 'uninstall', 60_000);
   }
 
+  /**
+   * Delivers an APNs payload to an app on a simulator, as Apple's push service would (`simctl push`): the app
+   * must have asked for notification permission; the payload names its app in `Simulator Target Bundle`.
+   */
+  async push(udid: string, bundleId: string, payload: Record<string, unknown>): Promise<void> {
+    const r = await this.simctl(['push', udid, bundleId, '-'], {input: JSON.stringify(payload), timeoutMs: 30_000});
+    if (r.code !== 0) throw new AppleError(`push failed: ${(r.stderr || r.stdout).trim().split('\n').slice(-2).join(' ')}`);
+  }
+
   async #apps(udid: string): Promise<Record<string, {ApplicationType?: string; CFBundleExecutable?: string; CFBundleDisplayName?: string; CFBundleShortVersionString?: string}>> {
     const list = await this.#ok(['listapps', udid], 'listapps');
     // simctl prints an old-style plist; plutil turns it into JSON.

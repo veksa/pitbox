@@ -143,6 +143,38 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
     a => ({media: 'media', visual: 'visual', focus: 'focus', focus_map: 'focusMap', perf: 'perf', tree: 'appTree', network: 'appLog', errors: 'appErrors', console: 'appConsole', screenshot: 'uiShot'})[a.what as string]!,
   );
 
+  // Typical answer: one or two lines — the verdict (notification posted / banner shown / handled in front) and how
+  // it was delivered; log is a line per push.
+  tool(
+    'push',
+    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n.',
+    {
+      action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind']).optional(),
+      title: opt.str(),
+      body: opt.str(),
+      data: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+      file: opt.str(),
+      apns: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+      fcm: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+      badge: opt.num(),
+      sound: opt.str(),
+      category: opt.str(),
+      threadId: opt.str(),
+      collapseId: opt.str(),
+      channel: opt.str(),
+      silent: opt.bool(),
+      priority: z.enum(['high', 'normal']).optional(),
+      delay: opt.num(),
+      repeat: opt.num(),
+      grant: opt.bool(),
+      token: opt.str(),
+      app: opt.str(),
+      limit: opt.num(),
+      device,
+    },
+    'push',
+  );
+
   // Flows — run in the daemon: one call, one verdict.
   tool(
     'run',

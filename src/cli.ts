@@ -1,6 +1,7 @@
 // pitbox CLI. Every command is a call to the project's daemon (started on demand), printed in the same compact
 // form the MCP server returns.
 
+import path from 'node:path';
 import {connect, resolveProject, runningDaemon} from './daemon/client.ts';
 import {formatResult} from './format.ts';
 import {DAEMON_STOP} from './daemon/info.ts';
@@ -59,6 +60,12 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
   visual <name> [--update] [--mask <selector>]   compare the screen with a baseline (stored on first use)
   media [selector]              is it playing? motion and brightness of a region, compared on the device
+
+push (no credentials: simctl push on simulators, the app's own FCM service on Android through the connect library)
+  push title=… body=… [data='{"k":"v"}'] [badge= sound= category= threadId= collapseId= channel= image= tag= priority=high|normal silent=true]
+  push file=payload.json | push apns='{"aps":{…}}' | push fcm='{"notification":{…},"data":{…}}'   raw payloads, converted for the other platform
+       [delay=s] [repeat=n] [grant=true] [--app <package|bundle id>]   one-line verdict: posted / banner shown / handled in front
+  push tap [title] · push clear · push grant · push status · push log [-n 10] · push bind <token>
 
 flows
   run <flow> [param=value…] [--from line] | run --steps "press id=a"   run a flow in the daemon, get one verdict
@@ -296,6 +303,19 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     }
     case 'net':
       return {method: 'net', params: {action: rest[0] ?? 'list', match: rest[1], kind: flags.kind, status: flags.status, body: flags.body, ms: flags.ms}};
+    case 'push': {
+      const sub = ['tap', 'clear', 'grant', 'status', 'log', 'bind', 'send'].includes(rest[0] ?? '') ? rest[0]! : 'send';
+      const args = sub === 'send' && rest[0] !== 'send' ? rest : rest.slice(1);
+      const app = flags.app ?? flags.pkg;
+      if (sub === 'tap') return {method: 'push', params: {action: sub, device, app, title: args.join(' ') || undefined}};
+      if (sub === 'bind') return {method: 'push', params: {action: sub, device, token: args[0]}};
+      if (sub === 'log') return {method: 'push', params: {action: sub, limit: flags.lines}};
+      if (sub !== 'send') return {method: 'push', params: {action: sub, device, app}};
+      const fields = kv(args);
+      // A payload file is read by the daemon, which runs in the project's root: make the path absolute here.
+      if (fields.file) fields.file = path.resolve(fields.file);
+      return {method: 'push', params: {action: 'send', device, app, ...fields}};
+    }
     case 'docs': {
       const [name, op, ...q] = rest;
       return {method: 'docs', params: {name, op, query: q.join(' ') || undefined, context: flags.context, from: flags.from, to: flags.to, depth: flags.depth}};
@@ -360,7 +380,7 @@ export const main = async () => {
 export const failed = (method: string, result: unknown): boolean => {
   const r = result as {ok?: boolean; services?: {status: string}[]; results?: {ok: boolean}[]};
   if (method === 'up') return !!r.services?.some(s => s.status === 'failed');
-  if (method === 'run' || method === 'as') return r.ok === false;
+  if (method === 'run' || method === 'as' || method === 'push') return r.ok === false;
   if (method === 'matrix') return !!r.results?.some(v => !v.ok);
   return false;
 };

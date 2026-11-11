@@ -135,6 +135,17 @@ export const configSchema = z.object({
           fixtures: z.string().optional(),
         })
         .optional(),
+      /**
+       * A stand-in for APNs and FCM that the project's server sends to in its local environment: the same paths
+       * and bodies (`/3/device/<token>`, `/v1/projects/<id>/messages:send`, `/push`), delivered to the running
+       * simulator or emulator. Port default 4980, on 127.0.0.1 unless `host` says otherwise.
+       */
+      push: z
+        .object({
+          port: z.number().int().positive().optional(),
+          host: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
   android: z

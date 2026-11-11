@@ -22,6 +22,9 @@ import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
+import {PushCenter} from '../push/push.ts';
+import {PushGateway} from '../push/gateway.ts';
+import {fromPayloadFile} from '../push/payload.ts';
 import {ServiceManager, type ServiceState} from '../stand/services.ts';
 import {describeTool, runTool} from '../stand/tools.ts';
 import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
@@ -72,6 +75,17 @@ export class Engine {
   readonly services: ServiceManager;
   readonly actors: ActorManager;
   #mock?: LlmMock;
+  #gateway?: PushGateway;
+  readonly #pushes = new PushCenter({
+    target: device => this.#target(device),
+    online: async () => ({
+      android: this.android ? (await this.android.devices().catch(() => [])).filter(d => d.state === 'device').map(d => d.serial) : [],
+      apple: this.apple ? (await this.apple.booted().catch(() => [])).map(s => s.udid) : [],
+    }),
+    androidApp: () => this.config.app?.android,
+    appleApp: () => this.config.app?.apple,
+    ui: device => this.ui(device),
+  });
   #android?: AndroidDriver | null;
   #apple?: AppleDevices | null;
   #appleKey = '';
@@ -706,6 +720,7 @@ export class Engine {
     if (this.#watchTimer) clearTimeout(this.#watchTimer);
     this.actors.stopAll();
     await this.#mock?.stop();
+    await this.#gateway?.stop();
     await this.#dev?.stop();
     for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
     for (const r of this.#macRunners.values()) await r.stop().catch(() => undefined);
@@ -720,6 +735,19 @@ export class Engine {
     }
     if (!this.#mock.running) await this.#mock.start();
     return {port: m.port, running: this.#mock.running};
+  }
+
+  /** The stand's push gateway (`mocks.push`): APNs and FCM requests from the project's server, onto the devices. */
+  async #startPushGateway() {
+    const m = this.config.mocks?.push;
+    if (!m) return undefined;
+    const port = m.port ?? 4980;
+    if (!this.#gateway || this.#gateway.port !== port) {
+      await this.#gateway?.stop();
+      this.#gateway = new PushGateway(this.#pushes, port, () => ({android: this.config.app?.android, apple: this.config.app?.apple}), m.host ?? '127.0.0.1');
+    }
+    if (!this.#gateway.running) await this.#gateway.start();
+    return {port, running: this.#gateway.running};
   }
 
   /** RPC entry point. */
@@ -743,6 +771,7 @@ export class Engine {
         services,
         actors: this.actors.list(),
         mock: this.config.mocks?.llm ? {port: this.config.mocks.llm.port, running: this.#mock?.running ?? false, requests: this.#mock?.requests ?? 0} : undefined,
+        push: this.config.mocks?.push ? {port: this.config.mocks.push.port ?? 4980, running: this.#gateway?.running ?? false, requests: this.#gateway?.requests ?? 0} : undefined,
         devices,
         simulators: simulators.length ? simulators.map(x => ({udid: x.udid, name: x.name, os: x.os})) : undefined,
         exposed: exposedPorts(this.config),
@@ -753,6 +782,7 @@ export class Engine {
     up: async (p: Params) => {
       const names = list(p, 'services');
       const mock = names.length ? undefined : await this.#startMock();
+      const push = names.length ? undefined : await this.#startPushGateway();
       const blocked = !names.length || names.includes(DEVSERVER) ? await this.#claimDevPort() : undefined;
       // An empty list means every autostart service to `services.up`, the dev server included: none is asked for.
       const rest = blocked ? this.#withoutDev(names) : names;
@@ -760,7 +790,7 @@ export class Engine {
       if (blocked) services.push(blocked);
       const prewarm = !blocked && (!names.length || names.includes(DEVSERVER)) ? await this.#devUp(true) : undefined;
       const forwards = await this.ensureForwards(true).catch(() => []);
-      return {services, mock, forwards, prewarm};
+      return {services, mock, push, forwards, prewarm};
     },
 
     down: async (p: Params) => {
@@ -768,6 +798,7 @@ export class Engine {
       if (!names.length) {
         this.actors.stopAll();
         await this.#mock?.stop();
+        await this.#gateway?.stop();
       }
       const services = await this.services.down(names);
       if (this.#dev && services.some(s => s.name === DEVSERVER && s.status === 'stopped')) await this.#dev.stop();
@@ -934,6 +965,40 @@ export class Engine {
       if (!this.#dev) throw new Error('no devserver in the config');
       await this.#dev.reload();
       return {reloaded: true};
+    },
+
+    // Push notifications: send (simple fields, a payload file, raw APNs or FCM), tap, clear, grant, status, log,
+    // bind (a device token to a device, for the stand's gateway).
+    push: async (p: Params) => {
+      const action = str(p, 'action') ?? 'send';
+      const device = str(p, 'device');
+      const app = str(p, 'app') ?? str(p, 'pkg') ?? str(p, 'bundle') ?? str(p, 'package');
+      switch (action) {
+        case 'send': {
+          const file = str(p, 'file');
+          const fromFile = file ? fromPayloadFile(JSON.parse(fs.readFileSync(path.resolve(this.#loaded.root, file), 'utf8'))) : {};
+          const {action: _a, file: _f, pkg: _p, bundle: _b, package: _k, ...rest} = p;
+          return {action, ...(await this.#pushes.send({...fromFile, ...rest, device, app} as Parameters<PushCenter['send']>[0]))};
+        }
+        case 'tap':
+          return {action, ...(await this.#pushes.tap({device, app, title: str(p, 'title')}))};
+        case 'clear':
+          return {action, ...(await this.#pushes.clear({device, app}))};
+        case 'grant':
+          return {action, ...(await this.#pushes.grant({device, app}))};
+        case 'status':
+          return {action, ...(await this.#pushes.status({device, app}))};
+        case 'log':
+          return {action, log: this.#pushes.log.slice(-(num(p, 'limit') ?? 10)), gateway: this.#gateway?.running ? this.#gateway.port : undefined};
+        case 'bind': {
+          const token = req(p, 'token');
+          const t = await this.#target(device);
+          this.#pushes.bind(token, t.id);
+          return {action, token, device: t.id};
+        }
+        default:
+          throw new Error('push action: send | tap | clear | grant | status | log | bind');
+      }
     },
 
     // The LLM mock while it runs: its request log, and rules that force a reply, an error or a delay.

@@ -93,6 +93,7 @@ export const createDeviceHost = (token: string) => {
     setDefaults: async p => driver.setDefaults(need(p, 'udid'), need(p, 'bundleId'), (p.values as Record<string, string>) ?? {}),
     fold: async p => driver.fold(need(p, 'udid'), need(p, 'posture')),
     turn: async p => driver.turn(need(p, 'udid'), need(p, 'rotation')),
+    push: async p => driver.push(need(p, 'udid'), need(p, 'bundleId'), (p.payload as Record<string, unknown>) ?? {}),
     runner: async p => runner(need(p, 'udid'), s(p, 'bundleId')).call(need(p, 'cmd'), (p.args as P) ?? {}, Number(p.timeoutMs ?? 15_000)),
     runnerStop: async p => {
       const udid = need(p, 'udid');

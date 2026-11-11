@@ -11,6 +11,7 @@ import type {EvalResult, JsProfile, Logpoint} from './devserver/jsdebug.ts';
 import type {TraceSummary} from './drivers/android/atrace.ts';
 import type {JsError} from './devserver/proxy.ts';
 import type {ActResult, FocusMap} from './ui/device.ts';
+import type {PushRecord, PushResult} from './push/push.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
 import {clipLines, seconds} from './util/text.ts';
@@ -66,10 +67,11 @@ export const fmtDev = (d: DevserverStatus, detailed = false): string[] => {
   return out;
 };
 
-export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; simulators?: SimRow[]; exposed: number[]; dev?: DevserverStatus}): string => {
+export const fmtStatus = (r: {services: ServiceState[]; actors: ActorState[]; mock?: {port: number; running: boolean; requests: number}; push?: {port: number; running: boolean; requests: number}; devices: AndroidDevice[]; simulators?: SimRow[]; exposed: number[]; dev?: DevserverStatus}): string => {
   const out = [...fmtServices(r.services)];
   if (r.dev) out.push(...fmtDev(r.dev));
   if (r.mock) out.push(`${r.mock.running ? '✓' : '·'} llm-mock :${r.mock.port} ${r.mock.running ? `${r.mock.requests} requests` : 'stopped'}`);
+  if (r.push) out.push(`${r.push.running ? '✓' : '·'} push gateway :${r.push.port} ${r.push.running ? `${r.push.requests} requests` : 'stopped'}`);
   out.push(...fmtActors(r.actors));
   out.push(...fmtDevices(r.devices, undefined, r.simulators));
   if (r.exposed.length) out.push(`forwarded to devices: ${r.exposed.join(', ')}`);
@@ -196,6 +198,34 @@ const fmtMacWindows = (serial: string, selected: string, windows: MacWindow[]): 
       : ['  no windows']),
   ].join('\n');
 
+const fmtPushLine = (r: PushResult): string =>
+  `${r.ok ? '✓' : '✗'} ${r.platform === 'apple' ? 'ios' : 'android'} ${r.app}${r.state ? ` (${r.state})` : ''}${r.count ? ` ×${r.count}` : ''}: ${r.verdict}`;
+
+export const fmtPush = (x: Record<string, unknown>): string => {
+  switch (x.action) {
+    case 'tap':
+      return [`tapped "${x.tapped}"${x.state ? ` → app ${x.state}` : ''}`, x.act ? fmtAct(x.act as ActResult) : ((x.screen as string[] | undefined) ?? []).join('\n')].join('\n');
+    case 'clear':
+      return `${x.app}: ${x.cleared} notification${x.cleared === 1 ? '' : 's'} cleared`;
+    case 'grant':
+      return `${x.app}: ${x.note}`;
+    case 'status':
+      return [`${x.app} on ${x.device}`, ...(x.lines as string[]).map(l => `  ${l}`)].join('\n');
+    case 'bind':
+      return `token ${String(x.token).slice(0, 12)}… → ${x.device}`;
+    case 'log': {
+      const log = x.log as PushRecord[];
+      const now = Date.now();
+      const head = x.gateway ? `push gateway :${x.gateway}` : 'push gateway not running';
+      return [head, ...(log.length ? log.map(r => `  ${seconds(now - r.at)} ago  ${r.source ?? 'push'}  ${r.sent} → ${fmtPushLine(r)}`) : ['  no pushes yet'])].join('\n');
+    }
+    default: {
+      const r = x as unknown as PushResult;
+      return [fmtPushLine(r), `  sent ${r.sent}${r.via ? ` · via ${r.via}` : ''}`, ...(r.notes ?? []).map(n => `  note: ${n}`)].join('\n');
+    }
+  }
+};
+
 export const formatResult = (method: string, r: unknown): string => {
   const x = r as Record<string, unknown>;
   switch (method) {
@@ -205,6 +235,8 @@ export const formatResult = (method: string, r: unknown): string => {
       const lines = fmtServices(x.services as ServiceState[]);
       const mock = x.mock as {port: number} | undefined;
       if (mock) lines.push(`✓ llm-mock :${mock.port}`);
+      const push = x.push as {port: number} | undefined;
+      if (push) lines.push(`✓ push gateway :${push.port}`);
       for (const f of (x.forwards as {serial: string; ports: number[]}[]) ?? []) lines.push(`forwarded ${f.ports.join(',')} → ${f.serial}`);
       lines.push(...fmtPrewarm(x.prewarm as Prewarm | undefined));
       return lines.join('\n');
@@ -317,6 +349,8 @@ export const formatResult = (method: string, r: unknown): string => {
       ]
         .filter(Boolean)
         .join('\n');
+    case 'push':
+      return fmtPush(x);
     case 'llm': {
       type Rule = {id: string; action: string; match?: string; text?: string; status?: number; ms?: number; once?: boolean};
       type Req = {at: number; model: string; stream: boolean; prompt: string; source: string; status: number; reply?: string};
