@@ -207,7 +207,7 @@ const fmtPushLine = (r: PushResult): string =>
 export const fmtPush = (x: Record<string, unknown>): string => {
   switch (x.action) {
     case 'tap':
-      return [`tapped "${x.tapped}"${x.state ? ` → app ${x.state}` : ''}`, x.act ? fmtAct(x.act as ActResult) : ((x.screen as string[] | undefined) ?? []).join('\n')].join('\n');
+      return [`${x.ok === false ? '✗ ' : ''}tapped "${x.tapped}"${x.state ? ` → app ${x.state}` : ''}`, ...(x.note ? [`note: ${x.note}`] : []), x.act ? fmtAct(x.act as ActResult) : ((x.screen as string[] | undefined) ?? []).join('\n')].join('\n');
     case 'clear':
       return `${x.app}: ${x.cleared} notification${x.cleared === 1 ? '' : 's'} cleared`;
     case 'grant':

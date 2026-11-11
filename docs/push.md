@@ -26,7 +26,7 @@ the APNs and FCM requests a server sends, and delivers them to the running devic
 | `push apns='{"aps":…}'` · `push fcm='{"notification":…,"data":…}'` | a raw payload for one platform, converted for the other when the device is of the other kind |
 | `delay=s` · `repeat=n` | send later (the call answers at once; `push log` tells how it went) · send n copies |
 | `grant=true` | allow notifications first (Android 13+ runtime permission) |
-| `push tap [title]` | tap the latest notification (or the one with that text) |
+| `push tap [title]` | tap the latest notification (or the one with that text) and check the app came to the front. Android: the shade is opened and the notification found in System UI's own window by its title (or part of its text) — not the app behind the shade, which may show the same name — and tapped there; without a title, the latest one pitbox delivered that is still posted. iOS: the banner, or the notification in Notification Center. `✗ tapped …` with a note when the app did not come to the front |
 | `push clear` | remove the app's notifications (Android) |
 | `push grant` | grant POST_NOTIFICATIONS (Android) |
 | `push status` | can the app take pushes here: the receiver, the FCM service, Firebase, the permission |

@@ -116,3 +116,28 @@ export const missingReceiver = async (a: AndroidDriver, serial: string, pkg: str
   if (!installed) return `${pkg} is not installed on ${serial}`;
   return `${pkg} has no pitbox push receiver\nhint: rebuild the debug build with a @veksa/pitbox that has push (the connect library is autolinked into React Native apps; native apps add it with debugImplementation)`;
 };
+
+/** The tree shape the device runner answers `tree` with: windows, and nodes with their window, parent and flags. */
+type ShadeTree = {windows: {pkg: string}[]; nodes: {p: number; w: number; b: [number, number, number, number]; t?: string; d?: string; f?: string}[]};
+
+/**
+ * A notification in the expanded shade, by the text it shows: the node with the title (exact first, then a part of
+ * a text or a description) in a System UI window — never the app's own window behind the shade, which may show the
+ * same name — and the clickable row it belongs to. Undefined when no notification in the shade shows the text.
+ */
+export const shadeRow = (tree: ShadeTree, title: string): {text: {w: number; b: [number, number, number, number]}; row?: {w: number; b: [number, number, number, number]}} | undefined => {
+  const inShade = (i: number) => tree.windows[tree.nodes[i]!.w]?.pkg.startsWith('com.android.systemui') ?? false;
+  const want = title.trim().toLowerCase();
+  const all = tree.nodes.map((n, i) => ({n, i})).filter(({i}) => inShade(i));
+  const exact = all.find(({n}) => n.t?.trim().toLowerCase() === want);
+  const part = exact ?? all.find(({n}) => n.t?.toLowerCase().includes(want) || n.d?.toLowerCase().includes(want));
+  if (!part) return undefined;
+  let k = part.n.p;
+  while (k >= 0 && !(tree.nodes[k]!.f ?? '').includes('c')) k = tree.nodes[k]!.p;
+  const row = k >= 0 ? tree.nodes[k] : (part.n.f ?? '').includes('c') ? part.n : undefined;
+  return {text: {w: part.n.w, b: part.n.b}, row: row ? {w: row.w, b: row.b} : undefined};
+};
+
+/** The titles of the notifications the shade shows, for an error that says what was there instead. */
+export const shadeTitles = (tree: ShadeTree): string[] =>
+  [...new Set(tree.nodes.filter(n => tree.windows[n.w]?.pkg.startsWith('com.android.systemui') && n.t && (n.f ?? '') === '').map(n => n.t!))].slice(0, 8);

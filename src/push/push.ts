@@ -9,7 +9,7 @@ import path from 'node:path';
 import type {AndroidDriver} from '../drivers/android/driver.ts';
 import type {AppleDevices} from '../remote/appleRemote.ts';
 import type {ActResult, DeviceUi} from '../ui/device.ts';
-import {appState, assertPackage, callReceiver, grantNotifications, missingReceiver, notifications, notificationsAllowed, type AppState, type PostedNotification} from './android.ts';
+import {appState, assertPackage, callReceiver, grantNotifications, missingReceiver, notifications, notificationsAllowed, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
 import {describe, toApns, toFcmExtras, toMessage, type PushInput, type PushMessage} from './payload.ts';
 
 export type PushTarget = {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices};
@@ -262,55 +262,105 @@ export class PushCenter {
   }
 
   /** Taps the app's latest notification (Android: in the shade; iOS: its banner or Notification Center). */
-  async tap(opts: {device?: string; app?: string; title?: string}): Promise<{device: string; app: string; tapped: string; state?: AppState; act?: ActResult; screen?: string[]}> {
+  async tap(opts: {device?: string; app?: string; title?: string}): Promise<{device: string; app: string; tapped: string; state?: AppState; act?: ActResult; screen?: string[]; note?: string; ok?: boolean}> {
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
     const ui = await this.#deps.ui(t.id);
     let title = opts.title;
-    if (t.platform === 'android') {
-      if (!title) {
-        const posted = (await notifications(t.a, t.id, app)).filter(n => !n.summary).sort((a, b) => b.updated - a.updated)[0];
-        if (!posted) throw new Error(`${app} has no notification in the shade`);
-        title = posted.title ?? posted.text;
-        if (!title) throw new Error('the latest notification has no title or text to tap');
-      }
-      await t.a.shell(t.id, 'cmd statusbar expand-notifications');
-      await sleep(600);
-    } else {
-      if (!title) {
-        const last = [...this.log].reverse().find(r => r.platform === 'apple' && r.device === t.id && r.ok && r.title);
-        title = last?.title;
-        if (!title) throw new Error('no push on record for this simulator: pass title=<text on the notification>');
-      }
-      // The banner, or the notification in Notification Center (a swipe down from the top edge, left of the
-      // notch); there the app's notifications stack and the first tap only spreads the stack.
-      const tapBanner = async () => !!(await ui.runner.call<{tapped?: boolean}>('tapBanner', {text: title}).catch(() => undefined))?.tapped;
-      let tapped = await tapBanner();
-      if (!tapped) {
-        const {width, height} = await ui.size();
-        await ui.swipe(`${Math.round(width * 0.3)},2,${Math.round(width * 0.3)},${Math.round(height * 0.6)}`, 300).catch(() => undefined);
-        await sleep(800);
-        tapped = await tapBanner();
-      }
-      if (!tapped) throw new Error(`no notification "${title}" on screen or in Notification Center`);
-      // Notification Center answers a tap in steps: a stack of the app's notifications spreads out, then a
-      // notification shows its "Open" action, which opens the app.
-      for (let i = 0; i < 3; i++) {
-        await sleep(900);
-        const r = await ui.runner.call<{front?: string}>('banners').catch(() => ({}) as {front?: string});
-        if (r.front === app) break;
-        const snap = await ui.snapshot();
-        const open = snap.nodes.findIndex(n => n.id === 'swipe-action-button-identifier');
-        const ref = open >= 0 ? snap.refOf.get(open) : undefined;
-        if (ref && snap.nodes.filter(n => n.id === 'swipe-action-button-identifier').length === 1) await ui.press(ref).catch(() => undefined);
-        else if (!(await tapBanner())) break;
-      }
-      const snap = await ui.snapshot();
-      return {device: t.id, app, tapped: title, screen: snap.lines.slice(0, 12)};
+    if (t.platform === 'android') return this.#tapAndroid(t.a, t.id, app, ui, title);
+    if (!title) {
+      const last = [...this.log].reverse().find(r => r.platform === 'apple' && r.device === t.id && r.ok && r.title);
+      title = last?.title;
+      if (!title) throw new Error('no push on record for this simulator: pass title=<text on the notification>');
     }
-    const r = await ui.press(`text~=${title}`);
-    const {state} = await appState(t.a, t.id, app);
-    return {device: t.id, app, tapped: title!, state, act: r};
+    // The banner, or the notification in Notification Center (a swipe down from the top edge, left of the
+    // notch); there the app's notifications stack and the first tap only spreads the stack.
+    const tapBanner = async () => !!(await ui.runner.call<{tapped?: boolean}>('tapBanner', {text: title}).catch(() => undefined))?.tapped;
+    let tapped = await tapBanner();
+    if (!tapped) {
+      const {width, height} = await ui.size();
+      await ui.swipe(`${Math.round(width * 0.3)},2,${Math.round(width * 0.3)},${Math.round(height * 0.6)}`, 300).catch(() => undefined);
+      await sleep(800);
+      tapped = await tapBanner();
+    }
+    if (!tapped) throw new Error(`no notification "${title}" on screen or in Notification Center`);
+    // Notification Center answers a tap in steps: a stack of the app's notifications spreads out, then a
+    // notification shows its "Open" action, which opens the app.
+    for (let i = 0; i < 3; i++) {
+      await sleep(900);
+      const r = await ui.runner.call<{front?: string}>('banners').catch(() => ({}) as {front?: string});
+      if (r.front === app) break;
+      const snap = await ui.snapshot();
+      const open = snap.nodes.findIndex(n => n.id === 'swipe-action-button-identifier');
+      const ref = open >= 0 ? snap.refOf.get(open) : undefined;
+      if (ref && snap.nodes.filter(n => n.id === 'swipe-action-button-identifier').length === 1) await ui.press(ref).catch(() => undefined);
+      else if (!(await tapBanner())) break;
+    }
+    const front = (await ui.runner.call<{front?: string}>('banners').catch(() => ({}) as {front?: string})).front;
+    const state: AppState | undefined = front === undefined ? undefined : front === app ? 'foreground' : 'background';
+    const snap = await ui.snapshot();
+    const note = state === 'background' ? `the notification was tapped, but ${front} is in front, not the app` : undefined;
+    return {device: t.id, app, tapped: title, state, screen: snap.lines.slice(0, 12), note, ok: state !== 'background'};
+  }
+
+  /**
+   * Android: the shade is opened and the notification found in System UI's own window (a snapshot leaves System UI
+   * out, and the app behind the shade may show the same name), then tapped where its title is, as a person would.
+   * Done when the app is in front and the notification is gone from the screen; a row that took no tap is clicked
+   * through accessibility once more. Without a title: the latest one pitbox delivered that is still posted, else the
+   * app's latest.
+   */
+  async #tapAndroid(a: AndroidDriver, serial: string, app: string, ui: DeviceUi, given?: string) {
+    let title = given;
+    if (!title) {
+      const posted = (await notifications(a, serial, app)).filter(n => !n.summary).sort((x, y) => y.updated - x.updated);
+      if (!posted.length) throw new Error(`${app} has no notification in the shade`);
+      const ours = [...this.log].reverse().filter(r => r.platform === 'android' && r.device === serial && r.app === app && r.shown?.title).map(r => r.shown!.title!);
+      title = ours.find(o => posted.some(n => n.title === o)) ?? posted[0]!.title ?? posted[0]!.text;
+      if (!title) throw new Error('the latest notification has no title or text to tap');
+    }
+    type Tree = Parameters<typeof shadeRow>[0];
+    const read = () => ui.runner.call<Tree>('tree').catch(() => ({windows: [], nodes: []}) as Tree);
+    await a.shell(serial, 'cmd statusbar expand-notifications');
+    let tree = await read();
+    let found = shadeRow(tree, title);
+    for (const deadline = Date.now() + 3000; !found && Date.now() < deadline; ) {
+      await sleep(300);
+      tree = await read();
+      found = shadeRow(tree, title);
+    }
+    ui.screenChanged();
+    if (!found) {
+      const seen = shadeTitles(tree);
+      await a.shell(serial, 'cmd statusbar collapse').catch(() => '');
+      throw new Error(`no notification "${title}" in the shade${seen.length ? ` (it shows: ${seen.map(x => JSON.stringify(x)).join(', ')})` : ''}`);
+    }
+    const centre = (b: number[]) => ({x: Math.round((b[0]! + b[2]!) / 2), y: Math.round((b[1]! + b[3]!) / 2)});
+    const opened = async () => {
+      for (const deadline = Date.now() + 4000; Date.now() < deadline; ) {
+        await sleep(400);
+        const {state} = await appState(a, serial, app);
+        if (state === 'foreground' && !shadeRow(await read(), title!)) return true;
+      }
+      return false;
+    };
+    await ui.runner.call('tap', centre(found.text.b));
+    let ok = await opened();
+    let note: string | undefined;
+    if (!ok && found.row) {
+      const again = shadeRow(await read(), title);
+      if (again?.row) await ui.runner.call('node-action', {window: again.row.w, bounds: again.row.b, action: 16}, 15_000).catch(() => undefined);
+      ok = await opened();
+      if (ok) note = 'the row took no tap: clicked through accessibility';
+    }
+    ui.screenChanged();
+    const {state} = await appState(a, serial, app);
+    if (!ok) {
+      await a.shell(serial, 'cmd statusbar collapse').catch(() => '');
+      note = `the notification was tapped, but ${state === 'foreground' ? 'it stayed in the shade' : `the app did not come to the front (${state})`}: its tap opens nothing in the app, or opens another app`;
+    }
+    const snap = await ui.snapshot().catch(() => undefined);
+    return {device: serial, app, tapped: title, state, screen: snap?.lines.slice(0, 12), note, ok};
   }
 
   /** Removes the app's notifications (Android; iOS has no command for it). */

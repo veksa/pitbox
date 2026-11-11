@@ -3,10 +3,10 @@
 import http2 from 'node:http2';
 import {describe, expect, it} from 'vitest';
 import {parseArgs, toCall} from './cli.ts';
-import {assertPackage, parseBroadcast, parseNotifications} from './push/android.ts';
+import {assertPackage, parseBroadcast, parseNotifications, shadeRow} from './push/android.ts';
 import {handlePush, PushGateway} from './push/gateway.ts';
 import {fromApns, fromFcm, fromPayloadFile, toApns, toFcmExtras, toMessage} from './push/payload.ts';
-import {PushUnregistered, type PushOptions, type PushResult} from './push/push.ts';
+import {PushCenter, PushUnregistered, type PushOptions, type PushResult} from './push/push.ts';
 import {freePort} from './util/net.ts';
 
 describe('push payloads', () => {
@@ -135,6 +135,92 @@ describe('android verdicts', () => {
     // No receiver in the app: nobody sets a result.
     expect(parseBroadcast('Broadcast completed: result=0\n')).toEqual({code: 0, data: undefined});
     expect(parseBroadcast('Error: …')).toEqual({code: -1});
+  });
+});
+
+// The expanded shade over the app: the app's own window shows the same name (a chat with Ann) under the shade.
+const SHADE = {
+  windows: [{type: 'system', title: '', pkg: 'com.android.systemui'}, {type: 'app', title: '', pkg: 'com.example.app'}],
+  nodes: [
+    {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400] as [number, number, number, number]},
+    {p: 0, w: 0, c: 'TextView', b: [40, 40, 200, 90] as [number, number, number, number], t: '12:00'},
+    {p: 0, w: 0, c: 'FrameLayout', b: [0, 300, 1080, 520] as [number, number, number, number], f: 'cl'},
+    {p: 2, w: 0, c: 'TextView', b: [180, 330, 400, 380] as [number, number, number, number], id: 'title', t: 'Ann'},
+    {p: 2, w: 0, c: 'TextView', b: [180, 390, 900, 440] as [number, number, number, number], id: 'text', t: 'Are you there?'},
+    {p: -1, w: 1, c: 'TextView', b: [100, 1500, 300, 1560] as [number, number, number, number], t: 'Ann'},
+  ],
+};
+
+describe('push tap on android', () => {
+  it('finds the notification in the shade, not the same name in the app behind it', () => {
+    const r = shadeRow(SHADE, 'Ann');
+    expect(r?.text.b).toEqual([180, 330, 400, 380]);
+    expect(r?.row?.b).toEqual([0, 300, 1080, 520]);
+    expect(shadeRow(SHADE, 'are you')?.text.b).toEqual([180, 390, 900, 440]);
+    expect(shadeRow(SHADE, 'Bob')).toBeUndefined();
+    expect(shadeRow({...SHADE, windows: [{type: 'app', title: '', pkg: 'com.example.app'}, SHADE.windows[1]!]}, 'Ann')).toBeUndefined();
+  });
+
+  /** A device whose shade opens the app when its row gets `opensOn` (a tap or an accessibility click). */
+  const device = (opensOn: 'tap' | 'node-action' | 'nothing') => {
+    const s = {front: false, shade: false, calls: [] as string[]};
+    const dump = `  Notification List:\n    NotificationRecord(0x1: pkg=com.example.app user=UserHandle{0} id=1 tag=t importance=4 key=0|com.example.app|1|t|1: Notification(channel=messages flags=AUTO_CANCEL vis=PRIVATE))\n          extras={\n                android.title=String (Ann)\n          }\n      mUpdateTimeMs=5\n  Notification attention state:\n`;
+    const a = {
+      shell: async (_serial: string, cmd: string) => {
+        s.calls.push(cmd.split(' ').slice(0, 3).join(' '));
+        if (cmd.startsWith('dumpsys notification')) return dump;
+        if (cmd.includes('expand-notifications')) s.shade = true;
+        if (cmd.includes('statusbar collapse')) s.shade = false;
+        if (cmd.startsWith('pidof')) return `123\n---\n  topResumedActivity=ActivityRecord{1 u0 ${s.front ? 'com.example.app/.Main' : 'com.android.launcher3/.Launcher'}}\n---\nstopped=false`;
+        return '';
+      },
+    };
+    const open = () => {
+      s.front = true;
+      s.shade = false;
+    };
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        s.calls.push(cmd);
+        if (cmd === 'tree') return s.shade ? SHADE : {windows: [SHADE.windows[1]], nodes: [{...SHADE.nodes[5], w: 0}]};
+        if (cmd === 'tap' && opensOn === 'tap' && args.y === 355) open();
+        if (cmd === 'node-action' && opensOn === 'node-action') open();
+        return {};
+      },
+    };
+    const ui = {runner, screenChanged: () => undefined, snapshot: async () => ({lines: ['@e1 "Ann"']})};
+    const center = new PushCenter({
+      target: async () => ({platform: 'android', id: 'emulator-5554', a}) as never,
+      online: async () => ({android: ['emulator-5554'], apple: []}),
+      androidApp: () => 'com.example.app',
+      ui: async () => ui as never,
+    });
+    return {s, center};
+  };
+
+  it('opens the shade, taps the notification by its title and lands in the app', {timeout: 20_000}, async () => {
+    const {s, center} = device('tap');
+    const r = await center.tap({});
+    expect(r).toMatchObject({tapped: 'Ann', state: 'foreground', ok: true});
+    expect(r.note).toBeUndefined();
+    expect(s.calls).not.toContain('node-action');
+  });
+
+  it('clicks the row through accessibility when it takes no tap, and says so', {timeout: 20_000}, async () => {
+    const {s, center} = device('node-action');
+    const r = await center.tap({title: 'Ann'});
+    expect(r).toMatchObject({state: 'foreground', ok: true});
+    expect(r.note).toMatch(/accessibility/);
+    expect(s.calls).toContain('node-action');
+  });
+
+  it('fails a tap that opened nothing and closes the shade', {timeout: 20_000}, async () => {
+    const {s, center} = device('nothing');
+    const r = await center.tap({});
+    expect(r.ok).toBe(false);
+    expect(r.note).toMatch(/did not come to the front/);
+    expect(s.shade).toBe(false);
+    await expect(center.tap({title: 'Bob'})).rejects.toThrow(/no notification "Bob" in the shade \(it shows: "12:00"/);
   });
 });
 
