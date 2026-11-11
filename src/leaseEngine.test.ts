@@ -175,21 +175,43 @@ describe('simulators', () => {
     expect(apple.sims[0]!.state).toBe('Booted');
   });
 
-  it('shuts down what it booted when it stops, and leaves what it found', async () => {
+  it('shuts down what it booted on an explicit stop, and leaves what it found', async () => {
+    const apple = new FakeApple([{}, {name: 'iPad', deviceType: 'iPad', state: 'Booted'}]);
+    const a = await session('alice', {apple});
+    await a.methods.boot({avd: 'iPhone 17'});
+    await a.methods.lease({device: 'U2'});
+    await a.stopAll({release: true});
+    expect(apple.sims.map(s => s.state)).toEqual(['Shutdown', 'Booted']);
+    expect(fs.readdirSync(leaseDir()).filter(f => f.endsWith('.json'))).toEqual([]);
+  });
+
+  it('keeps its leases and its devices running on any stop but an explicit one (a restart, a signal, a version swap)', async () => {
+    const apple = new FakeApple([{}]);
+    const a = await session('alice', {apple});
+    await a.methods.boot({avd: 'iPhone 17'});
+    await a.stopAll();
+    expect(apple.sims[0]!.state).toBe('Booted');
+    expect(readLease('apple', 'U1')).toMatchObject({booted: true});
+  });
+
+  it('hands its devices to the next daemon of the project, which still shuts down only what pitbox booted', async () => {
     const apple = new FakeApple([{}, {name: 'iPad', deviceType: 'iPad', state: 'Booted'}]);
     const a = await session('alice', {apple});
     await a.methods.boot({avd: 'iPhone 17'});
     await a.methods.lease({device: 'U2'});
     await a.stopAll();
+    const next = await Engine.create(a.loaded.file, undefined, {android: null, apple: apple as never});
+    expect(apple.sims.map(s => s.state)).toEqual(['Booted', 'Booted']);
+    await next.stopAll({release: true});
     expect(apple.sims.map(s => s.state)).toEqual(['Shutdown', 'Booted']);
-    expect(fs.readdirSync(leaseDir()).filter(f => f.endsWith('.json'))).toEqual([]);
   });
 
-  it('keeps its leases over a restart', async () => {
+  it('never shuts down a device another session holds when it stops', async () => {
     const apple = new FakeApple([{}]);
     const a = await session('alice', {apple});
+    const b = await session('bob', {apple});
     await a.methods.boot({avd: 'iPhone 17'});
-    await a.stopAll({keepLeases: true});
+    await b.stopAll({release: true});
     expect(apple.sims[0]!.state).toBe('Booted');
     expect(readLease('apple', 'U1')).toMatchObject({booted: true});
   });

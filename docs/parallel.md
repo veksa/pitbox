@@ -45,7 +45,9 @@ left to each agent's discipline.
   it was — only with the device named, never on a device pitbox picked by itself.
 - **Giving back.** `device release` (or `down` for the whole stand, or `pitbox daemon stop`) releases the leases;
   a device pitbox booted for the session shuts down with it (`devices.shutdownOnRelease: false` keeps it up), a
-  device it found running stays running. A daemon restarted after an upgrade keeps its leases.
+  device it found running stays running. Any other end of the daemon — `pitbox daemon restart`, a swap to another
+  version, a signal, a crash — keeps its leases and leaves every device running: the next daemon of the project
+  adopts them, and an agent in the middle of a run does not lose its simulator to someone else's restart.
 - **Stale leases.** A lease lives as long as its holder process: the same pid with the same start time, so a pid
   the system reused for another program does not count, and a machine that slept does not lose its leases. Once the
   process is gone (after a minute's grace, in which a restarted daemon picks its devices up) the next session that

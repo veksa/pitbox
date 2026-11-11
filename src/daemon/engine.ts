@@ -957,9 +957,11 @@ export class Engine {
   /**
    * Daemon shutdown. Services keep running on purpose — keeping them warm is the point — and the next daemon
    * adopts them from the pid file; only `down` stops them. Actors and the mock belong to the daemon and go. Device
-   * leases are given back (devices this daemon booted shut down) unless `keepLeases`: a restart hands them on.
+   * leases stay with the project, and the devices keep running: the next daemon adopts them, and an agent mid-run
+   * on a simulator does not lose it to a restart, a signal or a version swap. Only `release` (an explicit
+   * `pitbox daemon stop`) gives them back, shutting down those this daemon booted.
    */
-  async stopAll(opts: {keepLeases?: boolean} = {}) {
+  async stopAll(opts: {release?: boolean} = {}) {
     if (this.#watchTimer) clearTimeout(this.#watchTimer);
     if (this.#beatTimer) clearTimeout(this.#beatTimer);
     this.actors.stopAll();
@@ -969,7 +971,7 @@ export class Engine {
     await this.#dev?.stop();
     for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
     for (const r of this.#macRunners.values()) await r.stop().catch(() => undefined);
-    if (!opts.keepLeases) await this.#releaseAll().catch(() => undefined);
+    if (opts.release) await this.#releaseAll().catch(() => undefined);
   }
 
   async #startMock() {

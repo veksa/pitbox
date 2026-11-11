@@ -23,11 +23,11 @@ export const serve = async (configFile?: string) => {
   const token = crypto.randomBytes(24).toString('hex');
 
   let shuttingDown = false;
-  /** `keepLeases`: a restart (a new version taking over) keeps the devices; the next daemon adopts them. */
-  const shutdown = async (code = 0, keepLeases = false) => {
+  /** `release`: give the devices back (an explicit stop); any other exit hands them to the next daemon. */
+  const shutdown = async (code = 0, release = false) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await engine.stopAll({keepLeases}).catch(() => undefined);
+    await engine.stopAll({release}).catch(() => undefined);
     try {
       const info = JSON.parse(fs.readFileSync(daemonFile(stateDir), 'utf8')) as DaemonInfo;
       if (info.pid === process.pid) fs.unlinkSync(daemonFile(stateDir));
@@ -50,8 +50,9 @@ export const serve = async (configFile?: string) => {
       method = body.method;
       if (method === DAEMON_STOP) {
         res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result: {stopping: true}}));
-        const keep = body.params?.keepLeases === true;
-        setTimeout(() => void shutdown(0, keep), 50);
+        // Only a stop that asks for it gives the devices back: an older client's upgrade restart sends no params.
+        const release = body.params?.release === true;
+        setTimeout(() => void shutdown(0, release), 50);
         return;
       }
       const result = await engine.call(method, body.params ?? {});

@@ -375,7 +375,8 @@ export const main = async () => {
     }
     if (sub === 'stop' || sub === 'restart') {
       // A restart keeps the devices this project holds; a stop gives them back (and shuts down those it booted).
-      if (running) await running.call(DAEMON_STOP, {keepLeases: sub === 'restart'}).catch(() => undefined);
+      // `keepLeases` is what a daemon from before `release` reads.
+      if (running) await running.call(DAEMON_STOP, sub === 'stop' ? {release: true} : {keepLeases: true}).catch(() => undefined);
       // Stopped means gone: devices it booted shut down first, and a script that boots next must not race that.
       const {isAlive} = await import('./util/proc.ts');
       const end = Date.now() + 120_000;
