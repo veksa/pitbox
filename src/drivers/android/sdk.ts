@@ -27,7 +27,19 @@ const fromSdk = (sub: string, name: string) => {
 export const findAdb = () => fromSdk('platform-tools', 'adb') ?? which('adb');
 export const findEmulator = () => fromSdk('emulator', 'emulator') ?? which('emulator');
 
-export const avdHome = () => process.env.ANDROID_AVD_HOME ?? path.join(process.env.ANDROID_USER_HOME ?? path.join(os.homedir(), '.android'), 'avd');
+/**
+ * Where the AVDs live, looked up the way the emulator does: ANDROID_AVD_HOME, else `avd` in ANDROID_EMULATOR_HOME or
+ * ANDROID_USER_HOME, else `.android/avd` in ANDROID_PREFS_ROOT or the deprecated ANDROID_SDK_HOME, else
+ * `~/.android/avd`.
+ */
+export const avdHome = () => {
+  const env = process.env;
+  if (env.ANDROID_AVD_HOME) return env.ANDROID_AVD_HOME;
+  const user = env.ANDROID_EMULATOR_HOME || env.ANDROID_USER_HOME;
+  if (user) return path.join(user, 'avd');
+  const prefs = env.ANDROID_PREFS_ROOT || env.ANDROID_SDK_HOME;
+  return path.join(prefs ? path.join(prefs, '.android') : path.join(os.homedir(), '.android'), 'avd');
+};
 
 /** AVD names from the AVD home, without starting the emulator binary. */
 export const listAvds = (): string[] => {

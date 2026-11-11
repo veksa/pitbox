@@ -76,7 +76,7 @@ export const KEYS: Record<string, number> = {
   stem_2: 266,
 };
 
-const lockDir = (avd: string) => path.join(avdHome(), `${avd}.avd`, 'hardware-qemu.ini.lock');
+const lockDir = (avd: string) => path.join(avdDir(avd), 'hardware-qemu.ini.lock');
 
 /** Whether `pid` is a running emulator: a lock's pid can belong to an unrelated process by now (ids are reused). */
 const emulatorAlive = (pid: number) => {
@@ -118,8 +118,8 @@ const clearStaleAvdLock = (avd: string) => {
 
 /**
  * Whether the emulator process of an instance (`pid:N`) runs `-read-only`. The emulator starts a second instance of an
- * AVD only when every instance of it runs `-read-only`; beside a writable one it refuses. Unknown (Windows, a process
- * that cannot be read): false.
+ * AVD only when every instance of it runs `-read-only`; beside a writable one it refuses. Unknown — on Windows, where
+ * pitbox does not read another process's command line, or a process that cannot be read: false (a copy is made).
  */
 export const readOnlyInstance = (instance?: string): boolean => {
   const pid = /^pid:(\d+)$/.exec(instance ?? '')?.[1];
@@ -131,23 +131,72 @@ export const readOnlyInstance = (instance?: string): boolean => {
   }
 };
 
+/** The emulator process holding an AVD's lock (`pid:N`), while one runs it. */
+export const lockInstance = (avd: string): string | undefined => {
+  try {
+    const pid = Number(fs.readFileSync(path.join(lockDir(avd), 'pid'), 'utf8').trim());
+    return Number.isInteger(pid) && pid > 0 && emulatorAlive(pid) ? `pid:${pid}` : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** An AVD's folder: the `path=` of its `<name>.ini`, as the emulator reads it; `<avd home>/<name>.avd` without one. */
+export const avdDir = (name: string): string => {
+  try {
+    const at = /^path=(.+)$/m.exec(fs.readFileSync(path.join(avdHome(), `${name}.ini`), 'utf8'))?.[1]?.trim();
+    if (at) return at;
+  } catch {
+    // no pointer file: the default place
+  }
+  return path.join(avdHome(), `${name}.avd`);
+};
+
+/** Who an AVD folder is: its inode and birth time. A folder made later under the same name is someone else's. */
+export const avdStamp = (name: string): string | undefined => {
+  try {
+    const st = fs.statSync(path.join(avdHome(), `${name}.avd`));
+    return `${st.ino}:${Math.round(st.birthtimeMs)}`;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Whether an AVD name is in use: its pointer file or its folder (a folder left without a pointer counts too). */
+export const avdTaken = (name: string): boolean => fs.existsSync(path.join(avdHome(), `${name}.ini`)) || fs.existsSync(path.join(avdHome(), `${name}.avd`));
+
 /**
  * A new AVD like `like` (`<like>_pitbox_N`): its `config.ini` — device, system image, hardware — and no data, so it
- * boots as a fresh phone of the same model and image. Fails when the name is taken.
+ * boots as a fresh phone of the same model and image. Keys that point into the source AVD's folder (an SD card, a
+ * data partition, a snapshot) are left out: the copy never writes into the user's AVD. Fails when the name is taken;
+ * on a failure, removes only what it created.
  */
 export const createAvdLike = (like: string, name: string) => {
   const home = avdHome();
+  const source = avdDir(like);
+  const config = fs.readFileSync(path.join(source, 'config.ini'), 'utf8');
   const ini = fs.readFileSync(path.join(home, `${like}.ini`), 'utf8');
-  const config = fs.readFileSync(path.join(home, `${like}.avd`, 'config.ini'), 'utf8');
   const dir = path.join(home, `${name}.avd`);
+  const pointer = path.join(home, `${name}.ini`);
+  if (fs.existsSync(pointer)) throw new AndroidError(`AVD ${name} exists already`);
   fs.mkdirSync(dir);
-  const named = (l: string) => (/^(AvdId|avd\.ini\.displayname)=/.test(l) || (/^avd\.(id|name)=/.test(l) && !l.endsWith('<build>')) ? l.replace(/=.*/, `=${name}`) : l);
-  fs.writeFileSync(path.join(dir, 'config.ini'), config.split('\n').map(named).join('\n'));
-  const pointer = ini
-    .split('\n')
-    .map(l => (l.startsWith('path=') ? `path=${dir}` : l.startsWith('path.rel=') ? l.replace(`${like}.avd`, `${name}.avd`) : l))
-    .join('\n');
-  fs.writeFileSync(path.join(home, `${name}.ini`), pointer);
+  let wrote = false;
+  try {
+    const intoSource = (v: string) => path.isAbsolute(v) && path.resolve(v).startsWith(path.resolve(source));
+    const lines = config
+      .split('\n')
+      .filter(l => !intoSource(l.slice(l.indexOf('=') + 1).trim()))
+      .map(l => (/^(AvdId|avd\.ini\.displayname)=/.test(l) || (/^avd\.(id|name)=/.test(l) && !l.endsWith('<build>')) ? l.replace(/=.*/, `=${name}`) : l));
+    fs.writeFileSync(path.join(dir, 'config.ini'), lines.join('\n'));
+    const out = ini
+      .split('\n')
+      .map(l => (l.startsWith('path=') ? `path=${dir}` : l.startsWith('path.rel=') ? `path.rel=${path.relative(path.dirname(home), dir).split(path.sep).join('/')}` : l))
+      .join('\n');
+    fs.writeFileSync(pointer, out, {flag: 'wx'});
+    wrote = true;
+  } finally {
+    if (!wrote) fs.rmSync(dir, {recursive: true, force: true});
+  }
 };
 
 /** Deletes an AVD pitbox created; refuses while an emulator runs it. */
@@ -157,6 +206,11 @@ export const deleteAvd = (name: string) => {
   fs.rmSync(path.join(home, `${name}.avd`), {recursive: true, force: true});
   fs.rmSync(path.join(home, `${name}.ini`), {force: true});
 };
+
+/** A launched emulator on its way up: what `untilListed`, `untilBooted` and `abort` work from. */
+export type Launch = {avd: string; pid?: number; t0: number; deadline: number; timeoutMs: number; readOnly: boolean; earlier: Set<string>; serial?: string};
+
+export type BootOptions = {wipe?: boolean; headless?: boolean; coldBoot?: boolean; timeoutMs?: number; newInstance?: boolean; noSnapshot?: boolean};
 
 export class AndroidError extends Error {
   readonly hint?: string;
@@ -192,7 +246,7 @@ export class AndroidDriver {
    * Keyed by serial and adb's transport id, and dropped as soon as the device is not online: a new emulator on a
    * reused port is a new connection, and never inherits the answers of the one before it.
    */
-  readonly #known = new Map<string, {avd?: string; instance?: string}>();
+  readonly #known = new Map<string, {avd?: string; instance?: string; at: number}>();
 
   async devices(): Promise<AndroidDevice[]> {
     let r = await this.adb(['devices', '-l'], undefined, {timeoutMs: 8000});
@@ -212,12 +266,14 @@ export class AndroidDriver {
         const model = /model:(\S+)/.exec(line)?.[1];
         const emulator = serial.startsWith('emulator-');
         let known = this.#known.get(key);
-        if (emulator && state === 'device' && !known) {
-          const name = await this.adb(['emu', 'avd', 'name'], serial, {timeoutMs: 5000});
-          const avd = name.stdout.replace(/\r/g, '').split('\n')[0]?.trim() || undefined;
-          const where = await this.adb(['emu', 'avd', 'discoverypath'], serial, {timeoutMs: 5000});
-          known = {avd, instance: emulatorInstance(where.stdout)};
-          if (avd) this.#known.set(key, known);
+        // Asked again while the instance is unknown (a console that timed out or answered KO), at most every 15 s:
+        // a lease taken without it would follow the serial to the next emulator.
+        if (emulator && state === 'device' && (!known || (!known.instance && Date.now() - known.at > 15_000))) {
+          const avd = known?.avd ?? ((await this.adb(['emu', 'avd', 'name'], serial, {timeoutMs: 5000}).catch(() => undefined))?.stdout.replace(/\r/g, '').split('\n')[0]?.trim() || undefined);
+          const where = await this.adb(['emu', 'avd', 'discoverypath'], serial, {timeoutMs: 5000}).catch(() => undefined);
+          known = {avd, instance: where ? emulatorInstance(where.stdout) : undefined, at: Date.now()};
+          if (avd && !/^KO\b/.test(avd)) this.#known.set(key, known);
+          else known = {...known, avd: undefined};
         }
         const {avd, instance} = known ?? {};
         return {serial, state, model, avd, kind: avd ? avdKind(avd) : undefined, emulator, ...(instance ? {instance} : {})};
@@ -232,6 +288,21 @@ export class AndroidDriver {
   /** See `readOnlyInstance`. */
   readOnly(instance?: string): boolean {
     return readOnlyInstance(instance);
+  }
+
+  /** See `lockInstance`. */
+  lockedBy(avd: string): string | undefined {
+    return lockInstance(avd);
+  }
+
+  /** See `avdTaken`. */
+  avdTaken(name: string): boolean {
+    return avdTaken(name);
+  }
+
+  /** See `avdStamp`. */
+  avdStamp(name: string): string | undefined {
+    return avdStamp(name);
   }
 
   /** See `createAvdLike`. */
@@ -265,14 +336,26 @@ export class AndroidDriver {
   /**
    * Boots an AVD, or answers the instance already running. `newInstance` starts another instance of an AVD that
    * runs already (another session holds it): `-read-only`, so the two share the AVD's disk images and the new
-   * one's changes are dropped when it exits.
+   * one's changes are dropped when it exits. `noSnapshot`: neither loads nor saves a snapshot (a throwaway AVD).
    */
-  async boot(avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean; timeoutMs?: number; newInstance?: boolean} = {}): Promise<{serial: string; ms: number; already: boolean; readOnly?: boolean}> {
-    const t0 = Date.now();
+  async boot(avd: string, opts: BootOptions = {}): Promise<{serial: string; ms: number; already: boolean; readOnly?: boolean}> {
     const before = await this.devices();
     const running = before.find(d => d.avd === avd && d.state === 'device');
-    const readOnly = !!opts.newInstance;
     if (running && !opts.newInstance) return {serial: running.serial, ms: 0, already: true};
+    const l = await this.launch(avd, opts, before);
+    try {
+      return await this.untilBooted(l);
+    } catch (e) {
+      await this.abort(l);
+      throw e;
+    }
+  }
+
+  /** Starts the emulator for an AVD and returns at once; `untilListed` / `untilBooted` wait for it. */
+  async launch(avd: string, opts: BootOptions = {}, before?: AndroidDevice[]): Promise<Launch> {
+    const t0 = Date.now();
+    const seen = before ?? (await this.devices());
+    const readOnly = !!opts.newInstance;
     if (!listAvds().includes(avd)) throw new AndroidError(`unknown AVD "${avd}"`, `available: ${listAvds().join(', ') || 'none'}`);
     if (readOnly && opts.wipe) throw new AndroidError(`${avd} runs already: a second instance cannot wipe it`, 'boot another AVD to start clean');
     const emulator = findEmulator();
@@ -280,32 +363,81 @@ export class AndroidDriver {
     if (!readOnly) clearStaleAvdLock(avd);
     const args = ['-avd', avd, '-no-boot-anim', '-no-audio'];
     if (readOnly) args.push('-read-only');
-    if (opts.coldBoot !== false) args.push('-no-snapshot-load');
+    if (opts.noSnapshot) args.push('-no-snapshot');
+    else if (opts.coldBoot !== false) args.push('-no-snapshot-load');
     if (opts.wipe) args.push('-wipe-data');
     if (opts.headless) args.push('-no-window');
     const pid = await launchHidden(emulator, args);
-    const deadline = t0 + (opts.timeoutMs ?? 240_000);
+    const timeoutMs = opts.timeoutMs ?? 240_000;
     // The instance this boot starts: not one that ran before it.
-    const earlier = new Set(before.filter(d => d.avd === avd).map(d => d.serial));
-    const mine = (list: AndroidDevice[]) => list.find(d => d.avd === avd && !earlier.has(d.serial));
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 2000));
-      const all = await this.devices();
-      const dev = [mine(all)].find(d => d?.state === 'device');
-      // An emulator that exits on its way up (a lock, the hypervisor, a broken image) leaves nothing to wait for.
-      if (!dev && pid && !isAlive(pid) && !mine(await this.devices())) {
-        throw new AndroidError(`the emulator for ${avd} exited ${Math.round((Date.now() - t0) / 1000)}s into its boot`, `start it by hand to see why: emulator -avd ${avd}`);
+    return {avd, pid, t0, deadline: t0 + timeoutMs, timeoutMs, readOnly, earlier: new Set(seen.filter(d => d.avd === avd).map(d => d.serial))};
+  }
+
+  /**
+   * This launch's device in a list: the one whose emulator process is the launched one when adb says so, else the new
+   * serial of the AVD (the caller keeps other boots of the AVD out meanwhile; on Windows the launcher's pid is not the
+   * emulator's).
+   */
+  #mine(l: Launch, list: AndroidDevice[]): AndroidDevice | undefined {
+    if (l.serial) return list.find(d => d.serial === l.serial);
+    const fresh = list.filter(d => d.avd === l.avd && !l.earlier.has(d.serial));
+    return fresh.find(d => l.pid && d.instance === `pid:${l.pid}`) ?? fresh[0];
+  }
+
+  #exited(l: Launch): AndroidError {
+    return new AndroidError(`the emulator for ${l.avd} exited ${Math.round((Date.now() - l.t0) / 1000)}s into its boot`, `start it by hand to see why: emulator -avd ${l.avd}`);
+  }
+
+  /**
+   * Waits until adb lists the launched emulator (any state) or the AVD's lock is taken — the moment another boot can
+   * see it — at most `capMs`. Throws when the emulator exits first.
+   */
+  async untilListed(l: Launch, capMs = 90_000): Promise<void> {
+    const end = Math.min(l.deadline, Date.now() + capMs);
+    while (Date.now() < end) {
+      const dev = this.#mine(l, await this.devices());
+      if (dev) {
+        l.serial = dev.serial;
+        return;
       }
+      if (l.pid && !isAlive(l.pid)) throw this.#exited(l);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  /** Waits for the launched emulator to finish booting. */
+  async untilBooted(l: Launch): Promise<{serial: string; ms: number; already: boolean; readOnly?: boolean}> {
+    while (Date.now() < l.deadline) {
+      await new Promise(r => setTimeout(r, 2000));
+      const mine = this.#mine(l, await this.devices());
+      if (mine) l.serial = mine.serial;
+      const dev = mine?.state === 'device' ? mine : undefined;
+      // An emulator that exits on its way up (a lock, the hypervisor, a broken image) leaves nothing to wait for.
+      if (!dev && l.pid && !isAlive(l.pid) && !this.#mine(l, await this.devices())) throw this.#exited(l);
       if (!dev) continue;
       const booted = await this.adb(['shell', 'getprop', 'sys.boot_completed'], dev.serial, {timeoutMs: 5000});
       if (booted.stdout.trim() === '1') {
         // An emulator for automation: the screen stays on and the swipe-away lock screen is gone, or it comes back
         // mid-run and every app is behind it.
         await this.shell(dev.serial, 'svc power stayon true; wm dismiss-keyguard').catch(() => '');
-        return {serial: dev.serial, ms: Date.now() - t0, already: false, ...(readOnly ? {readOnly} : {})};
+        return {serial: dev.serial, ms: Date.now() - l.t0, already: false, ...(l.readOnly ? {readOnly: true} : {})};
       }
     }
-    throw new AndroidError(`${avd} did not finish booting in ${Math.round((opts.timeoutMs ?? 240_000) / 1000)}s`, 'try `boot --wipe` if it hangs on the boot screen');
+    throw new AndroidError(`${l.avd} did not finish booting in ${Math.round(l.timeoutMs / 1000)}s`, 'try `boot --wipe` if it hangs on the boot screen');
+  }
+
+  /** Stops a launch that failed or is not wanted, and waits (≤30 s) until it lets go of its AVD. */
+  async abort(l: Launch): Promise<void> {
+    if (l.serial) await this.adb(['emu', 'kill'], l.serial, {timeoutMs: 10_000}).catch(() => undefined);
+    if (l.pid && isAlive(l.pid)) {
+      try {
+        process.kill(l.pid);
+      } catch {
+        // gone meanwhile
+      }
+    }
+    const end = Date.now() + 30_000;
+    while (Date.now() < end && ((l.pid && isAlive(l.pid)) || (!l.readOnly && avdLocked(l.avd)))) await new Promise(r => setTimeout(r, 500));
   }
 
   /** Shuts an emulator down and waits until adb no longer lists it (it takes ~20 s to save and exit). */
