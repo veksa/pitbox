@@ -180,6 +180,15 @@ describe('the android runner tree', () => {
     expect(kotlin).toMatch(/w\.getRoot\(PREFETCH\)/);
     expect(kotlin).toMatch(/n\.getChild\(i, CHILD_PREFETCH\)/);
   });
+
+  it('reads a node gone before the app answered an uninterruptible fetch as no node, not as a failed tree', () => {
+    const kotlin = fs.readFileSync('runners/android/src/main/kotlin/dev/pitbox/runner/Commands.kt', 'utf8');
+    // Debuggable builds (emulators) check the answer's list and throw on the single-node "no node" answer.
+    expect(kotlin).toMatch(/prefetched \{ w\.getRoot\(PREFETCH\) \}/);
+    expect(kotlin).toMatch(/prefetched \{ n\.getChild\(i, CHILD_PREFETCH\) \}/);
+    expect(kotlin).toMatch(/catch \(e: NullPointerException\) \{\s*if \(e\.stackTrace\.none \{ it\.methodName == "checkFindAccessibilityNodeInfoResultIntegrity" \}\) throw e\s*null/);
+    expect(kotlin).not.toMatch(/getChild\(i, CHILD_PREFETCH\)\)? \?: continue/);
+  });
 });
 
 describe('cli and engine agree', () => {

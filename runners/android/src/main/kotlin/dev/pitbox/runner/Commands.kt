@@ -84,7 +84,23 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
    * node and a tree takes longer than the host waits for it.
    */
   private fun rootOf(w: AccessibilityWindowInfo): AccessibilityNodeInfo? =
-    if (Build.VERSION.SDK_INT >= 33) w.getRoot(PREFETCH) else w.root
+    if (Build.VERSION.SDK_INT >= 33) prefetched { w.getRoot(PREFETCH) } else w.root
+
+  private fun childOf(n: AccessibilityNodeInfo, i: Int): AccessibilityNodeInfo? =
+    if (Build.VERSION.SDK_INT >= 33) prefetched { n.getChild(i, CHILD_PREFETCH) } else n.getChild(i)
+
+  /**
+   * A node that is gone by the time the app answers (a view detached mid-animation, a window closing) comes back
+   * as "no node" in the single-node form; an uninterruptible fetch reads the list form, and on debuggable builds
+   * (emulator images) the framework's integrity check then calls size() on the missing list and throws a
+   * NullPointerException. That answer means no node, as it does without the flag: null, and the walk goes on.
+   */
+  private inline fun prefetched(fetch: () -> AccessibilityNodeInfo?): AccessibilityNodeInfo? = try {
+    fetch()
+  } catch (e: NullPointerException) {
+    if (e.stackTrace.none { it.methodName == "checkFindAccessibilityNodeInfoResultIntegrity" }) throw e
+    null
+  }
 
   private companion object {
     val PREFETCH = AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID or AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS or AccessibilityNodeInfo.FLAG_PREFETCH_ANCESTORS or AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
@@ -160,7 +176,7 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
       }
     }
     for (i in 0 until n.childCount) {
-      val child = (if (Build.VERSION.SDK_INT >= 33) n.getChild(i, CHILD_PREFETCH) else n.getChild(i)) ?: continue
+      val child = childOf(n, i) ?: continue
       // A parent paints before its children; fixed-width parts keep the string order numeric.
       val z = if (Build.VERSION.SDK_INT >= 24) child.drawingOrder else 0
       walk(child, index, window, all, out, depth + 1, "$key${"%05d%05d".format(z, i)}", paint)
@@ -550,5 +566,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 19
+  const val VERSION = 20
 }

@@ -62,10 +62,11 @@ class RunnerInstrumentation : Instrumentation() {
         val line = reader.readLine() ?: break
         if (line.isBlank()) continue
         val reply = JSONObject()
+        var cmd = "?"
         try {
           val req = JSONObject(line)
           reply.put("id", req.opt("id"))
-          val cmd = req.getString("cmd")
+          cmd = req.getString("cmd")
           if (cmd == "shutdown") {
             running = false
             reply.put("ok", true)
@@ -78,6 +79,9 @@ class RunnerInstrumentation : Instrumentation() {
             for (key in result.keys()) reply.put(key, result.get(key))
           }
         } catch (e: Throwable) {
+          // The host gets one line; the stack goes to logcat (`app-logs --all --grep pitbox`). Not the request:
+          // it can carry text typed into a password field.
+          Log.w(TAG, "$cmd failed", e)
           reply.put("ok", false)
           reply.put("error", "${e.javaClass.simpleName}: ${e.message}")
         }
