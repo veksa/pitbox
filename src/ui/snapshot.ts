@@ -328,8 +328,11 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
   if (m) {
     const [, field, op, raw] = m;
     const v = lower(raw!.replace(/^["']|["']$/g, ''));
-    const get = (n: UiNode, i: number) => lower(field === 'id' ? n.id : field === 'text' ? quoted(n, i) : n.d);
-    match = op === '=' ? (n, i) => get(n, i) === v : (n, i) => get(n, i).includes(v);
+    const by = (get: (n: UiNode, i: number) => string) => (op === '=' ? (n: UiNode, i: number) => get(n, i) === v : (n: UiNode, i: number) => get(n, i).includes(v));
+    match = by((n, i) => lower(field === 'id' ? n.id : field === 'text' ? quoted(n, i) : n.d));
+    // An Apple runner reports an element's accessibility label as its text (a button or a static text has no
+    // separate description; its value goes to the label slot): `label=` finds it there when no label matches.
+    if (field === 'label' && !snap.nodes.some(match)) match = by(n => lower(n.t));
   } else {
     const v = lower(sel.replace(/^["']|["']$/g, ''));
     const exact = (n: UiNode, i: number) => lower(n.id) === v || lower(quoted(n, i)) === v || lower(n.d) === v;

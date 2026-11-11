@@ -65,7 +65,7 @@ Steps that act on the screen take a selector:
 |---|---|
 | `id=start` | the node with this id (a React Native `testID`, an Android resource id) |
 | `text=Get started` · `text~=Get` | exact text (case-insensitive) · text containing; the quoted string of a line, so a control with no text matches by its label |
-| `label=Close` · `label~=Clo` | accessibility label (content description), exact · containing |
+| `label=Close` · `label~=Clo` | accessibility label, exact · containing: the content description on Android; on iOS, where the label is what a line quotes as text (an element's value is shown as its label), it matches the text when no label does |
 | `Get started` | plain words: id, text or label, exact first, then containing |
 | `540,1200` | a point in screen pixels |
 | `@e12` | a ref from the last snapshot (interactive use; flows should not rely on refs) |

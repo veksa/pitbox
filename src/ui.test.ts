@@ -84,6 +84,20 @@ describe('snapshot', () => {
     expect(() => resolveTarget(snap, '@e99')).toThrow(/fresh one/);
   });
 
+  it('finds an iOS element by its accessibility label, which the Apple runner reports as its text', () => {
+    // A static text and a button as the Apple runner sends them: the label as `t`, a value as `d`.
+    const ios = buildSnapshot([{type: 'app', title: 'MyApp', pkg: 'com.example.app'}], [
+      {p: -1, w: 0, c: 'Other', b: [0, 0, 400, 800]},
+      {p: 0, w: 0, c: 'StaticText', b: [0, 100, 400, 140], t: 'A reel about my morning run'},
+      {p: 0, w: 0, c: 'Button', b: [0, 200, 400, 240], t: 'Volume', d: '50%', f: 'c'},
+    ]);
+    expect(resolveTarget(ios, 'label~=morning').node?.t).toBe('A reel about my morning run');
+    expect(resolveTarget(ios, 'label=volume').node?.t).toBe('Volume');
+    // A label that matches somewhere is not widened to text.
+    expect(resolveTarget(ios, 'label~=50').node?.t).toBe('Volume');
+    expect(() => resolveTarget(ios, 'label~=nowhere')).toThrow(/nothing matches/);
+  });
+
   it('prefers the button of an alert on top to the row behind it with the same text', () => {
     const w: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}, {type: 'app', title: '', pkg: 'com.apple.springboard'}];
     const alert = buildSnapshot(w, [
