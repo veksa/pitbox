@@ -2,7 +2,7 @@
 // No AndroidX — the APK stays small and installs in a second.
 
 plugins {
-  id("com.android.application") version "9.2.1"
+  id("com.android.application") version "9.5.1"
 }
 
 android {
