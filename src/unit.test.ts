@@ -7,6 +7,7 @@ import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
 import {instrumentCommand} from './drivers/android/runner.ts';
+import {shownPath} from './format.ts';
 import {parseProbe, probePort} from './stand/health.ts';
 import {pickReply} from './stand/llmMock.ts';
 import {orderServices, restartOrder, stopOrder} from './stand/services.ts';
@@ -480,6 +481,13 @@ describe('the device list', () => {
   it('says why there are no simulators when they cannot be read', async () => {
     const {formatResult} = await import('./format.ts');
     expect(formatResult('devices', {devices: [], avds: [], simulators: [], simulatorsError: 'the Mac at http://mac.example.test:7700 refused the token'})).toBe('no devices online\n✗ simulators: the Mac at http://mac.example.test:7700 refused the token');
+  });
+});
+
+describe('paths in answers', () => {
+  it('shows a path under the project with forward slashes, on Windows too', () => {
+    expect(shownPath('/p', '/p/.pitbox/downloads/demo/a.pdf', path.posix)).toBe('.pitbox/downloads/demo/a.pdf');
+    expect(shownPath('C:\\work\\p', 'C:\\work\\p\\.pitbox\\downloads\\demo', path.win32)).toBe('.pitbox/downloads/demo');
   });
 });
 

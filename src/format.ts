@@ -20,6 +20,9 @@ import type {WebDownload} from './drivers/web/runner.ts';
 
 const mark: Record<string, string> = {up: '✓', external: '✓', starting: '…', stopped: '·', down: '✗', failed: '✗'};
 
+/** A path under the project as an answer shows it: relative, with `/` on every host (Windows takes it too). */
+export const shownPath = (root: string, file: string, p: typeof path.posix = path): string => p.relative(root, file).split(p.sep).join('/');
+
 export const fmtServices = (services: ServiceState[]): string[] => {
   const width = Math.max(4, ...services.map(s => s.name.length));
   return services.map(s => {
@@ -524,7 +527,7 @@ export const formatResult = (method: string, r: unknown): string => {
       return (x.packages as string[]).join('\n') || 'no third-party packages';
     case 'downloads': {
       const list = x.downloads as WebDownload[];
-      const rel = (f: string) => (x.root ? path.relative(x.root as string, f) : f);
+      const rel = (f: string) => (x.root ? shownPath(x.root as string, f) : f);
       if (!list.length) return `no downloads on ${x.serial} yet (they are saved to ${rel(x.dir as string)})`;
       const size = (b: number) => (b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
       const line = (d: WebDownload) =>
