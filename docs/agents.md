@@ -156,9 +156,11 @@ can mix devices — `device web:admin` … `device Pixel_8` — to act in a pane
 - **A phone in the browser.** `settings emulate="iPhone 15"` (any Playwright device; or `size=390x844 density=3
   touch=true mobile=true`, `userAgent`, `dark`, `locale`) switches the page to that screen and input in place: a new
   browser context with the same cookies and storage, so a login stays, and the same page reloaded.
-  `emulate=reset` goes back to the config's. With touch on, `press`, `press kind=longpress` (a real long press:
-  `contextmenu` and the long-press gesture), `doubletap`, `swipe` (a finger drag: the page scrolls, swipe handlers
-  fire) and `touch down|move|up` send touch events instead of the mouse.
+  `emulate=reset` goes back to the config's. With touch on, `press`, `press kind=longpress` (a held finger; on a
+  Mac also the browser's long-press gesture with `contextmenu` — Chromium on Linux and Windows makes no gesture of
+  a synthesized touch, so there the page's own long-press handlers fire and `contextmenu` does not), `doubletap`,
+  `swipe` (a finger drag: the page scrolls, swipe handlers fire) and `touch down|move|up` send touch events instead
+  of the mouse.
 - **Downloads.** `app action=downloads` lists the files the page downloaded (name, size, type, path under
   `.pitbox/downloads/<app>/`; a repeated name gets `-2`); `timeout=10` waits for a new one — one no earlier answer
   showed — so `press` the button, then `app action=downloads timeout=10`. `grep` filters by name.

@@ -698,7 +698,8 @@ export class WebRunner {
           return {};
         }
         // A held finger as the browser's gesture detector sees it: raw touch events alone never make a long press
-        // (no contextmenu, no long-press gesture); a synthesized one does, with its touch events.
+        // (no contextmenu, no long-press gesture); a synthesized one does, with its touch events — on macOS. Chromium
+        // on Linux and Windows derives no gesture from it: the page gets the held finger and no contextmenu.
         if (touch) {
           await touch.send('Input.synthesizeTapGesture', {x: n('x'), y: n('y'), duration: hold, tapCount: 1, gestureSourceType: 'touch'});
           return {};

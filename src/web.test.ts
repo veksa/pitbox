@@ -277,8 +277,13 @@ describe('web emulation', () => {
     await ui.press('id=pad');
     expect(await inPage('seen.join(" ")')).toBe('"touchstart touchend mousedown click"');
     await inPage('seen.length = 0');
+    const held = Date.now();
     await ui.press('id=pad', 'longpress');
-    expect(await inPage('seen.join(" ")')).toMatch(/^"touchstart contextmenu touchend/);
+    expect(Date.now() - held).toBeGreaterThanOrEqual(800);
+    // Chromium makes a long-press gesture (contextmenu, text selection) of a synthesized touch on macOS only; on
+    // Linux and Windows the page gets the held finger and no gesture.
+    if (process.platform === 'darwin') expect(await inPage('seen.join(" ")')).toMatch(/^"touchstart contextmenu touchend/);
+    else expect(await inPage('seen.join(" ")')).toBe('"touchstart touchend"');
     await ui.swipe('up');
     expect(Number(await inPage('scrollY'))).toBeGreaterThan(100);
     await inPage('scrollTo(0, 0); seen.length = 0');
