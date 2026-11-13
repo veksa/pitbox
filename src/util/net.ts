@@ -28,16 +28,25 @@ export const assertPortFree = async (port: number): Promise<void> => {
   if (port && (await portAnswers(port))) throw Object.assign(new Error(`listen EADDRINUSE: port ${port} already answers`), {code: 'EADDRINUSE'});
 };
 
-/** The process listening on a TCP port and its working folder, where the system can tell (lsof). */
-export const portListener = async (port: number): Promise<{pid: number; cwd?: string} | undefined> => {
-  if (process.platform === 'win32') return undefined;
+/**
+ * Every process listening on a TCP port, each with its working folder where the system can tell (lsof): a server bound
+ * twice (`::` and 127.0.0.1) by two processes shows both. Empty where the system cannot name them (Windows, no lsof).
+ */
+export const portListeners = async (port: number): Promise<{pid: number; cwd?: string}[]> => {
+  if (process.platform === 'win32') return [];
   const r = await run('lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], {timeoutMs: 10_000});
-  const pid = Number(r.stdout.split('\n')[0]?.trim());
-  if (!Number.isInteger(pid) || pid <= 0) return undefined;
-  const c = await run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {timeoutMs: 10_000});
-  const cwd = c.stdout.split('\n').find(l => l.startsWith('n'))?.slice(1);
-  return {pid, cwd: cwd ? realOrSame(cwd) : undefined};
+  const pids = [...new Set(r.stdout.split('\n').map(l => Number(l.trim())))].filter(pid => Number.isInteger(pid) && pid > 0);
+  return Promise.all(
+    pids.map(async pid => {
+      const c = await run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {timeoutMs: 10_000});
+      const cwd = c.stdout.split('\n').find(l => l.startsWith('n'))?.slice(1);
+      return {pid, cwd: cwd ? realOrSame(cwd) : undefined};
+    }),
+  );
 };
+
+/** The (first) process listening on a TCP port and its working folder, where the system can tell (lsof). */
+export const portListener = async (port: number): Promise<{pid: number; cwd?: string} | undefined> => (await portListeners(port))[0];
 
 const realOrSame = (p: string) => {
   try {

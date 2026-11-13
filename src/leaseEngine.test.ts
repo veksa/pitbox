@@ -8,7 +8,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {Engine} from './daemon/engine.ts';
+import {bundlerProbe, Engine} from './daemon/engine.ts';
 import {AndroidDriver, avdDir, avdLocked, avdStamp, avdTaken, createAvdLike, deleteAvd, insideFolder, killTree, lockPid, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
 import {avdHome} from './drivers/android/sdk.ts';
 import type {Simulator} from './drivers/apple/driver.ts';
@@ -482,6 +482,53 @@ describe("another stand's bundler", () => {
       await stop(theirs);
     }
   }, 60_000);
+
+  describe('with every listener of the port named', () => {
+    const realListeners = bundlerProbe.listeners;
+    afterEach(() => (bundlerProbe.listeners = realListeners));
+    /** A repository with the project in `app/` and another folder of it beside. */
+    const repo = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-repo-'));
+      dirs.push(dir);
+      fs.mkdirSync(path.join(dir, '.git'));
+      fs.mkdirSync(path.join(dir, 'app'));
+      fs.mkdirSync(path.join(dir, 'tools'));
+      return dir;
+    };
+    /** Brings the dev server up beside a bundler stand-in run in `cwd`; `owners`, when given, is who lsof names. */
+    const up = async (root: string, cwd: string, owners?: {pid: number; cwd?: string}[]) => {
+      const [port, internalPort] = [await freePort(), await freePort()];
+      const file = path.join(root, 'app', 'pitbox.config.json');
+      fs.writeFileSync(file, JSON.stringify({devserver: {adapter: 'command', start: 'node -e "setInterval(() => {}, 1000)"', port, internalPort}}));
+      const e = await Engine.create(file, undefined, {android: null, apple: null});
+      if (owners) bundlerProbe.listeners = async () => owners;
+      const child = await listen(internalPort, cwd);
+      try {
+        const r = (await e.methods.up({services: ['devserver']})) as {services: {name: string; status: string; detail?: string}[]};
+        const dev = r.services.find(s => s.name === 'devserver')!;
+        if (dev.status === 'external') await e.methods.down({});
+        return dev;
+      } finally {
+        await stop(child);
+      }
+    };
+
+    it("adopts a bundler run anywhere in the project's repository, as services do", async () => {
+      const root = repo();
+      expect((await up(root, path.join(root, 'tools'))).status).toBe('external');
+    }, 60_000);
+
+    it("is foreign when any of several listeners is not the project's, and adopted where none can be named", async () => {
+      const root = repo();
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-other-'));
+      dirs.push(elsewhere);
+      const dev = await up(root, path.join(root, 'app'), [{pid: 4242, cwd: path.join(root, 'app')}, {pid: 4343, cwd: elsewhere}]);
+      expect(dev.status).toBe('failed');
+      expect(dev.detail).toMatch(/is taken by pid 4343 in /);
+      const other = repo();
+      expect((await up(other, path.join(other, 'app'), [])).status).toBe('external');
+    }, 60_000);
+  });
 
   it("is adopted when it runs in the dev server's own folder", async () => {
     const [port, internalPort] = [await freePort(), await freePort()];

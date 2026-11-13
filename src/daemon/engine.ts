@@ -25,7 +25,7 @@ import {LlmMock} from '../stand/llmMock.ts';
 import {PushCenter, type TapExpect} from '../push/push.ts';
 import {PushGateway} from '../push/gateway.ts';
 import {fromPayloadFile} from '../push/payload.ts';
-import {ServiceManager, type ServiceState} from '../stand/services.ts';
+import {projectRoot, ServiceManager, type ServiceState} from '../stand/services.ts';
 import {describeTool, runTool, toolDevicePlaceholders} from '../stand/tools.ts';
 import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
@@ -37,7 +37,7 @@ import {parseWidget, widget} from '../ui/widget.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
-import {httpAlive, portAnswers, portListener, withinFolder} from '../util/net.ts';
+import {httpAlive, portAnswers, portListeners, withinFolder} from '../util/net.ts';
 import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, listLeases, machineLock, refusal, staleReason, type Lease} from '../lease/lease.ts';
@@ -78,6 +78,9 @@ const APPLE_HAS_NO = {
   wear: 'wear is for Wear OS: on an Apple Watch use rotary for the crown',
   window: 'window is for Android: Apple simulators have no desktop windows',
 } as const;
+
+/** Who listens on the bundler's port (util/net.ts `portListeners`); tests stand in for it. */
+export const bundlerProbe = {listeners: portListeners};
 
 export class Engine {
   #loaded: LoadedConfig;
@@ -258,8 +261,10 @@ export class Engine {
 
   /**
    * Why the bundler's port is not this stand's to use: something this daemon did not start answers there, from
-   * outside the dev server's folder — another stand's bundler or proxy. Adopted as this stand's, its bundle
-   * would reach this stand's devices. A bundler started by hand in the dev server's folder is still adopted.
+   * outside the dev server's folder and this project's repository (the rule services follow) — another stand's
+   * bundler or proxy. Adopted as this stand's, its bundle would reach this stand's devices. A bundler started by hand
+   * in the project is still adopted. Every listener counts (a server bound on `::` and 127.0.0.1 by two processes):
+   * adopted only when each is this project's, foreign when any is not.
    */
   async #foreignBundler(): Promise<string | undefined> {
     const dev = this.#dev;
@@ -267,11 +272,13 @@ export class Engine {
     const st = (await this.services.status()).find(s => s.name === DEVSERVER);
     if (st?.status === 'up' || st?.status === 'starting') return undefined;
     if (!(await portAnswers(dev.internalPort))) return undefined;
-    const owner = await portListener(dev.internalPort);
+    const owners = await bundlerProbe.listeners(dev.internalPort);
     // Where the system cannot name the listener (Windows has no lsof), it is adopted as before: refusing every
     // bundler started by hand would be the worse mistake.
+    if (!owners.length) return undefined;
+    const repo = projectRoot(this.#loaded.root);
+    const owner = owners.find(o => !(o.cwd && (withinFolder(o.cwd, dev.root) || withinFolder(o.cwd, repo))));
     if (!owner) return undefined;
-    if (owner.cwd && withinFolder(owner.cwd, dev.root)) return undefined;
     const who = `pid ${owner.pid}${owner.cwd ? ` in ${owner.cwd}` : ''}`;
     return `port ${dev.internalPort}, the bundler's, is taken by ${who}: another stand's bundler or proxy, whose bundle would reach this stand's devices\nhint: give this stand ports of its own (devserver.port, devserver.internalPort)`;
   }
