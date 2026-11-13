@@ -6,7 +6,7 @@ import {run, which} from '../util/proc.ts';
 import {tcpOpen} from '../util/net.ts';
 import {probePort} from '../stand/health.ts';
 import {IDLE_MS, UNVERSIONED} from '../daemon/activity.ts';
-import type {Finding, Rule} from './types.ts';
+import type {DoctorContext, Finding, Rule} from './types.ts';
 import {allowCleartextInDebug, cleartextOf, detectProject} from '../init/project.ts';
 
 /** Who listens on a TCP port: `pid name`, best effort. */
@@ -26,6 +26,13 @@ export const portOwner = async (port: number): Promise<string | undefined> => {
   const [name, pid] = line.split(/\s+/);
   return `pid ${pid} ${name}`;
 };
+
+/**
+ * The online devices doctor looks at: not one another session holds, which has its own stand, forwards and
+ * settings — a fix here would reset its display, move its forwards or dismiss its dialogs.
+ */
+const ownDevices = async (ctx: DoctorContext) =>
+  (await ctx.android!.devices()).filter(x => x.state === 'device' && !ctx.othersHold?.(x.serial, x.instance));
 
 const adbAvailable: Rule = {
   id: 'adb',
@@ -116,7 +123,7 @@ const reversePorts: Rule = {
     if (!ctx.android || !ctx.exposedPorts.length) return [];
     const findings: Finding[] = [];
     const relayed = new Set((await ctx.forwardHealth?.())?.filter(h => h.via === 'relay').map(h => h.serial));
-    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+    for (const d of await ownDevices(ctx)) {
       // Devices on the runner relay have no adb forwards on purpose.
       if (relayed.has(d.serial)) continue;
       const have = await ctx.android.reverseList(d.serial);
@@ -192,7 +199,7 @@ const leftoverDisplay: Rule = {
   check: async ctx => {
     if (!ctx.android) return [];
     const findings: Finding[] = [];
-    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+    for (const d of await ownDevices(ctx)) {
       const out = await ctx.android.shell(d.serial, 'settings get system font_scale; wm size; wm density').catch(() => '');
       const scale = Number(out.split('\n')[0]);
       const sizeOverride = /Override size:/.test(out);
@@ -222,7 +229,7 @@ const releaseBuild: Rule = {
     const pkg = ctx.config.app?.android;
     if (!ctx.android || !pkg || !ctx.config.devserver) return [];
     const findings: Finding[] = [];
-    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+    for (const d of await ownDevices(ctx)) {
       const out = await ctx.android.shell(d.serial, `dumpsys package ${pkg} | grep -m1 "pkgFlags"`).catch(() => '');
       if (out && !/DEBUGGABLE/.test(out)) {
         findings.push({rule: 'app-debuggable', severity: 'warn', message: `${d.avd ?? d.serial}: ${pkg} is a release build — it runs its embedded bundle and never talks to the dev server`, hint: 'install a debug build to iterate (fresh will say no app is connected)'});
@@ -239,7 +246,7 @@ const animations: Rule = {
   check: async ctx => {
     if (!ctx.android) return [];
     const findings: Finding[] = [];
-    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+    for (const d of await ownDevices(ctx)) {
       const v = (await ctx.android.shell(d.serial, 'settings get global animator_duration_scale').catch(() => '')).trim();
       if (v && v !== '0' && v !== '0.0') {
         const shown = v === 'null' ? 'default (1)' : v;
@@ -292,7 +299,7 @@ const dataPartition: Rule = {
   check: async ctx => {
     if (!ctx.android) return [];
     const findings: Finding[] = [];
-    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+    for (const d of await ownDevices(ctx)) {
       const info = await ctx.android.info(d.serial).catch(() => undefined);
       const free = Number(info?.freeDataMb);
       if (Number.isFinite(free) && free > 0 && free < 600) {
@@ -341,7 +348,7 @@ const deviceLocked: Rule = {
   check: async ctx => {
     if (!ctx.android) return [];
     const findings: Finding[] = [];
-    for (const d of (await ctx.android.devices()).filter(x => x.state === 'device')) {
+    for (const d of await ownDevices(ctx)) {
       if (await ctx.android.userLocked(d.serial)) {
         findings.push({rule: 'device-locked', severity: 'error', message: `${d.avd ?? d.serial}: locked after boot — no app can start until the screen lock is entered`, hint: 'unlock it once, or remove the screen lock in Settings → Security (an AVD for tests is better without one)'});
       }

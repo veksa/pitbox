@@ -125,6 +125,25 @@ describe('doctor services rule', () => {
   });
 });
 
+describe('doctor device rules', () => {
+  it('neither checks nor fixes a device another session holds', async () => {
+    const reversed: string[] = [];
+    const android = {
+      devices: async () => [
+        {serial: 'emulator-5554', state: 'device', avd: 'Theirs', emulator: true},
+        {serial: 'emulator-5556', state: 'device', avd: 'Mine', emulator: true},
+      ],
+      reverseList: async () => [],
+      reverse: async (serial: string) => (reversed.push(serial), [4100]),
+    };
+    const rule = builtinRules.find(r => r.id === 'reverse-ports')!;
+    const findings = await rule.check({root: dir, config: {}, exposedPorts: [4100], android, othersHold: serial => serial === 'emulator-5554'} as unknown as DoctorContext);
+    expect(findings.map(f => f.message)).toEqual(['Mine: ports not forwarded: 4100']);
+    await findings[0]!.fix!();
+    expect(reversed).toEqual(['emulator-5556']);
+  });
+});
+
 describe('actors', () => {
   it('starts an instance on a free port and relays a call', async () => {
     const script = path.join(dir, 'actor.cjs');

@@ -1061,13 +1061,19 @@ export class Engine {
     return true;
   }
 
-  /** Forwarding state per device, for doctor and status. */
+  /** Whether another session holds the device: its forwards, settings and dialogs are that session's. */
+  #othersHold(platform: 'android' | 'apple', id: string, instance?: string): boolean {
+    const h = this.#leases.holderOf(platform, id, instance);
+    return !!h && !h.mine;
+  }
+
+  /** Forwarding state per device this session may touch, for doctor and status. */
   async forwardHealth(): Promise<{serial: string; via: 'reverse' | 'relay'; carries: boolean}[]> {
     const android = this.android;
     if (!android) return [];
     const ports = exposedPorts(this.config);
     const out: {serial: string; via: 'reverse' | 'relay'; carries: boolean}[] = [];
-    for (const d of (await android.devices()).filter(x => x.state === 'device')) {
+    for (const d of (await android.devices()).filter(x => x.state === 'device' && !this.#othersHold('android', x.serial, x.instance))) {
       out.push({serial: d.serial, via: this.#relayed.has(d.serial) ? 'relay' : 'reverse', carries: await this.#forwardCarries(d.serial, ports)});
     }
     return out;
@@ -2196,11 +2202,12 @@ export class Engine {
       const extra = await loadProjectRules(this.#loaded.root, this.config.doctor);
       return runDoctor(
         {root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config), forwardHealth: () => this.forwardHealth(),
+          othersHold: (serial, instance) => this.#othersHold('android', serial, instance),
           useRelay: serial => this.useRelay(serial),
           systemDialogs: async () => {
             const out: {serial: string; title: string}[] = [];
             for (const d of (await this.android?.devices().catch(() => [])) ?? []) {
-              if (d.state !== 'device') continue;
+              if (d.state !== 'device' || this.#othersHold('android', d.serial, d.instance)) continue;
               const ui = await this.ui(d.serial);
               const title = ui.systemDialog(await ui.snapshot({system: true}));
               if (title) out.push({serial: d.serial, title});
