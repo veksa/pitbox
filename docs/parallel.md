@@ -117,6 +117,13 @@ left to each agent's discipline.
 - **One version per project.** Sessions of one project share its daemon. A session with another pitbox version
   replaces the daemon only when it is newer and the daemon is idle; otherwise it uses the daemon as it is and says
   so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
+- **One daemon per config.** `.pitbox/daemon.json` names one daemon; a second one for the same config (started by
+  hand, by an older pitbox, by a client without the start lock) would overwrite it and leave the first running
+  unreachable. So a daemon that starts looks at the process list (`node …/daemon/main.js --config <file>`): it
+  refuses while the daemon in the file answers, and otherwise stops the other daemons of its config with SIGTERM
+  first (their services and device leases stay with the project, and it adopts the leases). `pitbox daemon status`
+  names an unreachable daemon of the config (and exits 1); `daemon stop` and `restart` stop those too, before the
+  daemon in the file, which then gives their devices back with its own. On Windows the process list is not read.
 - **Project tools run on the session's device.** A tool's `{apple_device}` / `{android_device}` is the udid or
   serial of the device this session holds on that platform ([config.md](config.md#tools)); with none, or several,
   the tool is refused rather than pointed at `booted` or the only device adb sees.
