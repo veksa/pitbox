@@ -8,6 +8,7 @@ import path from 'node:path';
 import {Engine} from './engine.ts';
 import {daemonAnswers, resolveProject} from './client.ts';
 import {takeOver} from './siblings.ts';
+import {withLockAsync} from '../lease/lease.ts';
 import {IDLE_MS} from './activity.ts';
 import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
 
@@ -18,11 +19,12 @@ export {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo};
 
 
 /**
- * One daemon per config: refused while the daemon in the daemon file answers; the other daemons of the config —
- * unreachable, their file overwritten — are stopped first, so this one adopts their device leases (siblings.ts).
+ * One daemon per config: refused while the daemon in the daemon file answers; the other daemons of the config that
+ * have run past their start — unreachable, their file overwritten — are stopped first, so this one adopts their device
+ * leases (siblings.ts). Runs under the config's start lock (serve), so two daemons starting at once never judge each
+ * other unreachable: the second waits, then finds the first answering.
  */
-const onlyDaemon = async (configFile?: string) => {
-  const {file, stateDir} = resolveProject({config: configFile});
+const onlyDaemon = async (file: string, stateDir: string) => {
   let listed: DaemonInfo | undefined;
   try {
     listed = JSON.parse(fs.readFileSync(daemonFile(stateDir), 'utf8')) as DaemonInfo;
@@ -35,10 +37,22 @@ const onlyDaemon = async (configFile?: string) => {
   const stamp = new Date().toISOString();
   if (r.stopped.length) process.stderr.write(`${stamp} stopped ${r.stopped.length} other daemon${r.stopped.length > 1 ? 's' : ''} of this config nobody could reach: pid ${r.stopped.join(', ')}\n`);
   if (r.left.length) process.stderr.write(`${stamp} another daemon of this config did not stop on SIGTERM: pid ${r.left.join(', ')}\n`);
+  if (r.starting.length) process.stderr.write(`${stamp} another daemon of this config is still starting, left alone: pid ${r.starting.join(', ')}\n`);
 };
 
+/** How long a daemon waits for another one of its config to finish starting before it gives up. */
+const START_LOCK_WAIT_MS = 90_000;
+
 export const serve = async (configFile?: string) => {
-  await onlyDaemon(configFile);
+  const project = resolveProject({config: configFile});
+  fs.mkdirSync(project.stateDir, {recursive: true});
+  // From the check for other daemons until this one's daemon file is written, one start of the config at a time.
+  // Not the clients' `daemon` lock: a client holds that while it waits for the daemon it spawned to answer.
+  await withLockAsync(path.join(project.stateDir, 'daemon-start'), () => start(configFile, project), START_LOCK_WAIT_MS);
+};
+
+const start = async (configFile: string | undefined, project: {file: string; stateDir: string}) => {
+  await onlyDaemon(project.file, project.stateDir);
   const engine = await Engine.create(configFile);
   const {stateDir, root, file} = engine.loaded;
   fs.mkdirSync(stateDir, {recursive: true});
