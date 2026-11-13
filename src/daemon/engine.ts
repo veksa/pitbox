@@ -268,8 +268,11 @@ export class Engine {
     if (st?.status === 'up' || st?.status === 'starting') return undefined;
     if (!(await portAnswers(dev.internalPort))) return undefined;
     const owner = await portListener(dev.internalPort);
-    if (owner?.cwd && withinFolder(owner.cwd, dev.root)) return undefined;
-    const who = owner ? `pid ${owner.pid}${owner.cwd ? ` in ${owner.cwd}` : ''}` : 'another process';
+    // Where the system cannot name the listener (Windows has no lsof), it is adopted as before: refusing every
+    // bundler started by hand would be the worse mistake.
+    if (!owner) return undefined;
+    if (owner.cwd && withinFolder(owner.cwd, dev.root)) return undefined;
+    const who = `pid ${owner.pid}${owner.cwd ? ` in ${owner.cwd}` : ''}`;
     return `port ${dev.internalPort}, the bundler's, is taken by ${who}: another stand's bundler or proxy, whose bundle would reach this stand's devices\nhint: give this stand ports of its own (devserver.port, devserver.internalPort)`;
   }
 

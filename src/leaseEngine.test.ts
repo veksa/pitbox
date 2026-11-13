@@ -393,7 +393,8 @@ describe("another stand's bundler", () => {
     return new Promise<typeof child>(resolve => child.stdout.once('data', () => resolve(child)));
   };
 
-  it('is not adopted: the dev server fails with its pid, and the proxy is not started', async () => {
+  // Windows cannot name a port's listener, so there it is adopted as before.
+  it.skipIf(process.platform === 'win32')('is not adopted: the dev server fails with its pid, and the proxy is not started', async () => {
     const [port, internalPort] = [await freePort(), await freePort()];
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-other-'));
     dirs.push(elsewhere);

@@ -16,7 +16,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-dev-'));
 
 describe('ports', () => {
   it("refuses a port another process serves on the wildcard address, which a loopback bind would quietly steal", async () => {
-    const other = net.createServer(s => s.end('theirs'));
+    // The probe drops the connection at once, so writing back resets: the error is expected, not a failure.
+    const other = net.createServer(s => s.on('error', () => {}).end('theirs'));
     await new Promise<void>(r => other.listen(0, '::', () => r()));
     const port = (other.address() as net.AddressInfo).port;
     try {
