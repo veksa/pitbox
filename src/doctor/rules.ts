@@ -10,6 +10,8 @@ import {asArray, type PitboxConfig} from '../config/schema.ts';
 import {IDLE_MS, UNVERSIONED} from '../daemon/activity.ts';
 import type {DoctorContext, Finding, Rule} from './types.ts';
 import {allowCleartextInDebug, cleartextOf, detectProject} from '../init/project.ts';
+import {listLeases} from '../lease/lease.ts';
+import {leaseWarnings} from '../lease/reap.ts';
 
 /** Who listens on a TCP port: `pid name`, best effort. */
 export const portOwner = async (port: number): Promise<string | undefined> => {
@@ -523,4 +525,20 @@ const portBlock: Rule = {
   },
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock];
+/**
+ * Device leases on this machine that cost memory without anyone using them: a device pitbox booted for a session whose
+ * lease ended, waiting out its grace before it is shut down, and a holder with several devices of one platform.
+ */
+export const deviceLeases: Rule = {
+  id: 'device-leases',
+  title: 'every running device pitbox booted has a session using it',
+  check: async () =>
+    leaseWarnings(listLeases()).map(message => ({
+      rule: 'device-leases',
+      severity: 'warn' as const,
+      message,
+      hint: 'a restarted session takes its device again with `device boot` (same project, same PITBOX_SESSION); `pitbox lease list` shows every lease',
+    })),
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock, deviceLeases];
