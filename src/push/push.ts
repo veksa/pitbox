@@ -9,8 +9,12 @@ import path from 'node:path';
 import type {AndroidDriver} from '../drivers/android/driver.ts';
 import type {AppleDevices} from '../remote/appleRemote.ts';
 import type {ActResult, DeviceUi} from '../ui/device.ts';
-import {appState, assertPackage, callReceiver, grantNotifications, missingReceiver, notifications, notificationsAllowed, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
+import {appState, assertPackage, callReceiver, grantNotifications, homePackage, missingReceiver, notifications, notificationsAllowed, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
 import {describe, toApns, toFcmExtras, toMessage, type PushInput, type PushMessage} from './payload.ts';
+
+/** What a notification's tap must bring to the front: the app, another app (a web page in the browser), or either. */
+export const TAP_EXPECT = ['app', 'away', 'any'] as const;
+export type TapExpect = (typeof TAP_EXPECT)[number];
 
 export type PushTarget = {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices};
 
@@ -261,13 +265,19 @@ export class PushCenter {
     return {seen: false, front};
   }
 
-  /** Taps the app's latest notification (Android: in the shade; iOS: its banner or Notification Center). */
-  async tap(opts: {device?: string; app?: string; title?: string}): Promise<{device: string; app: string; tapped: string; state?: AppState; act?: ActResult; screen?: string[]; note?: string; ok?: boolean}> {
+  /**
+   * Taps the app's latest notification (Android: in the shade; iOS: its banner or Notification Center). `expect`: what
+   * the tap must bring to the front — the app (default), another app (`away`: a notification that opens a web page in
+   * the browser, or another app's screen), or either (`any`).
+   */
+  async tap(opts: {device?: string; app?: string; title?: string; expect?: TapExpect}): Promise<{device: string; app: string; tapped: string; state?: AppState; front?: string; act?: ActResult; screen?: string[]; note?: string; ok?: boolean}> {
+    const expect = opts.expect ?? 'app';
+    if (!TAP_EXPECT.includes(expect)) throw new Error(`expect must be ${TAP_EXPECT.join(', ')}, not "${expect}"`);
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
     const ui = await this.#deps.ui(t.id);
     let title = opts.title;
-    if (t.platform === 'android') return this.#tapAndroid(t.a, t.id, app, ui, title);
+    if (t.platform === 'android') return this.#tapAndroid(t.a, t.id, app, ui, title, expect);
     if (!title) {
       const last = [...this.log].reverse().find(r => r.platform === 'apple' && r.device === t.id && r.ok && r.title);
       title = last?.title;
@@ -286,10 +296,12 @@ export class PushCenter {
     if (!tapped) throw new Error(`no notification "${title}" on screen or in Notification Center`);
     // Notification Center answers a tap in steps: a stack of the app's notifications spreads out, then a
     // notification shows its "Open" action, which opens the app.
+    // Another app in front: not the app, not SpringBoard (its banners and Notification Center).
+    const away = (front?: string) => !!front && front !== app && front !== 'com.apple.springboard';
     for (let i = 0; i < 3; i++) {
       await sleep(900);
       const r = await ui.runner.call<{front?: string}>('banners').catch(() => ({}) as {front?: string});
-      if (r.front === app) break;
+      if (r.front === app || (expect !== 'app' && away(r.front))) break;
       const snap = await ui.snapshot();
       const open = snap.nodes.findIndex(n => n.id === 'swipe-action-button-identifier');
       const ref = open >= 0 ? snap.refOf.get(open) : undefined;
@@ -299,8 +311,13 @@ export class PushCenter {
     const front = (await ui.runner.call<{front?: string}>('banners').catch(() => ({}) as {front?: string})).front;
     const state: AppState | undefined = front === undefined ? undefined : front === app ? 'foreground' : 'background';
     const snap = await ui.snapshot();
-    const note = state === 'background' ? `the notification was tapped, but ${front} is in front, not the app` : undefined;
-    return {device: t.id, app, tapped: title, state, screen: snap.lines.slice(0, 12), note, ok: state !== 'background'};
+    const ok = expect === 'away' ? away(front) : state !== 'background' || (expect === 'any' && away(front));
+    const note = ok
+      ? undefined
+      : expect === 'away'
+        ? `the notification was tapped, but no other app came to the front (${front === app ? 'the app is in front' : front ? `${front} is in front` : 'the front app is unknown'})`
+        : `the notification was tapped, but ${front} is in front, not the app${expect === 'app' ? ' (expect=away for a tap that leaves the app)' : ''}`;
+    return {device: t.id, app, tapped: title, state, ...(expect !== 'app' && away(front) && {front}), screen: snap.lines.slice(0, 12), note, ok};
   }
 
   /**
@@ -310,7 +327,7 @@ export class PushCenter {
    * through accessibility once more. Without a title: the latest one pitbox delivered that is still posted, else the
    * app's latest.
    */
-  async #tapAndroid(a: AndroidDriver, serial: string, app: string, ui: DeviceUi, given?: string) {
+  async #tapAndroid(a: AndroidDriver, serial: string, app: string, ui: DeviceUi, given: string | undefined, expect: TapExpect) {
     const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
     const posted = (await notifications(a, serial)).filter(n => !n.summary);
     const mine = posted.filter(n => n.pkg === app).sort((x, y) => y.updated - x.updated);
@@ -349,13 +366,17 @@ export class PushCenter {
       throw new Error(`no notification "${title}" of ${app} in the shade${seen.length ? ` (it shows: ${seen.map(x => JSON.stringify(x)).join(', ')})` : ''}`);
     }
     const centre = (b: number[]) => ({x: Math.round((b[0]! + b[2]!) / 2), y: Math.round((b[1]! + b[3]!) / 2)});
-    /** Opened: the app in front and the row off the screen; unknown when the last screen read failed. */
+    // Another app in front: not the app, not System UI's shade, not the home screen a tap that did nothing leaves.
+    const home = expect === 'app' ? undefined : await homePackage(a, serial);
+    const away = (front?: string) => !!front && front !== app && front !== 'com.android.systemui' && front !== home;
+    /** Opened: the app in front and the row off the screen (or, as expected, another app in front); unknown when the last screen read failed. */
     const opened = async (): Promise<'yes' | 'no' | 'unknown'> => {
       let last: 'no' | 'unknown' = 'no';
       for (const deadline = Date.now() + 4000; Date.now() < deadline; ) {
         await sleep(400);
-        const {state} = await appState(a, serial, app);
-        if (state !== 'foreground') {
+        const {state, front} = await appState(a, serial, app);
+        if (expect !== 'app' && away(front)) return 'yes';
+        if (state !== 'foreground' || expect === 'away') {
           last = 'no';
           continue;
         }
@@ -379,17 +400,19 @@ export class PushCenter {
       }
     }
     ui.screenChanged();
-    const {state} = await appState(a, serial, app);
+    const {state, front} = await appState(a, serial, app);
     const ok = outcome === 'yes';
     if (!ok) {
       await a.shell(serial, 'cmd statusbar collapse').catch(() => '');
       note =
         outcome === 'unknown'
           ? 'the notification was tapped and the app is in front, but the screen could not be read to confirm the notification left the shade'
-          : `the notification was tapped, but ${state === 'foreground' ? 'it stayed in the shade' : `the app did not come to the front (${state})`}: its tap opens nothing in the app, or opens another app`;
+          : expect === 'away'
+            ? `the notification was tapped, but no other app came to the front (${state === 'foreground' ? 'the app is in front' : `the app is ${state}`})`
+            : `the notification was tapped, but ${state === 'foreground' ? 'it stayed in the shade' : `the app did not come to the front (${state})`}: its tap opens nothing in the app, or opens another app${expect === 'app' ? ' (expect=away for a tap that leaves the app)' : ''}`;
     }
     const snap = await ui.snapshot().catch(() => undefined);
-    return {device: serial, app, tapped: title, state, screen: snap?.lines.slice(0, 12), note, ok};
+    return {device: serial, app, tapped: title, state, ...(expect !== 'app' && away(front) && {front}), screen: snap?.lines.slice(0, 12), note, ok};
   }
 
   /** Removes the app's notifications (Android; iOS has no command for it). */

@@ -152,7 +152,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // it was delivered; log is a line per push.
   tool(
     'push',
-    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms.',
+    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms.',
     {
       action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind']).optional(),
       title: opt.str(),
@@ -177,6 +177,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
       wait: opt.num(),
       grant: opt.bool(),
       token: opt.str(),
+      expect: z.enum(['app', 'away', 'any']).optional(),
       app: opt.str(),
       limit: opt.num(),
       device,

@@ -170,9 +170,12 @@ describe('push tap on android', () => {
     expect(shadeRow({...SHADE, windows: [{type: 'app', title: '', pkg: 'com.example.app'}, SHADE.windows[1]!]}, {title: 'Ann'})).toBeUndefined();
   });
 
-  /** A device whose shade opens the app when the app's row gets `opensOn` (a tap on it, or an accessibility click). */
-  const device = (opensOn: 'tap' | 'node-action' | 'nothing', opts: {twin?: boolean; blindAfterTap?: boolean} = {}) => {
-    const s = {front: false, shade: false, blind: false, calls: [] as string[]};
+  /**
+   * A device whose shade opens the app when the app's row gets `opensOn` (a tap on it, or an accessibility click), or
+   * whose tap opens a browser (`other`).
+   */
+  const device = (opensOn: 'tap' | 'node-action' | 'nothing' | 'other', opts: {twin?: boolean; blindAfterTap?: boolean} = {}) => {
+    const s = {front: false, other: false, shade: false, blind: false, calls: [] as string[]};
     const dump = `  Notification List:\n${record('com.other.app', 2, 'Ann', opts.twin ? 'Are you there?' : 'Lunch?', 9)}${record('com.example.app', 1, 'Ann', 'Are you there?', 5)}  Notification attention state:\n`;
     const a = {
       shell: async (_serial: string, cmd: string) => {
@@ -180,7 +183,8 @@ describe('push tap on android', () => {
         if (cmd.startsWith('dumpsys notification')) return dump;
         if (cmd.includes('expand-notifications')) s.shade = true;
         if (cmd.includes('statusbar collapse')) s.shade = false;
-        if (cmd.startsWith('pidof')) return `123\n---\n  topResumedActivity=ActivityRecord{1 u0 ${s.front ? 'com.example.app/.Main' : 'com.android.launcher3/.Launcher'}}\n---\nstopped=false`;
+        if (cmd.startsWith('pidof')) return `123\n---\n  topResumedActivity=ActivityRecord{1 u0 ${s.front ? 'com.example.app/.Main' : s.other ? 'com.example.browser/.Tab' : 'com.android.launcher3/.Launcher'}}\n---\nstopped=false`;
+        if (cmd.includes('category.HOME')) return 'priority=0 preferredOrder=0 match=0x100000 specificIndex=-1 isDefault=true\ncom.android.launcher3/.uioverrides.QuickstepLauncher\n';
         return '';
       },
     };
@@ -197,6 +201,10 @@ describe('push tap on android', () => {
         }
         if (cmd === 'tap') {
           if (opensOn === 'tap' && args.y === 355) open();
+          if (opensOn === 'other' && args.y === 355) {
+            s.other = true;
+            s.shade = false;
+          }
           if (opts.blindAfterTap) {
             // The app comes up, but the shade stays and its tree can no longer be read.
             s.front = true;
@@ -243,6 +251,23 @@ describe('push tap on android', () => {
     await expect(center.tap({title: 'Lunch'})).rejects.toThrow(/com\.example\.app has no notification showing "Lunch" \(its notifications: "Ann"\)/);
   });
 
+  it('passes a tap expected to leave the app when another app comes to the front, and fails it when the app does', {timeout: 30_000}, async () => {
+    expect(await device('other').center.tap({expect: 'away'})).toMatchObject({front: 'com.example.browser', ok: true});
+    expect((await device('other').center.tap({})).note).toMatch(/expect=away/);
+    expect(await device('other').center.tap({expect: 'any'})).toMatchObject({ok: true});
+    const stayed = await device('tap').center.tap({expect: 'away'});
+    expect(stayed.ok).toBe(false);
+    expect(stayed.note).toMatch(/no other app came to the front \(the app is in front\)/);
+    expect(await device('tap').center.tap({expect: 'any'})).toMatchObject({ok: true});
+  });
+
+  it('fails a tap expected to leave the app that only closed the shade to the home screen', {timeout: 20_000}, async () => {
+    const r = await device('nothing').center.tap({expect: 'away'});
+    expect(r.ok).toBe(false);
+    expect(r.front).toBeUndefined();
+    await expect(device('nothing').center.tap({expect: 'elsewhere' as never})).rejects.toThrow(/expect must be app, away, any/);
+  });
+
   it("refuses a notification another app shows word for word: the shade cannot tell the rows apart", async () => {
     const {center} = device('tap', {twin: true});
     await expect(center.tap({})).rejects.toThrow(/com\.other\.app shows a notification with the same title and text/);
@@ -260,6 +285,7 @@ describe('push command line', () => {
   it('maps send, raw payloads and sub-commands', () => {
     expect(toCall(parseArgs(['push', 'title=Hi', 'body=There', 'data={"a":"b=c"}', '--device', 'Pixel']))).toEqual({method: 'push', params: {action: 'send', device: 'Pixel', app: undefined, title: 'Hi', body: 'There', data: '{"a":"b=c"}'}});
     expect(toCall(parseArgs(['push', 'tap', 'New', 'message']))).toMatchObject({params: {action: 'tap', title: 'New message'}});
+    expect(toCall(parseArgs(['push', 'tap', 'Page', '--expect', 'away']))).toMatchObject({params: {action: 'tap', title: 'Page', expect: 'away'}});
     expect(toCall(parseArgs(['push', 'clear', '--app', 'com.example.app']))).toMatchObject({params: {action: 'clear', app: 'com.example.app'}});
     expect(toCall(parseArgs(['push', 'bind', 'tok123']))).toMatchObject({params: {action: 'bind', token: 'tok123'}});
     const file = toCall(parseArgs(['push', 'file=payload.json'])).params.file as string;

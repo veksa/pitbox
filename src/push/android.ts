@@ -60,13 +60,20 @@ export const parseBroadcast = (out: string): {code: number; data?: string} => {
 
 export type AppState = 'foreground' | 'background' | 'not running';
 
-/** Where the app is, and whether it was force-stopped (real FCM does not deliver to a stopped app). */
-export const appState = async (a: AndroidDriver, serial: string, pkg: string): Promise<{state: AppState; stopped: boolean}> => {
+/** Where the app is, whether it was force-stopped (real FCM does not deliver to a stopped app), and the package in front. */
+export const appState = async (a: AndroidDriver, serial: string, pkg: string): Promise<{state: AppState; stopped: boolean; front?: string}> => {
   assertPackage(pkg);
   const out = await a.shell(serial, `pidof ${pkg}; echo ---; dumpsys activity activities | grep -E 'topResumedActivity|mResumedActivity' | head -2; echo ---; dumpsys package ${pkg} | grep -m1 -o 'stopped=[a-z]*'`).catch(() => '');
   const [pid = '', resumed = '', stopped = ''] = out.split('---\n');
   const state: AppState = resumed.includes(`${pkg}/`) ? 'foreground' : /^\d+/.test(pid.trim()) ? 'background' : 'not running';
-  return {state, stopped: /stopped=true/.test(stopped)};
+  const front = /\bu\d+ ([\w.]+)\//.exec(resumed)?.[1];
+  return {state, stopped: /stopped=true/.test(stopped), front};
+};
+
+/** The home screen's package, so a tap that only closed the shade is not taken for one that opened another app. */
+export const homePackage = async (a: AndroidDriver, serial: string): Promise<string | undefined> => {
+  const out = await a.shell(serial, 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME').catch(() => '');
+  return /^([\w.]+)\//m.exec(out)?.[1];
 };
 
 /** The posted notifications of `pkg`, or of every package without it. */

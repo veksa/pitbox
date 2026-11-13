@@ -12,6 +12,8 @@ pitbox push title="New message" body="Hi there" data='{"chat":"c1"}'
 
 pitbox push tap          # tap the app's latest notification: the shade on Android, the banner or Notification Center on iOS
 # tapped "New message" → app foreground
+pitbox push tap Sale --expect away   # a notification whose tap opens https://shop.example.test in the browser
+# tapped "Sale" → com.example.browser in front
 ```
 
 The stand can take pushes from the project's own server too: a [push gateway](#the-push-gateway) that answers
@@ -27,6 +29,7 @@ the APNs and FCM requests a server sends, and delivers them to the running devic
 | `delay=s` · `repeat=n` | send later (the call answers at once; `push log` tells how it went) · send n copies |
 | `grant=true` | allow notifications first (Android 13+ runtime permission) |
 | `push tap [title]` | tap the latest notification (or the one with that text) and check the app came to the front. Android: only the app's own posted notifications are candidates (`dumpsys notification`, by package); the shade is opened and the row found in System UI's own window by that notification's title and text — not another app's row with the same title, not the app behind the shade — and tapped there; another app showing the same title and text word for word is refused, and a screen the runner could not read is never taken for a notification gone. Without a title, the latest one pitbox delivered that is still posted. iOS: the banner, or the notification in Notification Center. `✗ tapped …` with a note when the app did not come to the front |
+| `push tap [title] --expect away` · `expect=away` | a tap that is meant to leave the app — a notification that opens a web page in the browser, or another app: passes when another app comes to the front (`tapped "Sale" → com.example.browser in front`), fails when the app stays in front or nothing opens (the shade only closes to the home screen). `--expect any` takes either the app or another app; the default is `app` |
 | `push clear` | remove the app's notifications (Android) |
 | `push grant` | grant POST_NOTIFICATIONS (Android) |
 | `push status` | can the app take pushes here: the receiver, the FCM service, Firebase, the permission |

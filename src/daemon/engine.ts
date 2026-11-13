@@ -22,7 +22,7 @@ import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
 import {loadProjectRules, runDoctor} from '../doctor/run.ts';
 import {ActorManager} from '../stand/actors.ts';
 import {LlmMock} from '../stand/llmMock.ts';
-import {PushCenter} from '../push/push.ts';
+import {PushCenter, type TapExpect} from '../push/push.ts';
 import {PushGateway} from '../push/gateway.ts';
 import {fromPayloadFile} from '../push/payload.ts';
 import {ServiceManager, type ServiceState} from '../stand/services.ts';
@@ -1499,7 +1499,7 @@ export class Engine {
           return {action, ...(await this.#pushes.send({...fromFile, ...rest, device, app} as Parameters<PushCenter['send']>[0]))};
         }
         case 'tap':
-          return {action, ...(await this.#pushes.tap({device, app, title: str(p, 'title')}))};
+          return {action, ...(await this.#pushes.tap({device, app, title: str(p, 'title'), expect: str(p, 'expect') as TapExpect | undefined}))};
         case 'clear':
           return {action, ...(await this.#pushes.clear({device, app}))};
         case 'grant':
