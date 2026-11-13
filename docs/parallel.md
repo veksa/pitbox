@@ -9,7 +9,7 @@ left to each agent's discipline.
 
 - **A lease per device.** `~/.pitbox/leases/<platform>-<udid|serial>.json` (`PITBOX_HOME` moves `~/.pitbox`):
   the holder's label, its pid and the pid's start time, its project folder, what for, since when, whether pitbox
-  booted (or created) the device for it, and for Android the emulator instance it was taken on. Every change to a
+  booted (or created) the device for it and which boot that was, and for Android the emulator instance it was taken on. Every change to a
   lease happens under that device's lock file and replaces the file whole: two sessions racing for one device
   cannot both get it. The folder must be writable (else pitbox says so and asks for a writable `PITBOX_HOME`); on a
   file system without hard links the lock files are created exclusively instead.
@@ -77,7 +77,9 @@ left to each agent's discipline.
 - **Shutting down** works only on a device this session holds; `force` shuts down another's anyway and says whose
   it was — only with the device named, never on a device pitbox picked by itself.
 - **Giving back.** `device release` (or `down` for the whole stand, or `pitbox daemon stop`) releases the leases;
-  a device pitbox booted for the session shuts down with it (`devices.shutdownOnRelease: false` keeps it up), a
+  a device pitbox booted for the session shuts down with it (`devices.shutdownOnRelease: false` keeps it up) —
+  only while it still runs the boot pitbox made, checked against the devices running now (the same rule as below:
+  `daemon stop` never shuts down another emulator that took the serial, or a simulator booted again by hand); a
   device it found running stays running. Any other end of the daemon — `pitbox daemon restart`, a swap to another
   version, a signal, a crash — keeps its leases and leaves every device running: the next daemon of the project
   adopts them, and an agent in the middle of a run does not lose its simulator to someone else's restart.
@@ -97,14 +99,17 @@ left to each agent's discipline.
   daemon sweeps the lease folder (on start and every 30 s, whichever project's leases they are: the daemon that
   took one may be the one that died), and so does `pitbox lease list`. A lease counts as ended 1 min after its
   holder process is gone, or once its ttl is out; 10 min after that:
-  - a device **pitbox booted** for the lease is shut down — a simulator by its udid, an emulator only while it is
-    the same emulator process (never by a bare serial). The reaper first replaces the lease with a short one of its
+  - a device **pitbox booted** for the lease is shut down — only while it still runs the very boot pitbox made, which
+    the lease records (`boot`): for a simulator its `launchd_sim` process (pid and start time, read from the process
+    list), for an emulator its process — never by a bare udid or serial, so a simulator booted again later by hand,
+    by Xcode or by another tool on the same udid is left running. The reaper first replaces the lease with a short one of its
     own (`pitbox, shutting down a device whose lease ended`, 5 min), so no session takes the device half way down;
     if the shutdown fails, that lease runs out and a later sweep tries again. A simulator or AVD copy pitbox created
     is shut down, not deleted: `devices clean` and the daemons' sweep of AVD copies delete it later;
-  - any other ended lease (a device pitbox did not boot, a device no longer running, a serial now another
-    emulator's, at once, a device booted for a project with `devices.shutdownOnRelease: false`) is only removed.
-    pitbox never shuts down a device it did not boot.
+  - any other ended lease (a device pitbox did not boot, a device no longer running, a simulator booted again since,
+    a serial now another emulator's, at once, a lease with no `boot` — written by a pitbox before 0.3.2, or a boot
+    whose process could not be read —, a device booted for a project with `devices.shutdownOnRelease: false`) is
+    only removed. pitbox never shuts down a device it did not boot, or cannot tell is still the boot it made.
 
   The 10 min are for the session to come back. A restarted daemon of the project adopts its devices as before
   (the project's daemon is the holder). A shell holder of **the same session** — the same project folder and the
@@ -119,17 +124,22 @@ left to each agent's discipline.
   so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
 - **One daemon per config.** `.pitbox/daemon.json` names one daemon; a second one for the same config (started by
   hand, by an older pitbox, by a client without the start lock) would overwrite it and leave the first running
-  unreachable. So a daemon that starts looks at the process list (`node …/daemon/main.js --config <file>`): it
+  unreachable. So a daemon that starts looks at the process list (`node …/daemon/main.js --config <file>`; a
+  relative `--config` is read from that process's own folder, and never matches when the folder cannot be read): it
   refuses while the daemon in the file answers, and otherwise stops the other daemons of its config with SIGTERM
-  first (their services and device leases stay with the project, and it adopts the leases). `pitbox daemon status`
+  first (their services and device leases stay with the project, and it adopts the leases). Starts of one config
+  take turns (`.pitbox/daemon-start.lock`, from this check until the daemon file is written), so the second of two
+  daemons started at once finds the first answering and refuses; and a daemon younger than 30 s, or of unknown age,
+  is never stopped — it may still be starting. `pitbox daemon status`
   names an unreachable daemon of the config (and exits 1); `daemon stop` and `restart` stop those too, before the
   daemon in the file, which then gives their devices back with its own. On Windows the process list is not read.
 - **Project tools run on the session's device.** A tool's `{apple_device}` / `{android_device}` is the udid or
   serial of the device this session holds on that platform ([config.md](config.md#tools)); with none, or several,
   the tool is refused rather than pointed at `booted` or the only device adb sees.
 - **Ports are checked, not trusted.** A stand's proxy, push gateway and LLM mock start only on a port nobody
-  answers on, and its bundler's port is adopted only from a bundler running in the dev server's folder: a stand
-  never serves, or forwards to, another stand's bundle ([config.md](config.md#devserver)). A service whose probe
+  answers on, and its bundler's port is adopted only from a bundler running in the project: a stand
+  never serves, or forwards to, another stand's bundle: every process listening on the port must run in the
+  project's repository ([config.md](config.md#devserver)). A service whose probe
   another project's server answers fails with that server's pid and folder instead of being adopted
   ([config.md](config.md#services)). Projects that share a machine each keep a block of ports (`ports.block`), and
   `doctor` (`port-block`) warns about a port outside it ([config.md](config.md#ports)). Worktrees of one
