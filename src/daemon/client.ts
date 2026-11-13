@@ -43,6 +43,9 @@ const readInfo = (stateDir: string): DaemonInfo | undefined => {
   }
 };
 
+/** Whether the daemon a daemon file names is alive and answers. */
+export const daemonAnswers = (info: DaemonInfo) => ping(info);
+
 const ping = async (info: DaemonInfo) => {
   if (!isAlive(info.pid)) return false;
   try {

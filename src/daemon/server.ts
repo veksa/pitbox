@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {Engine} from './engine.ts';
+import {daemonAnswers, resolveProject} from './client.ts';
+import {takeOver} from './siblings.ts';
 import {IDLE_MS} from './activity.ts';
 import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
 
@@ -15,7 +17,28 @@ export {DAEMON_STOP, daemonFile, VERSION, type DaemonInfo};
 
 
 
+/**
+ * One daemon per config: refused while the daemon in the daemon file answers; the other daemons of the config —
+ * unreachable, their file overwritten — are stopped first, so this one adopts their device leases (siblings.ts).
+ */
+const onlyDaemon = async (configFile?: string) => {
+  const {file, stateDir} = resolveProject({config: configFile});
+  let listed: DaemonInfo | undefined;
+  try {
+    listed = JSON.parse(fs.readFileSync(daemonFile(stateDir), 'utf8')) as DaemonInfo;
+  } catch {
+    listed = undefined;
+  }
+  const reachable = listed && listed.pid !== process.pid && (await daemonAnswers(listed)) ? listed.pid : undefined;
+  const r = await takeOver(file, reachable);
+  if (r.refuse) throw new Error(r.refuse);
+  const stamp = new Date().toISOString();
+  if (r.stopped.length) process.stderr.write(`${stamp} stopped ${r.stopped.length} other daemon${r.stopped.length > 1 ? 's' : ''} of this config nobody could reach: pid ${r.stopped.join(', ')}\n`);
+  if (r.left.length) process.stderr.write(`${stamp} another daemon of this config did not stop on SIGTERM: pid ${r.left.join(', ')}\n`);
+};
+
 export const serve = async (configFile?: string) => {
+  await onlyDaemon(configFile);
   const engine = await Engine.create(configFile);
   const {stateDir, root, file} = engine.loaded;
   fs.mkdirSync(stateDir, {recursive: true});

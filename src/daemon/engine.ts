@@ -742,6 +742,8 @@ export class Engine {
 
   /** Gives every device back; those this daemon booted shut down unless the config keeps them. */
   async #releaseAll() {
+    // The project's devices, also those another daemon of it left (one stopped as unreachable, one that crashed).
+    this.#leases.adopt();
     const shutdown = this.config.devices?.shutdownOnRelease === false ? undefined : (h: Held) => this.#shutdownHeld(h);
     const r = await this.#leases.releaseAll(shutdown);
     for (const h of r.released) {

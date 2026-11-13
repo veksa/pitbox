@@ -373,11 +373,27 @@ export const main = async () => {
   }
   if (cmd === 'daemon') {
     const running = await runningDaemon({config});
+    // Every daemon process of the config, not only the one the daemon file names: one whose file another overwrote
+    // runs on unreachable (daemon/siblings.ts).
+    const {daemonsOf, stopDaemons} = await import('./daemon/siblings.ts');
+    const strays = daemonsOf(resolveProject({config}).file).filter(pid => pid !== running?.info.pid);
     if (sub === 'status' || !sub) {
       process.stdout.write(running ? `running: pid ${running.info.pid}, port ${running.info.port}, ${running.info.config}\n` : `not running (${resolveProject({config}).stateDir})\n`);
+      if (strays.length) {
+        process.stdout.write(`also running for this config, unreachable (not in its daemon file): pid ${strays.join(', ')}\nhint: \`pitbox daemon restart\` (or stop) ends them too\n`);
+        process.exitCode = 1;
+      }
       return;
     }
     if (sub === 'stop' || sub === 'restart') {
+      // Unreachable daemons first, by SIGTERM (their leases stay with the project), so the stop below gives their
+      // devices back with its own.
+      const left = strays.length ? await stopDaemons(strays) : [];
+      const stray = strays.length ? `; ${strays.length - left.length} unreachable daemon${strays.length > 1 ? 's' : ''} of this config stopped too (pid ${strays.join(', ')})` : '';
+      if (left.length) {
+        process.stdout.write(`pid ${left.join(', ')} (a daemon of this config) did not stop on SIGTERM\n`);
+        process.exitCode = 1;
+      }
       // A restart keeps the devices this project holds; a stop gives them back (and shuts down those it booted).
       // `keepLeases` is what a daemon from before `release` reads; `by` says a person asked, so it stops even in use.
       if (running) await running.call(DAEMON_STOP, sub === 'stop' ? {release: true, by: 'user'} : {keepLeases: true, by: 'user'}).catch(() => undefined);
@@ -391,11 +407,11 @@ export const main = async () => {
         return;
       }
       if (sub === 'stop') {
-        process.stdout.write(running ? 'stopped\n' : 'not running\n');
+        process.stdout.write(running ? `stopped${stray}\n` : strays.length ? `stopped${stray.replace(/^; /, ': ')}\n` : 'not running\n');
         return;
       }
       const c = await connect({config});
-      process.stdout.write(`running: pid ${c.info.pid}\n`);
+      process.stdout.write(`running: pid ${c.info.pid}${stray}\n`);
       return;
     }
     throw new Error('daemon status|stop|restart');
