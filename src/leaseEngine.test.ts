@@ -392,6 +392,8 @@ describe("another stand's bundler", () => {
     const child = spawn(process.execPath, ['-e', `require('http').createServer((q, s) => s.end('packager-status:running')).listen(${port}, '::', () => console.log('up'))`], {cwd, stdio: ['ignore', 'pipe', 'ignore']});
     return new Promise<typeof child>(resolve => child.stdout.once('data', () => resolve(child)));
   };
+  // Waits for the exit too: Windows will not remove a folder a live process runs in.
+  const stop = (child: ReturnType<typeof spawn>) => new Promise<void>(resolve => (child.exitCode !== null || child.signalCode !== null ? resolve() : (child.once('exit', () => resolve()), child.kill())));
 
   // Windows cannot name a port's listener, so there it is adopted as before.
   it.skipIf(process.platform === 'win32')('is not adopted: the dev server fails with its pid, and the proxy is not started', async () => {
@@ -407,7 +409,7 @@ describe("another stand's bundler", () => {
       expect(dev?.detail).toMatch(new RegExp(`^port ${internalPort}, the bundler's, is taken by pid ${theirs.pid}`));
       expect(await new Promise(resolve => net.connect(port, '127.0.0.1').once('connect', () => resolve(true)).once('error', () => resolve(false)))).toBe(false);
     } finally {
-      theirs.kill();
+      await stop(theirs);
     }
   }, 30_000);
 
@@ -420,7 +422,7 @@ describe("another stand's bundler", () => {
       expect(r.services.find(s => s.name === 'devserver')?.status).toBe('external');
       await e.methods.down({});
     } finally {
-      mine.kill();
+      await stop(mine);
     }
   }, 30_000);
 });
