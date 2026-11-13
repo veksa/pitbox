@@ -275,12 +275,14 @@ const servicesHealthy: Rule = {
       if (svc?.autostart === false && s.status === 'stopped') continue;
       const port = probePort(svc?.health);
       let owner: string | undefined;
+      // A port another project holds is already named, with its pid and folder, in the detail.
+      const foreign = s.detail?.includes('from another project') ?? false;
       if (port && !(await tcpOpen(port))) owner = undefined;
       else if (port) owner = await portOwner(port);
       findings.push({
         rule: 'services',
         severity: 'error',
-        message: `${s.name} is ${s.status}${s.detail ? ` (${s.detail.split('\n')[0]})` : ''}${owner ? `; port ${port} held by ${owner}` : ''}`,
+        message: `${s.name} is ${s.status}${s.detail ? ` (${s.detail.split('\n')[0]})` : ''}${owner && !foreign ? `; port ${port} held by ${owner}` : ''}`,
         hint: owner ? 'something else holds the port — find out what it is before killing it' : svc?.start ? `start it: pitbox up ${s.name}` : 'start it outside pitbox, it has no start command',
         // `up` through the engine: the dev server also needs its proxy, which the service manager does not start.
         fix: svc?.start && !owner && ctx.config.services?.[s.name] ? async () => {

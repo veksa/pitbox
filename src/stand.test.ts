@@ -8,7 +8,7 @@ import {builtinRules} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
 import {ActorManager} from './stand/actors.ts';
 import {LlmMock} from './stand/llmMock.ts';
-import {ServiceManager} from './stand/services.ts';
+import {isPortForwarder, ServiceManager} from './stand/services.ts';
 import {runTool} from './stand/tools.ts';
 import {freePort, tcpOpen} from './util/net.ts';
 
@@ -51,6 +51,36 @@ describe('services', () => {
     expect(d?.detail).toMatch(/left running/);
     await outside.down();
   }, 30_000);
+
+  // lsof tells a listener's folder; Windows has no such lookup, and pitbox adopts there as before.
+  it.skipIf(process.platform === 'win32')('refuses to adopt a server another project runs on the probed port', async () => {
+    const port = await freePort();
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-elsewhere-'));
+    const other = new ServiceManager({root: elsewhere, stateDir: path.join(elsewhere, '.pitbox')}, {api: {start: server(port), health: `tcp:${port}`}});
+    managers.push(other);
+    expect((await other.up())[0]?.status).toBe('up');
+    const project = path.join(dir, 'project');
+    fs.mkdirSync(project, {recursive: true});
+    const m = new ServiceManager({root: project, stateDir: path.join(project, '.pitbox')}, {
+      api: {start: 'exit 1', health: `http://localhost:${port}/`},
+      watched: {health: `tcp:${port}`},
+    });
+    const [api, watched] = await m.up();
+    expect(api?.status).toBe('failed');
+    expect(api?.detail).toMatch(new RegExp(`port ${port} held by pid \\d+ .*\\(cwd .*pitbox-elsewhere-.*\\) from another project`));
+    // A service with no start command is one pitbox only watches: whatever answers is what it asked for.
+    expect(watched?.status).toBe('external');
+    expect((await m.status())[0]?.status).toBe('failed');
+    expect((await m.down(['api']))[0]?.detail).toBe("left running (another project's)");
+    expect(await tcpOpen(port)).toBe(true);
+    await other.down();
+    fs.rmSync(elsewhere, {recursive: true, force: true});
+  }, 30_000);
+
+  it('tells a container runtime forwarder from a project server', () => {
+    for (const c of ['/Applications/Docker.app/Contents/MacOS/com.docker.backend', 'limactl', 'ssh', 'vpnkit-bridge', 'gvproxy', 'qemu-system-aarch64']) expect(isPortForwarder(c), c).toBe(true);
+    for (const c of ['node', '/usr/local/bin/node', 'java', 'python3']) expect(isPortForwarder(c), c).toBe(false);
+  });
 
   it('fails fast with the log tail when the process exits before it is healthy', async () => {
     const port = await freePort();

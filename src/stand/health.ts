@@ -37,6 +37,16 @@ export const probePort = (probe: string | undefined): number | undefined => {
   return undefined;
 };
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', '0.0.0.0']);
+
+/** The port a probe watches on this machine: none for a probe to another host, whose listener lsof cannot see. */
+export const localProbePort = (probe: string | undefined): number | undefined => {
+  if (!probe) return undefined;
+  const p = parseProbe(probe);
+  const host = p.kind === 'tcp' ? p.host : p.kind === 'http' ? new URL(p.url).hostname : undefined;
+  return host !== undefined && LOOPBACK.has(host) ? probePort(probe) : undefined;
+};
+
 export const checkProbe = async (probe: string, opts: {cwd?: string; shell?: string} = {}): Promise<ProbeResult> => {
   const p = parseProbe(probe);
   switch (p.kind) {

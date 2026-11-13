@@ -1,13 +1,14 @@
-// Services of the stand: started in dependency order, adopted when something already answers the probe,
-// supervised, logged to files, stopped as whole process trees.
+// Services of the stand: started in dependency order, adopted when something of this project already answers the
+// probe, supervised, logged to files, stopped as whole process trees.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import type {ServiceConfig} from '../config/schema.ts';
 import {asArray} from '../config/schema.ts';
-import {isAlive, killTree, killTreeAndWait, liveTree, runShell, startService, type ServiceProcess} from '../util/proc.ts';
+import {portListener, withinFolder} from '../util/net.ts';
+import {isAlive, killTree, killTreeAndWait, liveTree, run, runShell, startService, type ServiceProcess} from '../util/proc.ts';
 import {tailLines} from '../util/text.ts';
-import {checkProbe, waitForProbe} from './health.ts';
+import {checkProbe, localProbePort, waitForProbe} from './health.ts';
 
 export type ServiceStatus = 'stopped' | 'starting' | 'up' | 'external' | 'down' | 'failed';
 
@@ -74,6 +75,28 @@ export const stopOrder = (services: Record<string, ServiceConfig>, names: string
 export const restartOrder = (services: Record<string, ServiceConfig>, names: string[], running: Set<string>): string[] =>
   stopOrder(services, names).filter(n => names.includes(n) || running.has(n)).reverse();
 
+/** The repository a folder belongs to (the nearest parent with `.git`), or the folder itself outside one. */
+export const projectRoot = (dir: string): string => {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) return d;
+    if (path.dirname(d) === d) return path.resolve(dir);
+  }
+};
+
+/**
+ * Processes that listen for a container or VM runtime (Docker Desktop, Colima/Lima, OrbStack, Podman, an `ssh -L`
+ * tunnel). Their folder is wherever the runtime was started, which says nothing about whose container answers.
+ */
+const PORT_FORWARDER = /^(com\.docker\..*|docker.*|vpnkit.*|limactl|lima.*|ssh|colima|orbstack.*|gvproxy|vfkit|krunkit|podman.*|qemu-system-.*|rancher.*|rd-.*)$/i;
+
+export const isPortForwarder = (command: string): boolean => PORT_FORWARDER.test(path.basename(command.trim()));
+
+const processCommand = async (pid: number): Promise<{name: string; args: string}> => {
+  const [name, args] = await Promise.all([run('ps', ['-o', 'comm=', '-p', String(pid)], {timeoutMs: 5000}), run('ps', ['-o', 'args=', '-p', String(pid)], {timeoutMs: 5000})]);
+  const full = args.stdout.trim();
+  return {name: name.stdout.trim(), args: full.length > 100 ? `${full.slice(0, 97)}...` : full};
+};
+
 export class ServiceManager {
   readonly #ctx: StandContext;
   #services: Record<string, ServiceConfig>;
@@ -113,6 +136,25 @@ export class ServiceManager {
 
   #cwd(svc: ServiceConfig) {
     return svc.cwd ? path.resolve(this.#ctx.root, svc.cwd) : this.#ctx.root;
+  }
+
+  /**
+   * Who answers a service's probe when it is a process from another project: one whose working folder is neither in
+   * the service's `cwd` nor in this project's repository. Adopting it as `external` would point this stand — and the
+   * devices behind it — at another project's server. Undefined when the holder is this project's, cannot be told
+   * (Windows, a probe without a local port), or is a container runtime's forwarder. A service without `start` is one
+   * pitbox only watches: whatever answers is what it asked for.
+   */
+  async #foreignHolder(svc: ServiceConfig): Promise<string | undefined> {
+    if (!svc.start) return undefined;
+    const port = localProbePort(svc.health);
+    if (!port) return undefined;
+    const owner = await portListener(port);
+    if (!owner?.cwd || owner.cwd === '/') return undefined;
+    if (withinFolder(owner.cwd, this.#cwd(svc)) || withinFolder(owner.cwd, projectRoot(this.#ctx.root))) return undefined;
+    const cmd = await processCommand(owner.pid);
+    if (isPortForwarder(cmd.name)) return undefined;
+    return `port ${port} held by pid ${owner.pid} ${cmd.args || cmd.name || '?'} (cwd ${owner.cwd}) from another project — not adopted; give this stand its own port, or stop that process`;
   }
 
   #recoverPids() {
@@ -166,6 +208,10 @@ export class ServiceManager {
           return this.#set(name, ours ? {status: 'up', detail: 'running (no probe)'} : {status: 'stopped', pid: undefined, detail: svc.start ? undefined : 'no probe, no start'});
         }
         const probe = await checkProbe(svc.health, {cwd: this.#cwd(svc), shell: this.#ctx.shell});
+        if (probe.ok && !ours) {
+          const foreign = await this.#foreignHolder(svc);
+          if (foreign) return this.#set(name, {status: 'failed', pid: undefined, detail: foreign});
+        }
         if (probe.ok) return this.#set(name, {status: ours ? 'up' : 'external', detail: probe.detail, ...(ours ? {} : {pid: undefined})});
         if (ours) return this.#set(name, {status: 'down', detail: known?.detached ? `probe failing: ${probe.detail}` : `process alive, probe failing: ${probe.detail}`});
         return this.#set(name, {status: known?.status === 'failed' ? 'failed' : 'stopped', pid: undefined, detail: known?.status === 'failed' ? known.detail : probe.detail});
@@ -203,6 +249,8 @@ export class ServiceManager {
       const probe = await checkProbe(svc.health, {cwd, shell: this.#ctx.shell});
       if (probe.ok) {
         const ours = await this.#owned(known);
+        const foreign = ours ? undefined : await this.#foreignHolder(svc);
+        if (foreign) return this.#set(name, {status: 'failed', pid: undefined, detail: foreign});
         return this.#set(name, {status: ours ? 'up' : 'external', detail: probe.detail});
       }
     } else if (known?.pid !== undefined && isAlive(known.pid)) {
@@ -284,7 +332,7 @@ export class ServiceManager {
         detail = 'ran stop';
       } else {
         const st = (await this.status()).find(s => s.name === name);
-        detail = st?.status === 'external' ? 'left running (not started by pitbox)' : 'not running';
+        detail = st?.status === 'external' ? 'left running (not started by pitbox)' : st?.detail?.includes('from another project') ? "left running (another project's)" : 'not running';
         results.push(this.#set(name, {detail}));
         continue;
       }

@@ -33,7 +33,16 @@ when installed), `sh`, `cmd`, or a path to a shell.
 ## services
 
 A map of stand services. `pitbox up` starts the autostart ones in dependency order; a service whose probe
-already answers is adopted, not started twice. Services outlive the daemon; only `down` stops them.
+already answers is adopted (`external`), not started twice. Services outlive the daemon; only `down` stops them.
+
+Only this project's server is adopted. When the probe's port is on this machine (`tcp:<port>`, `http://localhost…`)
+and the process listening there runs in a folder outside both the service's `cwd` and the project's repository (the
+nearest parent with `.git`), the service fails instead — `port 3000 held by pid 4242 node server.js (cwd
+/path/to/other-project) from another project` — and nothing that depends on it starts: adopted, it would point the
+stand and its devices at another project's server. `down` leaves that process alone. Not judged: a service with no
+`start` (one pitbox only watches, so whatever answers is what it asked for), a probe to another host, a listener
+that is a container or VM runtime's port forwarder (Docker Desktop, Colima/Lima, OrbStack, Podman, `ssh`), whose
+folder says nothing about whose container answers, and Windows, where pitbox cannot read a process's folder.
 
 ```ts
 services: {
