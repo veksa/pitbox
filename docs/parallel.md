@@ -91,6 +91,29 @@ left to each agent's discipline.
   comes back empty, as when adb restarts); an `offline` device counts as present for up to 10 min, a device back in
   the list starts the count again, and a platform whose list could not be read is not judged. A different emulator
   on the serial ends the lease at once.
+- **Leases nobody released are ended.** A holder that dies (an agent killed together with its daemon or script) or
+  a shell lease that runs out leaves a lease nobody gives back, and a running device with no live lease is someone
+  else's to every other session — so the device would run unowned while sessions boot twins beside it. Every
+  daemon sweeps the lease folder (on start and every 30 s, whichever project's leases they are: the daemon that
+  took one may be the one that died), and so does `pitbox lease list`. A lease counts as ended 1 min after its
+  holder process is gone, or once its ttl is out; 10 min after that:
+  - a device **pitbox booted** for the lease is shut down — a simulator by its udid, an emulator only while it is
+    the same emulator process (never by a bare serial). The reaper first replaces the lease with a short one of its
+    own (`pitbox, shutting down a device whose lease ended`, 5 min), so no session takes the device half way down;
+    if the shutdown fails, that lease runs out and a later sweep tries again. A simulator or AVD copy pitbox created
+    is shut down, not deleted: `devices clean` and the daemons' sweep of AVD copies delete it later;
+  - any other ended lease (a device pitbox did not boot, a device no longer running, a serial now another
+    emulator's, at once, a device booted for a project with `devices.shutdownOnRelease: false`) is only removed.
+    pitbox never shuts down a device it did not boot.
+
+  The 10 min are for the session to come back. A restarted daemon of the project adopts its devices as before
+  (the project's daemon is the holder). A shell holder of **the same session** — the same project folder and the
+  same session name (`--as`, else `PITBOX_SESSION`; a daemon's is its `PITBOX_SESSION`) — that takes the device
+  (`pitbox lease acquire`) keeps it marked as booted by pitbox, so it still goes down when that lease ends; another
+  session, or another project, that takes an ended lease over gets the device as one it found running. `lease
+  list` and `doctor` (`device-leases`) show a device waiting out its 10 min, and warn when one holder has several
+  devices of one platform (a session that booted a second instead of using its first). A platform whose device list
+  could not be read is not swept.
 - **One version per project.** Sessions of one project share its daemon. A session with another pitbox version
   replaces the daemon only when it is newer and the daemon is idle; otherwise it uses the daemon as it is and says
   so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
@@ -128,7 +151,7 @@ left to each agent's discipline.
 | `device action=release [keep=true]` · `pitbox device release [--keep]` | give it back; one pitbox booted shuts down unless `keep` |
 | `device action=shutdown [force=true]` · `pitbox shutdown [--force]` | only your device; `force` (with the device named) names whose it was |
 | `pitbox lease acquire <device> --as "<label>" [--ttl 30m] [--purpose text] [--pid n] [--wait 5m]` | a lease from a shell, no daemon: for scripts that drive a device with `simctl` or `adb` themselves; exits 1 naming the holder |
-| `pitbox lease release <device> --as "<label>" [--force]` · `pitbox lease list` | give it back · every lease, live and stale |
+| `pitbox lease release <device> --as "<label>" [--force]` · `pitbox lease list` | give it back · every lease, live and stale, after ending the ones nobody released (see *Leases nobody released are ended*) |
 
 A shell lease (`pitbox lease acquire`) lives for its `--ttl` (default 30 min) or as long as `--pid` runs; acquiring
 again renews it. Its holder is the label together with the project (the nearest pitbox config's folder, else the
