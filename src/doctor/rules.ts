@@ -3,8 +3,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {run, which} from '../util/proc.ts';
-import {tcpOpen} from '../util/net.ts';
-import {probePort} from '../stand/health.ts';
+import {REACT_DEVTOOLS_PORT, tcpOpen} from '../util/net.ts';
+import {localProbePort, probePort} from '../stand/health.ts';
+import {defaultInternalPort} from '../devserver/devserver.ts';
+import {asArray, type PitboxConfig} from '../config/schema.ts';
 import {IDLE_MS, UNVERSIONED} from '../daemon/activity.ts';
 import type {DoctorContext, Finding, Rule} from './types.ts';
 import {allowCleartextInDebug, cleartextOf, detectProject} from '../init/project.ts';
@@ -463,4 +465,62 @@ const toolDevices: Rule = {
     }),
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices];
+/** The push gateway's port when `mocks.push` names none. */
+const PUSH_GATEWAY_PORT = 4980;
+
+/** Every local port the config binds, forwards or probes, with the fields that name it. */
+export const configPorts = (config: PitboxConfig): Map<number, string[]> => {
+  const out = new Map<number, string[]>();
+  const add = (port: number | undefined, where: string) => {
+    if (port === undefined) return;
+    const list = out.get(port) ?? [];
+    if (!list.includes(where)) list.push(where);
+    out.set(port, list);
+  };
+  for (const [name, svc] of Object.entries(config.services ?? {})) {
+    for (const p of asArray(svc.expose)) add(p, `services.${name}.expose`);
+    add(localProbePort(svc.health), `services.${name}.health`);
+  }
+  if (config.devserver) {
+    const port = config.devserver.port ?? 8081;
+    add(port, 'devserver.port');
+    add(config.devserver.internalPort ?? defaultInternalPort(port), 'devserver.internalPort');
+  }
+  if (config.mocks?.llm) add(config.mocks.llm.port, 'mocks.llm.port');
+  if (config.mocks?.push) add(config.mocks.push.port ?? PUSH_GATEWAY_PORT, 'mocks.push.port');
+  for (const p of config.android?.reverse ?? []) add(p, 'android.reverse');
+  return out;
+};
+
+/** The ports of `configPorts` outside the project's block (`ports.block`), less `ports.allow` and React DevTools'. */
+export const portsOutsideBlock = (config: PitboxConfig): {port: number; where: string[]}[] => {
+  const block = config.ports?.block;
+  if (block === undefined) return [];
+  const allowed = new Set([REACT_DEVTOOLS_PORT, ...(config.ports?.allow ?? [])]);
+  return [...configPorts(config)]
+    .filter(([port]) => (port < block || port > block + 99) && !allowed.has(port))
+    .sort(([a], [b]) => a - b)
+    .map(([port, where]) => ({port, where}));
+};
+
+/**
+ * Projects that share a machine each keep their stand in a block of ports. A port outside it is one another
+ * project's stand may take — or one this stand takes from it, and then a probe adopts the wrong server or a device
+ * reaches the wrong bundler without an error.
+ */
+const portBlock: Rule = {
+  id: 'port-block',
+  title: "the stand's ports stay in the project's block",
+  check: async ctx => {
+    const block = ctx.config.ports?.block;
+    if (block === undefined) return [];
+    return portsOutsideBlock(ctx.config).map(({port, where}) => ({
+      rule: 'port-block',
+      severity: 'warn' as const,
+      message: `port ${port} (${where.join(', ')}) is outside this project's block ${block}–${block + 99}`,
+      hint: "move it into the block, or list it in ports.allow when it is another project's stand that this one calls",
+    }));
+  },
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock];

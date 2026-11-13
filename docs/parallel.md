@@ -101,7 +101,8 @@ left to each agent's discipline.
   answers on, and its bundler's port is adopted only from a bundler running in the dev server's folder: a stand
   never serves, or forwards to, another stand's bundle ([config.md](config.md#devserver)). A service whose probe
   another project's server answers fails with that server's pid and folder instead of being adopted
-  ([config.md](config.md#services)). Worktrees of one
+  ([config.md](config.md#services)). Projects that share a machine each keep a block of ports (`ports.block`), and
+  `doctor` (`port-block`) warns about a port outside it ([config.md](config.md#ports)). Worktrees of one
   project need ports of their own, a pair apart, and none of them takes 8097, React DevTools' port.
   `PITBOX_PORTS=lo-hi` keeps the ports pitbox picks itself inside a range ([config.md](config.md#actors)).
 - **Forwards follow leases.** The daemon applies `adb reverse` only on devices it holds, and removes only the

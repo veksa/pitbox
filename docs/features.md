@@ -126,5 +126,6 @@ Reference: [flows.md](flows.md).
 
 - `doctor` — known failures with remedies (`doctor --fix`): a wedged adb, forwards that carry no data, a
   system dialog over the screen, a release build where a debug one is expected, settings left by an
-  interrupted run. Projects add their own rules.
+  interrupted run, a stand port outside the project's block ([config.md](config.md#ports)). Projects add their
+  own rules.
 - `docs` — the lines of a long checklist or knowledge base that a step needs, not the whole file.

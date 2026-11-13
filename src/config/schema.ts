@@ -132,6 +132,19 @@ export const configSchema = z.object({
   /** Shell for project commands: `bash` (default; Git Bash on Windows), `sh`, `cmd` or a path. */
   shell: z.string().optional(),
   services: z.record(z.string(), serviceSchema).optional(),
+  /**
+   * The project's own block of 100 local ports, `block … block + 99`, on a machine where several projects' stands
+   * run at once: `doctor` (`port-block`) warns about any port the config binds or forwards outside it. `allow` lists
+   * ports outside the block the stand may use anyway — another project's stand it calls as a client. React
+   * DevTools' 8097 is always allowed.
+   */
+  ports: z
+    .object({
+      block: z.number().int().min(1).max(65436),
+      allow: z.array(z.number().int().positive()).optional(),
+    })
+    .strict()
+    .optional(),
   /** The JS dev server, run behind pitbox's proxy with a native watcher, prewarming and optional bytecode. */
   devserver: devserverSchema.optional(),
   actors: z.record(z.string(), actorSchema).optional(),

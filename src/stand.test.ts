@@ -6,6 +6,7 @@ import path from 'node:path';
 import {afterAll, describe, expect, it} from 'vitest';
 import {builtinRules} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
+import {configSchema, type PitboxConfig} from './config/schema.ts';
 import {ActorManager} from './stand/actors.ts';
 import {LlmMock} from './stand/llmMock.ts';
 import {isPortForwarder, ServiceManager} from './stand/services.ts';
@@ -171,6 +172,48 @@ describe('doctor tool rule', () => {
       "tool wipe reaches a device by `adb` without `-s`: with several devices up it may act on another session's",
       "tool build reaches a device by a Gradle install without ANDROID_SERIAL: with several devices up it may act on another session's",
     ]);
+  });
+});
+
+describe('doctor port-block rule', () => {
+  const rule = builtinRules.find(r => r.id === 'port-block')!;
+  const check = (config: PitboxConfig) => rule.check({root: dir, config, exposedPorts: []} as unknown as DoctorContext);
+  const stand: PitboxConfig = {
+    services: {
+      api: {start: 'yarn start', health: 'http://localhost:4200/health', expose: [4200, 3000]},
+      db: {start: 'docker compose up -d db', health: 'tcp:4220'},
+      peer: {health: 'tcp:127.0.0.1:4300', expose: 4300},
+      remote: {health: 'https://api.example.test/health'},
+    },
+    devserver: {port: 4210},
+    mocks: {llm: {port: 4240}, push: {}},
+    android: {reverse: [8097, 9090]},
+  };
+
+  it('says nothing without a block', async () => {
+    expect(await check(stand)).toEqual([]);
+  });
+
+  it('warns about every bound, forwarded or probed port outside the block, less the allowed ones and React DevTools', async () => {
+    const findings = await check({...stand, ports: {block: 4200, allow: [4300]}});
+    expect(findings.map(f => [f.severity, f.message])).toEqual([
+      ['warn', "port 3000 (services.api.expose) is outside this project's block 4200–4299"],
+      ['warn', "port 4980 (mocks.push.port) is outside this project's block 4200–4299"],
+      ['warn', "port 9090 (android.reverse) is outside this project's block 4200–4299"],
+    ]);
+  });
+
+  it('counts the default dev server and bundler ports, and the last port of the block as inside', async () => {
+    const findings = await check({devserver: {}, services: {api: {start: 'x', health: 'tcp:4299'}}, ports: {block: 4200}});
+    expect(findings.map(f => f.message)).toEqual([
+      "port 8081 (devserver.port) is outside this project's block 4200–4299",
+      "port 8082 (devserver.internalPort) is outside this project's block 4200–4299",
+    ]);
+  });
+
+  it('rejects an unknown field under ports', () => {
+    expect(configSchema.safeParse({ports: {block: 4200, blocks: 1}}).success).toBe(false);
+    expect(configSchema.safeParse({ports: {block: 4200, allow: [4300]}}).success).toBe(true);
   });
 });
 

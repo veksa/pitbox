@@ -65,6 +65,22 @@ services: {
 
 Logs go to `.pitbox/logs/<name>.log` (`pitbox logs <name> -n 40 --grep error`).
 
+## ports
+
+```ts
+ports: {block: 4200, allow: [4300]},
+```
+
+The project's own block of 100 local ports, `block … block + 99`, for a machine where several projects' stands run
+at once. pitbox does not move anything into it; `doctor` (`port-block`) warns about each port the config binds,
+forwards or probes outside it: services' `expose` and local health-probe ports, `devserver.port` and
+`devserver.internalPort` (their defaults included), `mocks.llm.port`, `mocks.push.port` and `android.reverse`.
+
+| Field | Meaning |
+|---|---|
+| `block` | the first port of the block |
+| `allow` | ports outside the block the stand may use anyway: another project's stand that this one calls as a client (a probe on it, a port forwarded to devices). React DevTools' 8097 is always allowed |
+
 ## devserver
 
 The JavaScript dev server, run behind pitbox's proxy. The proxy sits on the device-facing port; the bundler
