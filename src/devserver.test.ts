@@ -14,6 +14,19 @@ import {freePort} from './util/net.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-dev-'));
 
+describe('ports', () => {
+  it("refuses a port another process serves on the wildcard address, which a loopback bind would quietly steal", async () => {
+    const other = net.createServer(s => s.end('theirs'));
+    await new Promise<void>(r => other.listen(0, '::', () => r()));
+    const port = (other.address() as net.AddressInfo).port;
+    try {
+      await expect(new DevProxy({port, upstreamPort: 1}).start()).rejects.toMatchObject({code: 'EADDRINUSE'});
+    } finally {
+      other.close();
+    }
+  });
+});
+
 describe('watcher patch', () => {
   it('allows the native watcher of a file map package that hides it behind exports', () => {
     const pkg = path.join(dir, 'app', 'node_modules', 'metro-file-map');

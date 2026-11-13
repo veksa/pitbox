@@ -15,6 +15,7 @@
 import http from 'node:http';
 import http2 from 'node:http2';
 import net from 'node:net';
+import {assertPortFree} from '../util/net.ts';
 import {PushUnregistered, type PushCenter, type PushOptions, type PushResult} from './push.ts';
 
 export type GatewayRequest = {method: string; path: string; headers: Record<string, string | undefined>; body: string};
@@ -243,6 +244,10 @@ export class PushGateway {
       });
     });
     const server = this.#server;
+    await assertPortFree(this.port).catch(e => {
+      this.#server = undefined;
+      throw e;
+    });
     await new Promise<void>((resolve, reject) => {
       server.once('error', e => {
         this.#server = undefined;

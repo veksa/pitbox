@@ -9,6 +9,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import zlib from 'node:zlib';
+import {assertPortFree} from '../util/net.ts';
 import {WebSocket as WsClient, WebSocketServer, type RawData, type WebSocket} from 'ws';
 import type {BytecodeCache, Compiler} from './hermes.ts';
 import {BytecodeCache as Cache} from './hermes.ts';
@@ -142,6 +143,7 @@ export class DevProxy {
 
   async start(): Promise<void> {
     if (this.listening) return;
+    await assertPortFree(this.opts.port);
     const server = http.createServer((req, res) => void this.#handle(req, res));
     server.on('upgrade', (req, socket, head) => this.#upgrade(req, socket as net.Socket, head));
     await new Promise<void>((resolve, reject) => {

@@ -37,7 +37,7 @@ import {parseWidget, widget} from '../ui/widget.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
-import {httpAlive} from '../util/net.ts';
+import {httpAlive, portAnswers, portListener, withinFolder} from '../util/net.ts';
 import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, listLeases, machineLock, refusal, staleReason} from '../lease/lease.ts';
@@ -241,6 +241,8 @@ export class Engine {
   async #claimDevPort(): Promise<ServiceState | undefined> {
     const dev = this.#dev;
     if (!dev) return undefined;
+    const foreign = await this.#foreignBundler();
+    if (foreign) return {name: DEVSERVER, status: 'failed', detail: `${foreign} (the bundler was not started)`, expose: [dev.port]};
     const reason = await dev.claim();
     return reason ? {name: DEVSERVER, status: 'failed', detail: reason, expose: [dev.port]} : undefined;
   }
@@ -252,12 +254,33 @@ export class Engine {
     return requested.filter(n => n !== DEVSERVER);
   }
 
+  /**
+   * Why the bundler's port is not this stand's to use: something this daemon did not start answers there, from
+   * outside the dev server's folder — another stand's bundler or proxy. Adopted as this stand's, its bundle
+   * would reach this stand's devices. A bundler started by hand in the dev server's folder is still adopted.
+   */
+  async #foreignBundler(): Promise<string | undefined> {
+    const dev = this.#dev;
+    if (!dev) return undefined;
+    const st = (await this.services.status()).find(s => s.name === DEVSERVER);
+    if (st?.status === 'up' || st?.status === 'starting') return undefined;
+    if (!(await portAnswers(dev.internalPort))) return undefined;
+    const owner = await portListener(dev.internalPort);
+    if (owner?.cwd && withinFolder(owner.cwd, dev.root)) return undefined;
+    const who = owner ? `pid ${owner.pid}${owner.cwd ? ` in ${owner.cwd}` : ''}` : 'another process';
+    return `port ${dev.internalPort}, the bundler's, is taken by ${who}: another stand's bundler or proxy, whose bundle would reach this stand's devices\nhint: give this stand ports of its own (devserver.port, devserver.internalPort)`;
+  }
+
   /** Brings the proxy up once the bundler answers, then prewarms. */
   async #devUp(prewarm: boolean) {
     const dev = this.#dev;
     if (!dev) return undefined;
     const st = (await this.services.status()).find(s => s.name === DEVSERVER);
     if (st?.status !== 'up' && st?.status !== 'external') return undefined;
+    if (st.status === 'external' && !dev.proxy.listening) {
+      const foreign = await this.#foreignBundler();
+      if (foreign) throw new Error(foreign);
+    }
     if (!dev.proxy.listening) await dev.start();
     return prewarm ? dev.prewarm() : undefined;
   }

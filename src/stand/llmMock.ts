@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import {assertPortFree} from '../util/net.ts';
 
 export type Fixture = {match: string; reply: string; model?: string};
 
@@ -68,6 +69,7 @@ export class LlmMock {
   async start() {
     if (this.running) return;
     this.#fixtures = loadFixtures(this.fixturesPath);
+    await assertPortFree(this.port);
     this.#server = http.createServer((req, res) => void this.#handle(req, res));
     await new Promise<void>((resolve, reject) => {
       this.#server!.once('error', reject);

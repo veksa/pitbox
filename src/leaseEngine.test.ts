@@ -387,6 +387,43 @@ describe('project tools on the session device', () => {
   }, 30_000);
 });
 
+describe("another stand's bundler", () => {
+  const listen = (port: number, cwd: string) => {
+    const child = spawn(process.execPath, ['-e', `require('http').createServer((q, s) => s.end('packager-status:running')).listen(${port}, '::', () => console.log('up'))`], {cwd, stdio: ['ignore', 'pipe', 'ignore']});
+    return new Promise<typeof child>(resolve => child.stdout.once('data', () => resolve(child)));
+  };
+
+  it('is not adopted: the dev server fails with its pid, and the proxy is not started', async () => {
+    const [port, internalPort] = [await freePort(), await freePort()];
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-other-'));
+    dirs.push(elsewhere);
+    const theirs = await listen(internalPort, elsewhere);
+    try {
+      const e = await session('bob', {}, {devserver: {adapter: 'command', start: 'node -e "setInterval(() => {}, 1000)"', port, internalPort}});
+      const r = (await e.methods.up({services: ['devserver']})) as {services: {name: string; status: string; detail?: string}[]};
+      const dev = r.services.find(s => s.name === 'devserver');
+      expect(dev?.status).toBe('failed');
+      expect(dev?.detail).toMatch(new RegExp(`^port ${internalPort}, the bundler's, is taken by pid ${theirs.pid}`));
+      expect(await new Promise(resolve => net.connect(port, '127.0.0.1').once('connect', () => resolve(true)).once('error', () => resolve(false)))).toBe(false);
+    } finally {
+      theirs.kill();
+    }
+  }, 30_000);
+
+  it("is adopted when it runs in the dev server's own folder", async () => {
+    const [port, internalPort] = [await freePort(), await freePort()];
+    const e = await session('alice', {}, {devserver: {adapter: 'command', start: 'node -e "setInterval(() => {}, 1000)"', port, internalPort}});
+    const mine = await listen(internalPort, dirs.at(-1)!);
+    try {
+      const r = (await e.methods.up({services: ['devserver']})) as {services: {name: string; status: string}[]};
+      expect(r.services.find(s => s.name === 'devserver')?.status).toBe('external');
+      await e.methods.down({});
+    } finally {
+      mine.kill();
+    }
+  }, 30_000);
+});
+
 describe('push gateway routing', () => {
   const center = (online: {android: string[]; apple: string[]}) =>
     new PushCenter({target: async () => Promise.reject(new Error('unused')), online: async () => online, ui: async () => Promise.reject(new Error('unused'))});
