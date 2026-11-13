@@ -40,13 +40,20 @@ const PLAN = {
 
 const pitboxIn = cwd => (args, opts = {}) => {
   const r = spawnSync(process.execPath, [bin, ...args], {cwd, encoding: 'utf8', timeout: opts.timeout ?? 600_000});
-  return {code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim()};
+  return {code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim(), stdout: r.stdout ?? ''};
 };
 
 const mustIn = cwd => (args, opts) => {
   const r = pitboxIn(cwd)(args, opts);
   if (r.code !== 0) throw new Error(`pitbox ${args.join(' ')} failed:\n${r.out}`);
   return r.out;
+};
+
+/** A command's --json answer: stdout alone, as a notice on stderr (a restarted daemon, a warning) is no JSON. */
+const jsonIn = cwd => (args, opts) => {
+  const r = pitboxIn(cwd)([...args, '--json'], opts);
+  if (r.code !== 0) throw new Error(`pitbox ${args.join(' ')} failed:\n${r.out}`);
+  return JSON.parse(r.stdout);
 };
 
 const step = msg => process.stdout.write(`\n▸ ${msg}\n`);
@@ -64,38 +71,42 @@ const gradlew = dir => path.join(dir, process.platform === 'win32' ? 'gradlew.ba
  * session holds is never used: booting its AVD gives this run a copy, and the flows name the copy by serial, since
  * the AVD's name would also match the other session's emulator.
  */
-const deviceOf = (kind, pitbox, must) => {
-  const {devices, avds} = JSON.parse(must(['devices', '--json']));
+const deviceOf = (kind, pitbox, json) => {
+  const {devices, avds} = json(['devices']);
   const named = process.env[`PITBOX_E2E_AVD_${kind.toUpperCase()}`];
-  const running = devices.find(d => d.state === 'device' && d.holder === 'yours' && (named ? d.avd === named : d.kind === kind));
+  const running = devices.find(d => d.state === 'device' && /^yours\b/.test(d.holder ?? '') && (named ? d.avd === named : d.kind === kind));
   const candidates = running ? [running.avd] : named ? [named] : avds.filter(a => a.kind === kind).map(a => a.name);
   if (!candidates.length) return {skip: 'no AVD of this kind'};
   for (const name of candidates) {
     step(`${kind}: ${name}`);
     let serial = running?.serial;
     let avd = name;
+    let booted = false;
     if (!running) {
-      const b = JSON.parse(must(['boot', name, '--json'], {timeout: 900_000}));
+      const b = json(['boot', name], {timeout: 900_000});
       ({serial, avd} = b);
-      console.log(`${avd} booted as ${serial}${b.instead ? ` (${b.instead})` : ''}`);
+      // One this session held already (booted by hand in this project) is not shut down after its kind, as a running
+      // one is not; the daemon's stop at the end takes down what it booted.
+      booted = !b.already;
+      console.log(`${avd} ${b.already ? 'already running' : 'booted'} as ${serial}${b.instead ? ` (${b.instead})` : ''}`);
     }
     if (pitbox(['doctor']).out.includes(`${avd}: locked after boot`)) {
       console.log(`${avd} has a screen lock: apps cannot start after a boot — next`);
-      if (!running) pitbox(['shutdown', '--device', serial], {timeout: 120_000});
+      if (booted) pitbox(['shutdown', '--device', serial], {timeout: 120_000});
       continue;
     }
-    return {avd: serial, name: avd, booted: !running};
+    return {avd: serial, name: avd, booted};
   }
   return {skip: 'every AVD of this kind has a screen lock'};
 };
 
 const results = [];
 
-const runKind = async (label, kind, pitbox, must, body) => {
+const runKind = async (label, kind, pitbox, json, body) => {
   let dev;
   const checks = [];
   try {
-    dev = deviceOf(kind, pitbox, must);
+    dev = deviceOf(kind, pitbox, json);
     if (dev.skip) return results.push({kind: label, status: 'skip', note: dev.skip});
     await body(dev.avd, checks);
   } catch (e) {
@@ -125,7 +136,7 @@ if (examples.includes('android')) {
       results.push({kind, status: 'skip', note: `no plan for "${kind}"`});
       continue;
     }
-    await runKind(kind, kind, pitbox, must, async (avd, checks) => {
+    await runKind(kind, kind, pitbox, jsonIn(nativeDir), async (avd, checks) => {
       console.log(must(['install', nativeApk, '--device', avd, '--replace']));
       // Watches also get the watch app (tile, complication, ambient) and the watch face that shows it.
       for (const m of plan.apks ?? []) console.log(must(['install', path.join(nativeDir, m, 'build', 'outputs', 'apk', 'debug', `${m}-debug.apk`), '--device', avd, '--replace']));
@@ -163,7 +174,7 @@ if (examples.includes('react-native') && (!process.env.PITBOX_E2E_KINDS || proce
   exec(gradlew(path.join(rnDir, 'android')), ['assembleDebug', '-q', `-PreactNativeArchitectures=${abi}`], path.join(rnDir, 'android'));
   must(['daemon', 'restart']);
   console.log(must(['up'], {timeout: 900_000}));
-  await runKind('react-native', 'phone', pitbox, must, async (avd, checks) => {
+  await runKind('react-native', 'phone', pitbox, jsonIn(rnDir), async (avd, checks) => {
     console.log(must(['install', rnApk, '--device', avd, '--replace']));
     checks.push(...rnChecks({rn: pitbox, device: avd, rnDir, platform: 'android'}));
     checks.push(...rnEmbedChecks({rn: pitbox, device: avd, apk: rnApk, install: apk => console.log(must(['install', apk, '--device', avd, '--replace']))}));
