@@ -23,9 +23,11 @@ export const UNLEASED = 'running, unleased';
 export class DeviceLeases {
   readonly holder: Holder;
   readonly #held = new Map<string, Held>();
+  /** Whether the project keeps the devices it booted up after giving them back: they are then never reaped. */
+  keepBooted: () => boolean = () => false;
 
-  constructor(root: string, pid = process.pid, label = sessionLabel(root)) {
-    this.holder = {owner: `daemon:${root}`, label, pid, pidStart: processStart(pid), root};
+  constructor(root: string, pid = process.pid, label = sessionLabel(root), session = process.env.PITBOX_SESSION?.trim() || undefined) {
+    this.holder = {owner: `daemon:${root}`, label, pid, pidStart: processStart(pid), root, ...(session ? {session} : {})};
   }
 
   /** A lease of this daemon, or of a shell lease taken in the same project (`pitbox lease acquire` there). */
@@ -49,7 +51,7 @@ export class DeviceLeases {
 
   /** Takes the device or renews the hold; throws the refusal naming its holder when someone else has it. */
   claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean; created?: boolean; instance?: string} = {}): Lease {
-    const r = acquire(platform, id, this.holder, {...opts, ttlMs: DAEMON_TTL_MS}, this.isMine);
+    const r = acquire(platform, id, this.holder, {...opts, ...(opts.booted && this.keepBooted() ? {keep: true} : {}), ttlMs: DAEMON_TTL_MS}, this.isMine);
     if (!r.ok) throw new Error(refusal(r.lease, opts.name ?? r.lease.name ?? id));
     const was = this.#held.get(key(platform, id));
     this.#held.set(key(platform, id), {

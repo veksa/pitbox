@@ -9,7 +9,8 @@
 // system reused for another program does not count). It is stale once the process is gone, after a short grace in
 // which a restarted daemon picks its devices up. Only a lease with no process (a shell lease) expires by time.
 // An Android serial is reused by the next emulator on that port, so an Android lease also names the boot it was
-// taken on (`instance`): a device booted again is a different device.
+// taken on (`instance`): a device booted again is a different device. A stale lease is ended by reap.ts: the device
+// pitbox booted for it is shut down after a grace in which the same session may take it again.
 
 import {execFileSync} from 'node:child_process';
 import crypto from 'node:crypto';
@@ -20,8 +21,11 @@ import {isAlive} from '../util/proc.ts';
 
 export type Platform = 'android' | 'apple';
 
-/** Who asks: a daemon (`daemon:<root>`) or a shell lease (`as:<label>@<root>`). */
-export type Holder = {owner: string; label: string; pid?: number; pidStart?: number; root?: string};
+/**
+ * Who asks: a daemon (`daemon:<root>`) or a shell lease (`as:<label>@<root>`). `session` is the session's own name
+ * (`PITBOX_SESSION`, `--as`) without the project's folder, so a daemon and a shell holder of one session can tell.
+ */
+export type Holder = {owner: string; label: string; pid?: number; pidStart?: number; root?: string; session?: string};
 
 export type Lease = Holder & {
   platform: Platform;
@@ -40,12 +44,19 @@ export type Lease = Holder & {
   booted?: boolean;
   /** pitbox created this simulator for the holder: it is deleted with the lease. */
   created?: boolean;
+  /** Booted for a project that keeps its devices up (`devices.shutdownOnRelease: false`): never shut down by reap.ts. */
+  keep?: boolean;
 };
 
 /** A daemon's lease does not expire while it runs; this is only what it says about itself. */
 export const DAEMON_TTL_MS = 10 * 60_000;
 /** A holder whose process ended keeps its devices this long: a daemon restarted after an upgrade picks them up. */
 export const DEAD_GRACE_MS = 60_000;
+/**
+ * A device pitbox booted for a holder whose lease ended (its process gone, its ttl out) keeps running this long
+ * before any pitbox shuts it down: the session, restarted, takes it again instead of booting a twin (reap.ts).
+ */
+export const ORPHAN_GRACE_MS = 10 * 60_000;
 /** A lock held longer than this, or by a process that is gone, was left behind. */
 const LOCK_STALE_MS = 60_000;
 
@@ -134,6 +145,18 @@ export const staleReason = (l: Lease, now = Date.now(), instance?: string): stri
   }
   return quiet > l.ttlMs ? `not renewed for ${Math.round(quiet / 60_000)} min` : undefined;
 };
+
+/** When a stale lease stopped counting: its last heartbeat plus the grace (a holder process) or the ttl (none). */
+export const staleSince = (l: Lease): number => l.heartbeat + (l.pid ? DEAD_GRACE_MS : l.ttlMs);
+
+/** The session a lease or holder is of: its own name when it carries one, else its label. */
+const sessionOf = (h: Holder) => h.session ?? h.label;
+
+/**
+ * Whether a holder is the same session as the one a lease was taken by: the same project folder and the same session
+ * name. A session restarted (its agent died and came back) is the same session; another session of the project is not.
+ */
+export const sameSession = (l: Lease, h: Holder): boolean => !!l.root && l.root === h.root && sessionOf(l) === sessionOf(h);
 
 const ago = (ms: number) => (ms < 90_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : ms < 90 * 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 3_600_000)} h`);
 
@@ -373,10 +396,10 @@ export const withLockAsync = async <T>(file: string, fn: () => Promise<T>, waitM
 /** A machine-wide lock under the lease folder, for work no two sessions may do at once (naming a new simulator). */
 export const machineLock = <T>(name: string, fn: () => Promise<T>, waitMs?: number) => withLockAsync(path.join(leaseDir(), name), fn, waitMs);
 
-export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; ttlMs?: number; instance?: string; now?: number};
+export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; keep?: boolean; ttlMs?: number; instance?: string; now?: number};
 
 export type Acquired =
-  | {ok: true; lease: Lease; renewed: boolean; replaced?: {lease: Lease; why: string}}
+  | {ok: true; lease: Lease; renewed: boolean; replaced?: {lease: Lease; why: string; adopted?: boolean}}
   | {ok: false; lease: Lease};
 
 /**
@@ -403,12 +426,16 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
         ttlMs: own ? (opts.ttlMs ?? current.ttlMs) : current.ttlMs,
         booted: current.booted || opts.booted || undefined,
         created: current.created || opts.created || undefined,
+        keep: current.keep || opts.keep || undefined,
       };
       writeWhole(file, JSON.stringify(renewed, null, 1));
       return {ok: true as const, lease: renewed, renewed: true};
     }
     const why = current ? staleReason(current, now, opts.instance) : undefined;
     if (current && !why) return {ok: false as const, lease: current};
+    // The same session back after its holder died (a restarted agent, its daemon or script): the device pitbox booted
+    // for it stays one pitbox booted, so it still goes down with the lease and is reaped if the session dies again.
+    const adopted = !!(current && current.booted && !otherBoot && sameSession(current, holder));
     const fresh: Lease = {
       ...holder,
       platform,
@@ -419,15 +446,16 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
       since: now,
       heartbeat: now,
       ttlMs: opts.ttlMs ?? DAEMON_TTL_MS,
-      booted: opts.booted || undefined,
-      created: opts.created || undefined,
+      booted: opts.booted || (adopted && current?.booted) || undefined,
+      created: opts.created || (adopted && current?.created) || undefined,
+      keep: opts.keep || (adopted && current?.keep) || undefined,
     };
     try {
       writeWhole(file, JSON.stringify(fresh, null, 1));
     } catch (e) {
       throw unwritable(e);
     }
-    return {ok: true as const, lease: fresh, renewed: false, ...(current && why ? {replaced: {lease: current, why}} : {})};
+    return {ok: true as const, lease: fresh, renewed: false, ...(current && why ? {replaced: {lease: current, why, ...(adopted ? {adopted} : {})}} : {})};
   });
 };
 
@@ -456,6 +484,24 @@ export const release = (platform: Platform, device: string, isMine: (l: Lease) =
     if (!isMine(current) && !opts.force && !staleReason(current, Date.now(), opts.instance)) throw new LeaseError(`${current.name ?? device} is held by ${describeHolder(current)}, not by you`, current);
     fs.rmSync(file, {force: true});
     return {released: true, lease: current};
+  });
+};
+
+/** The same lease file still: nobody took, renewed or released it since it was read. */
+const unchanged = (a: Lease, b: Lease) => a.owner === b.owner && a.since === b.since && a.heartbeat === b.heartbeat && a.pid === b.pid && a.instance === b.instance;
+
+/**
+ * Replaces a lease judged stale with `next` (or removes it), under its lock and only while it is still the very lease
+ * that was judged: a holder that took or renewed it in the meantime keeps it. Returns whether it was replaced.
+ */
+export const replaceStale = (seen: Lease, next?: Lease): boolean => {
+  const file = leaseFile(seen.platform, seen.device);
+  return withLock(file, () => {
+    const current = parse(file);
+    if (!current || !unchanged(current, seen)) return false;
+    if (next) writeWhole(file, JSON.stringify(next, null, 1));
+    else fs.rmSync(file, {force: true});
+    return true;
   });
 };
 

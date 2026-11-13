@@ -42,6 +42,7 @@ import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, listLeases, machineLock, refusal, staleReason} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
+import {describeReaped, reapLeases, type Running} from '../lease/reap.ts';
 import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated} from '../lease/created.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
@@ -180,6 +181,7 @@ export class Engine {
     this.#loaded = loaded;
     this.#mtime = fs.statSync(loaded.file).mtimeMs;
     this.#leases = new DeviceLeases(loaded.root);
+    this.#leases.keepBooted = () => this.config.devices?.shutdownOnRelease === false;
     // A daemon restarted after an upgrade keeps the devices the previous one held.
     this.#leases.adopt();
     const ctx = {root: loaded.root, stateDir: loaded.stateDir, shell: loaded.config.shell};
@@ -1180,6 +1182,7 @@ export class Engine {
       unread.add('android');
     }
     const lost = this.#leases.beat(unread.size === 2 ? undefined : online, this.#booting, Date.now(), unread);
+    await this.#reap(online, unread).catch(() => undefined);
     // Copies of AVDs nobody deletes any more: swept now and then, by whichever daemon beats.
     if (this.android && Date.now() - this.#lastReap > 5 * 60_000) {
       this.#lastReap = Date.now();
@@ -1190,6 +1193,40 @@ export class Engine {
       this.#uis.delete(h.id);
       this.#forwarded.delete(h.id);
     }
+  }
+
+  /**
+   * Ends the leases nobody released (lease/reap.ts): shuts down the devices pitbox booted for a holder that died or ran
+   * out, once their grace is over, and clears the other stale leases — machine-wide, whichever project took them.
+   */
+  async #reap(online?: Running[], unread: Set<'apple' | 'android'> = new Set()) {
+    const skip = new Set(unread);
+    if (!this.#isLocalApple(this.apple)) skip.add('apple');
+    if (!this.android) skip.add('android');
+    if (!online) {
+      online = [];
+      try {
+        if (!skip.has('apple')) online.push(...(await this.apple!.simulators()).filter(x => x.state !== 'Shutdown').map(x => ({platform: 'apple' as const, id: x.udid, name: x.name})));
+      } catch {
+        skip.add('apple');
+      }
+      try {
+        if (!skip.has('android')) online.push(...(await this.android!.devices()).map(d => ({platform: 'android' as const, id: d.serial, name: d.avd, instance: d.instance})));
+      } catch {
+        skip.add('android');
+      }
+    }
+    const r = await reapLeases({
+      running: online,
+      unread: skip,
+      shutdown: async (platform, id) => {
+        await this.#uis.get(id)?.stop().catch(() => undefined);
+        this.#uis.delete(id);
+        this.#forwarded.delete(id);
+        return platform === 'apple' ? (this.apple as AppleDriver).shutdown(id) : this.android!.shutdown(id);
+      },
+    });
+    for (const line of describeReaped(r)) process.stderr.write(`${new Date().toISOString()} ${line}\n`);
   }
 
   #beatTimer?: NodeJS.Timeout;
@@ -1216,6 +1253,8 @@ export class Engine {
     };
     this.#beatTimer = setTimeout(beat, 30_000);
     this.#beatTimer.unref();
+    // A daemon that starts sweeps at once: the one that took a lease may be the one that died.
+    setTimeout(() => void this.#reap().catch(() => undefined), 5000).unref();
   }
 
   /**
