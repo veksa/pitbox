@@ -59,24 +59,32 @@ const exec = (file, args, cwd) =>
 const gradlew = dir => path.join(dir, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 
 /**
- * A booted device of `kind`: a running one, the AVD named in the environment, or the first AVD of the kind that
- * can start apps (one with a screen lock cannot after a boot).
+ * A booted device of `kind`, as its serial: a running one this session holds, the AVD named in the environment, or
+ * the first AVD of the kind that can start apps (one with a screen lock cannot after a boot). A device another
+ * session holds is never used: booting its AVD gives this run a copy, and the flows name the copy by serial, since
+ * the AVD's name would also match the other session's emulator.
  */
 const deviceOf = (kind, pitbox, must) => {
   const {devices, avds} = JSON.parse(must(['devices', '--json']));
   const named = process.env[`PITBOX_E2E_AVD_${kind.toUpperCase()}`];
-  const running = devices.find(d => d.state === 'device' && (named ? d.avd === named : d.kind === kind));
+  const running = devices.find(d => d.state === 'device' && d.holder === 'yours' && (named ? d.avd === named : d.kind === kind));
   const candidates = running ? [running.avd] : named ? [named] : avds.filter(a => a.kind === kind).map(a => a.name);
   if (!candidates.length) return {skip: 'no AVD of this kind'};
   for (const name of candidates) {
     step(`${kind}: ${name}`);
-    if (!running) console.log(must(['boot', name], {timeout: 900_000}));
-    if (pitbox(['doctor']).out.includes(`${name}: locked after boot`)) {
-      console.log(`${name} has a screen lock: apps cannot start after a boot — next`);
-      if (!running) pitbox(['shutdown', '--device', name], {timeout: 120_000});
+    let serial = running?.serial;
+    let avd = name;
+    if (!running) {
+      const b = JSON.parse(must(['boot', name, '--json'], {timeout: 900_000}));
+      ({serial, avd} = b);
+      console.log(`${avd} booted as ${serial}${b.instead ? ` (${b.instead})` : ''}`);
+    }
+    if (pitbox(['doctor']).out.includes(`${avd}: locked after boot`)) {
+      console.log(`${avd} has a screen lock: apps cannot start after a boot — next`);
+      if (!running) pitbox(['shutdown', '--device', serial], {timeout: 120_000});
       continue;
     }
-    return {avd: name, booted: !running};
+    return {avd: serial, name: avd, booted: !running};
   }
   return {skip: 'every AVD of this kind has a screen lock'};
 };
@@ -95,7 +103,7 @@ const runKind = async (label, kind, pitbox, must, body) => {
   } finally {
     if (dev?.booted) pitbox(['shutdown', '--device', dev.avd], {timeout: 120_000});
   }
-  results.push({kind: label, avd: dev?.avd, status: checks.length && checks.every(c => c.ok) ? 'pass' : 'fail', checks});
+  results.push({kind: label, avd: dev?.name, status: checks.length && checks.every(c => c.ok) ? 'pass' : 'fail', checks});
 };
 
 const examples = process.env.PITBOX_E2E_EXAMPLES?.split(',').map(s => s.trim()) ?? ['android', 'react-native'];
