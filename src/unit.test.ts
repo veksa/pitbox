@@ -72,7 +72,12 @@ describe('config', () => {
       const range = other < p ? `${other}-${p}` : `${p}-${other}`;
       // The neighbour may be some other program's on a busy machine: then there is nothing to check here.
       if (await portAnswers(other)) return;
-      for (let i = 0; i < 5; i++) expect(await freePort({PITBOX_PORTS: range})).toBe(other);
+      for (let i = 0; i < 5; i++) {
+        const got = await freePort({PITBOX_PORTS: range}).catch(() => undefined);
+        // Test files run in parallel and take ephemeral ports too: a neighbour taken meanwhile proves nothing.
+        if (got !== other && (await portAnswers(other))) return;
+        expect(got).toBe(other);
+      }
       await expect(freePort({PITBOX_PORTS: `${p}-${p}`})).rejects.toThrow(/no free port in PITBOX_PORTS/);
     } finally {
       taken.close();
