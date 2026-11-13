@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
-import {exposedPorts, type ServiceConfig} from '../config/schema.ts';
+import {DEVICE_PLACEHOLDERS, exposedPorts, type DevicePlaceholder, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
@@ -26,7 +26,7 @@ import {PushCenter} from '../push/push.ts';
 import {PushGateway} from '../push/gateway.ts';
 import {fromPayloadFile} from '../push/payload.ts';
 import {ServiceManager, type ServiceState} from '../stand/services.ts';
-import {describeTool, runTool} from '../stand/tools.ts';
+import {describeTool, runTool, toolDevicePlaceholders} from '../stand/tools.ts';
 import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import type {PerfData} from '../flows/budget.ts';
@@ -604,6 +604,31 @@ export class Engine {
     }
     const c = this.#leases.choose(candidates, {observe: opts.observe});
     return c.platform === 'apple' ? {platform: 'apple', id: c.id, s: s!} : {platform: 'android', id: c.id, a: a!};
+  }
+
+  /**
+   * The device a tool's `{apple_device}` / `{android_device}` names: the one this session holds on that platform and
+   * that is up now. Never `booted`, never the only device online, never another session's or one nobody leased: with
+   * none, or several, the tool does not run.
+   */
+  async #sessionDevice(platform: 'apple' | 'android', tool: string): Promise<string> {
+    const placeholder = `{${platform}_device}`;
+    const what = platform === 'apple' ? 'booted simulator' : 'online Android device';
+    let mine: {id: string; name?: string}[];
+    if (platform === 'apple') {
+      if (!this.apple) throw new Error(`tool ${tool} runs on ${placeholder}: there are no Apple simulators here`);
+      if (!this.#isLocalApple(this.apple)) throw new Error(`tool ${tool} runs on ${placeholder}: the simulators are on a remote Mac, and the tool runs on this one`);
+      mine = (await this.apple.booted()).filter(x => this.#leases.holds('apple', x.udid)).map(x => ({id: x.udid, name: x.name}));
+    } else {
+      const a = this.android ?? this.#needAndroid();
+      mine = (await a.devices()).filter(d => d.state === 'device' && this.#leases.holds('android', d.serial, d.instance)).map(d => ({id: d.serial, name: d.avd ?? d.model}));
+    }
+    if (mine.length === 1) return mine[0]!.id;
+    if (!mine.length) {
+      throw new Error(`tool ${tool} runs on ${placeholder}, and this session holds no ${what}\nhint: \`device action=boot\` gives this session one of its own; the tool never falls back to another device`);
+    }
+    const list = mine.map(m => `${m.name ?? m.id} (${m.id})`).join(', ');
+    throw new Error(`tool ${tool} runs on ${placeholder}, and this session holds several: ${list}\nhint: \`device action=release device=<id>\` gives back the ones the tool is not for`);
   }
 
   /** `yours`, `held by "…"` or `running, unleased` for device lists; nothing for an idle simulator nobody holds. */
@@ -1517,7 +1542,9 @@ export class Engine {
       const tool = this.config.tools?.[name];
       if (!tool) throw new Error(`unknown tool: ${name} (known: ${Object.keys(this.config.tools ?? {}).join(', ') || 'none'})`);
       const params = Object.fromEntries(Object.entries((p.params as Params) ?? {}).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
-      return runTool({root: this.#loaded.root, stateDir: this.#loaded.stateDir, shell: this.config.shell}, name, tool, params, num(p, 'maxChars') ?? 6000);
+      const devices: Partial<Record<DevicePlaceholder, string>> = {};
+      for (const d of toolDevicePlaceholders(tool)) devices[d] = await this.#sessionDevice(DEVICE_PLACEHOLDERS[d], name);
+      return runTool({root: this.#loaded.root, stateDir: this.#loaded.stateDir, shell: this.config.shell}, name, tool, params, num(p, 'maxChars') ?? 6000, devices);
     },
 
     actorTypes: async () => this.actors.types(),

@@ -94,6 +94,9 @@ left to each agent's discipline.
 - **One version per project.** Sessions of one project share its daemon. A session with another pitbox version
   replaces the daemon only when it is newer and the daemon is idle; otherwise it uses the daemon as it is and says
   so. `doctor` (`daemon-versions`) warns while clients of other versions use the daemon.
+- **Project tools run on the session's device.** A tool's `{apple_device}` / `{android_device}` is the udid or
+  serial of the device this session holds on that platform ([config.md](config.md#tools)); with none, or several,
+  the tool is refused rather than pointed at `booted` or the only device adb sees.
 - **Forwards follow leases.** The daemon applies `adb reverse` only on devices it holds, and removes only the
   ports it forwarded, never another stand's.
 - **The push gateway delivers only to devices the session holds.** Never to another session's, never to one that
@@ -135,7 +138,9 @@ still refused, and a lease of a daemon that is gone is taken over once its grace
    drive a device that `device list` shows as held by someone else or as `running, unleased`; do not "free up" the
    machine by stopping other sessions' devices. If memory is short (`boot` warns), shut down your own.
 3. A script or skill that calls `simctl` / `adb` directly takes `pitbox lease acquire <device> --as "<label>"`
-   first and stops when it exits 1; renews it on long runs; `pitbox lease release` at the end.
+   first and stops when it exits 1; renews it on long runs; `pitbox lease release` at the end. A project tool
+   that does gets the device as `{apple_device}` / `{android_device}` — never `simctl … booted`, a bare `adb` or
+   `gradlew installDebug` with no serial: those reach whichever device the system picks.
 4. At the end of the task: `device action=release` (or `stand action=down`) — pitbox shuts down what it booted
    for you and leaves the rest.
 

@@ -51,6 +51,14 @@ describe('config', () => {
     await expect(loadConfig({cwd: dir})).rejects.toThrow(/missing query/);
   });
 
+  it('takes the device placeholders as built in and refuses to declare them', async () => {
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({tools: {fresh: {run: 'simctl install {apple_device} {app}; adb -s {android_device} shell true', params: {app: 'app path'}}}}));
+    expect((await loadConfig({cwd: dir})).config.tools?.fresh?.params).toEqual({app: 'app path'});
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({tools: {fresh: {run: 'simctl install {apple_device}', params: {apple_device: 'udid'}}}}));
+    await expect(loadConfig({cwd: dir})).rejects.toThrow(/tools\.fresh\.params: apple_device is built in/);
+  });
+
   it('takes optional tool parameters and lists them marked as such', async () => {
     const {formatResult} = await import('./format.ts');
     const {describeTool} = await import('./stand/tools.ts');

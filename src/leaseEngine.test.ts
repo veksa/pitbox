@@ -342,6 +342,51 @@ describe('emulators', () => {
   });
 });
 
+describe('project tools on the session device', () => {
+  const node = JSON.stringify(process.execPath.replace(/\\/g, '/'));
+  const args = `${node} -e "console.log(JSON.stringify(process.argv.slice(1)))"`;
+  const tools = {
+    tools: {
+      install: {run: `${args} {apple_device} {app}`, params: {app: 'app path'}},
+      reset: {run: `${args} {android_device}`},
+    },
+  };
+  const run = async (e: Awaited<ReturnType<typeof session>>, name: string, params: Record<string, string> = {}) =>
+    ((await e.methods.tool({name, params})) as {output: string}).output;
+
+  it("fills {apple_device} with this session's simulator, never another booted one", async () => {
+    const apple = new FakeApple([{}]);
+    const a = await session('alice', {apple}, tools);
+    const b = await session('bob', {apple}, tools);
+    await a.methods.boot({avd: 'iPhone 17'});
+    // Another session's simulator is booted, this one holds none: the tool does not run.
+    await expect(run(b, 'install', {app: 'x.app'})).rejects.toThrow(/tool install runs on \{apple_device\}, and this session holds no booted simulator\nhint: `device action=boot`/);
+    await b.methods.boot({avd: 'iPhone 17'});
+    expect(await run(b, 'install', {app: 'x.app'})).toBe('["NEW2","x.app"]');
+    expect(await run(a, 'install', {app: 'x.app'})).toBe('["U1","x.app"]');
+    // A caller cannot point it elsewhere.
+    expect(await run(b, 'install', {app: 'x.app', apple_device: 'U1'})).toBe('["NEW2","x.app"]');
+  }, 30_000);
+
+  it('refuses a simulator that runs with no lease, and several of its own', async () => {
+    const apple = new FakeApple([{state: 'Booted'}, {}, {}]);
+    const b = await session('bob', {apple}, tools);
+    await expect(run(b, 'install', {app: 'x.app'})).rejects.toThrow(/holds no booted simulator/);
+    await b.methods.boot({avd: 'U2'});
+    await b.methods.boot({avd: 'U3'});
+    await expect(run(b, 'install', {app: 'x.app'})).rejects.toThrow(/holds several: iPhone 17 \(U2\), iPhone 17 \(U3\)/);
+  }, 30_000);
+
+  it("fills {android_device} with this session's emulator", async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android}, tools);
+    const b = await session('bob', {android}, tools);
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await expect(run(b, 'reset')).rejects.toThrow(/tool reset runs on \{android_device\}, and this session holds no online Android device/);
+    expect(await run(a, 'reset')).toBe('["emulator-5554"]');
+  }, 30_000);
+});
+
 describe('push gateway routing', () => {
   const center = (online: {android: string[]; apple: string[]}) =>
     new PushCenter({target: async () => Promise.reject(new Error('unused')), online: async () => online, ui: async () => Promise.reject(new Error('unused'))});

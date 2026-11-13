@@ -20,7 +20,7 @@ const quietTypelessConfig = () => {
     for (const h of handlers) h(w);
   });
 };
-import {configSchema, type PitboxConfig} from './schema.ts';
+import {configSchema, isDevicePlaceholder, type PitboxConfig} from './schema.ts';
 
 export const CONFIG_NAMES = ['pitbox.config.ts', 'pitbox.config.mts', 'pitbox.config.mjs', 'pitbox.config.js', 'pitbox.config.json'];
 
@@ -71,7 +71,9 @@ export const loadConfig = async (opts: {file?: string; cwd?: string} = {}): Prom
   const config = parsed.data;
   for (const [name, tool] of Object.entries(config.tools ?? {})) {
     const declared = new Set(Object.keys(tool.params ?? {}));
-    const missing = [...tool.run.matchAll(/\{(\w+)\}/g)].map(m => m[1]).filter(p => p && !declared.has(p));
+    const reserved = [...declared].filter(isDevicePlaceholder);
+    if (reserved.length) throw new Error(`invalid config ${file}:\n  tools.${name}.params: ${reserved.join(', ')} is built in (the device this session holds) and cannot be declared`);
+    const missing = [...tool.run.matchAll(/\{(\w+)\}/g)].map(m => m[1]).filter(p => p && !declared.has(p) && !isDevicePlaceholder(p));
     if (missing.length) throw new Error(`invalid config ${file}:\n  tools.${name}.params: missing ${[...new Set(missing)].join(', ')}`);
   }
   if (config.devserver && config.services?.devserver) {

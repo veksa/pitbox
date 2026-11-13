@@ -226,10 +226,31 @@ tools: {
 
 | Field | Meaning |
 |---|---|
-| `run` | command with `{param}` placeholders; values are quoted for the shell |
-| `params` | every placeholder must be listed (checked on load). `name: 'description'` is a required parameter. `name: {description, default}` is an optional one: left out, `{name}` becomes the default (quoted), or nothing at all — not even an empty argument — when there is no default. `pitbox tools` marks optional ones with `?` |
+| `run` | command with `{param}` placeholders; values are quoted for the shell. `{apple_device}` and `{android_device}` are built in (below) |
+| `params` | every placeholder except the built-in ones must be listed (checked on load), and those cannot be declared. `name: 'description'` is a required parameter. `name: {description, default}` is an optional one: left out, `{name}` becomes the default (quoted), or nothing at all — not even an empty argument — when there is no default. `pitbox tools` marks optional ones with `?` |
 | `description` | shown to agents |
 | `cwd`, `env`, `timeout` | working directory, environment, seconds (default 120) |
+
+A tool that drives a simulator or emulator itself (`simctl`, `adb`, a Gradle install task) names the device of the
+session that calls it with a built-in placeholder, never `booted` or a bare `adb`, which act on whichever device the
+system picks — with several sessions up, often another session's:
+
+```ts
+tools: {
+  fresh: {run: 'xcrun simctl uninstall {apple_device} com.example.app && xcrun simctl install {apple_device} {app}', params: {app: '.app path'}},
+  wipe: {run: 'adb -s {android_device} shell pm clear com.example.app'},
+},
+```
+
+| Placeholder | Filled with |
+|---|---|
+| `{apple_device}` | the udid of the booted simulator on this Mac that this session holds |
+| `{android_device}` | the serial of the online emulator or phone that this session holds |
+
+"Holds" is the lease of [parallel.md](parallel.md): a device the session booted or drove through pitbox, or took
+with `pitbox lease acquire` in the project. When the session holds no such device, or several on that platform, the
+tool does not run and the answer says why (`device action=boot` gives it one); pitbox never falls back to another
+device. A caller cannot pass the placeholders as parameters.
 
 ## mocks
 

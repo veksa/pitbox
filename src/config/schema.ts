@@ -46,7 +46,7 @@ export const actorSchema = z.object({
 
 export const toolSchema = z.object({
   description: z.string().optional(),
-  /** Command with `{param}` placeholders; values are quoted for the shell. */
+  /** Command with `{param}` placeholders, values quoted for the shell; `{apple_device}` / `{android_device}` are built in. */
   run: z.string(),
   cwd: z.string().optional(),
   env: env.optional(),
@@ -57,6 +57,16 @@ export const toolSchema = z.object({
   params: z.record(z.string(), z.union([z.string(), z.object({description: z.string(), default: z.string().optional()}).strict()])).optional(),
   timeout: z.number().positive().optional(),
 });
+
+/**
+ * Built-in placeholders a tool's `run` may use without declaring them: the udid or serial of the device the calling
+ * session holds on that platform. A script that calls `simctl` or `adb` itself targets it, never `booted` or the
+ * only device adb sees, which may be another session's.
+ */
+export const DEVICE_PLACEHOLDERS = {apple_device: 'apple', android_device: 'android'} as const;
+export type DevicePlaceholder = keyof typeof DEVICE_PLACEHOLDERS;
+
+export const isDevicePlaceholder = (name: string): name is DevicePlaceholder => Object.hasOwn(DEVICE_PLACEHOLDERS, name);
 
 export type ToolParam = {name: string; description: string; optional: boolean; default?: string};
 
