@@ -25,8 +25,18 @@ class FakeApple {
 
   constructor(sims: Partial<Sim>[]) {
     this.sims = sims.map((s, i) => ({udid: `U${i + 1}`, name: 'iPhone 17', state: 'Shutdown', runtime: 'iOS-27-2', os: 'iOS 27.2', kind: 'phone', available: true, deviceType: 'iPhone-17', ...s}));
+    for (const s of this.sims) if (s.state === 'Booted') this.marks.set(s.udid, `launchd_sim:${8000 + this.marks.size}@1700000000`);
   }
 
+  /** udid -> the boot it runs (its launchd_sim): a simulator booted again runs another. */
+  marks = new Map<string, string>();
+  #boots = 0;
+  bootMarks = async () => new Map(this.marks);
+  /** Boots it outside pitbox (by hand, Xcode). */
+  bootElsewhere = (udid: string) => {
+    this.sims.find(x => x.udid === udid)!.state = 'Booted';
+    this.marks.set(udid, `launchd_sim:${9000 + ++this.#boots}@1700000000`);
+  };
   simulators = async () => this.sims.map(s => ({...s}));
   booted = async () => this.sims.filter(s => s.state === 'Booted').map(s => ({...s}));
   resolve = async (sel?: string) => {
@@ -38,10 +48,12 @@ class FakeApple {
     const s = this.sims.find(x => x.udid === sel || x.name === sel)!;
     const already = s.state === 'Booted';
     s.state = 'Booted';
+    if (!already) this.marks.set(s.udid, `launchd_sim:${100 + ++this.#boots}@1700000000`);
     return {udid: s.udid, name: s.name, ms: 1, already};
   };
   shutdown = async (udid: string) => {
     this.sims.find(x => x.udid === udid)!.state = 'Shutdown';
+    this.marks.delete(udid);
     return {ms: 1, gone: true};
   };
   createLike = async (like: Sim, name: string) => {
@@ -274,6 +286,36 @@ describe('simulators', () => {
     expect(isCreated('GONE')).toBe(false);
   });
 
+  it('records the boot it made, and on a stop leaves a simulator booted again since by hand running', async () => {
+    const apple = new FakeApple([{}, {name: 'iPad', deviceType: 'iPad'}]);
+    const a = await session('alice', {apple});
+    await a.methods.boot({avd: 'iPhone 17'});
+    await a.methods.boot({avd: 'iPad'});
+    expect(readLease('apple', 'U1')?.boot).toBe(apple.marks.get('U1'));
+    // The daemon goes away keeping its leases; meanwhile U1 is shut down and booted again by hand.
+    await a.stopAll();
+    await apple.shutdown('U1');
+    apple.bootElsewhere('U1');
+    const next = await Engine.create(a.loaded.file, undefined, {android: null, apple: apple as never});
+    await next.stopAll({release: true});
+    expect(apple.sims.map(s => s.state)).toEqual(['Booted', 'Shutdown']);
+    expect(fs.readdirSync(leaseDir()).filter(f => f.endsWith('.json'))).toEqual([]);
+  });
+
+  it('leaves running, on a release, a simulator whose lease has no boot mark (an older pitbox) or that was booted again', async () => {
+    const apple = new FakeApple([{}, {name: 'iPad', deviceType: 'iPad'}]);
+    const a = await session('alice', {apple});
+    await a.methods.boot({avd: 'iPhone 17'});
+    await a.methods.boot({avd: 'iPad'});
+    const file = path.join(leaseDir(), 'apple-U1.json');
+    const {boot: _, ...older} = readLease('apple', 'U1')!;
+    fs.writeFileSync(file, JSON.stringify(older));
+    expect(await a.methods.release({device: 'U1'})).toMatchObject({note: expect.stringMatching(/^left running: it no longer runs the boot pitbox made/)});
+    apple.bootElsewhere('U2');
+    expect(await a.methods.release({device: 'U2'})).toMatchObject({note: expect.stringMatching(/^left running/)});
+    expect(apple.sims.map(s => s.state)).toEqual(['Booted', 'Booted']);
+  });
+
   it('never shuts down a device another session holds when it stops', async () => {
     const apple = new FakeApple([{}]);
     const a = await session('alice', {apple});
@@ -329,6 +371,28 @@ describe('emulators', () => {
     await expect(a.methods.stopApp({})).rejects.toThrow(/held by "pitbox-bob-/);
     await expect(a.methods.shutdown({})).rejects.toThrow(/held by "pitbox-bob-/);
     expect(android.stopped).toEqual(['emulator-5554']);
+  });
+
+  it('on a stop leaves running an emulator that took the serial of one it booted (an adopted lease)', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    expect(readLease('android', 'emulator-5554')).toMatchObject({instance: 'pid:1', boot: 'pid:1'});
+    await a.stopAll();
+    // alice's emulator dies; another one, nobody's, comes up on its serial.
+    android.devs = [{serial: 'emulator-5554', state: 'device', avd: 'Other', emulator: true, instance: 'pid:77'}];
+    const next = await Engine.create(a.loaded.file, undefined, {android: android as never, apple: null});
+    await next.stopAll({release: true});
+    expect(android.devs.map(d => d.serial)).toEqual(['emulator-5554']);
+    expect(readLease('android', 'emulator-5554')).toBeUndefined();
+  });
+
+  it('shuts down on a stop the emulator it booted while it still runs', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    await a.stopAll({release: true});
+    expect(android.devs).toEqual([]);
   });
 
   it('lists who holds each device', async () => {

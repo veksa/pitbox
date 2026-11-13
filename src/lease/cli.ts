@@ -53,7 +53,8 @@ const reap = async (): Promise<Reaped> => {
     try {
       const {AppleDriver} = await import('../drivers/apple/driver.ts');
       const d = new AppleDriver();
-      running.push(...(await d.simulators()).filter(x => x.state !== 'Shutdown').map(x => ({platform: 'apple' as const, id: x.udid, name: x.name})));
+      const marks = await d.bootMarks();
+      running.push(...(await d.simulators()).filter(x => x.state !== 'Shutdown').map(x => ({platform: 'apple' as const, id: x.udid, name: x.name, ...(marks.get(x.udid) ? {boot: marks.get(x.udid)} : {})})));
       apple = d;
     } catch {
       unread.add('apple');

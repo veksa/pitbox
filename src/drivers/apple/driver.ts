@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {parseElapsed} from '../../lease/lease.ts';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
@@ -95,6 +96,23 @@ export const parseSimulators = (json: string): Simulator[] => {
   );
 };
 
+/**
+ * `ps -ax -o pid=,etime=,command=` → the boot each running simulator is in, by udid: its launchd_sim process
+ * (`launchd_sim:<pid>@<start, epoch s>`). A simulator runs one launchd_sim from boot to shutdown, with its device
+ * folder (`…/Devices/<udid>/…`) on the command line; booted again — by pitbox, by hand, by Xcode — it runs another.
+ */
+export const parseSimulatorBoots = (ps: string, nowSec = Math.round(Date.now() / 1000)): Map<string, string> => {
+  const out = new Map<string, string>();
+  for (const line of ps.split('\n')) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!m || !/(^|\/)launchd_sim(\s|$)/.test(m[3]!)) continue;
+    const udid = /\/Devices\/([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\//.exec(m[3]!)?.[1];
+    const elapsed = parseElapsed(m[2]!);
+    if (udid && elapsed !== undefined) out.set(udid.toUpperCase(), `launchd_sim:${m[1]}@${nowSec - elapsed}`);
+  }
+  return out;
+};
+
 /** Compares `iOS 27.1` and `iOS 27.0` numerically, newest first. */
 const newerFirst = (a: Simulator, b: Simulator) => {
   const v = (s: Simulator) => (s.os.split(' ')[1] ?? '0').split('.').map(Number);
@@ -169,6 +187,16 @@ export class AppleDriver {
     this.kept = {at: Date.now(), sims};
     sims.catch(() => (this.kept = undefined));
     return sims;
+  }
+
+  /**
+   * The boot each running simulator is in (parseSimulatorBoots), by udid; empty when the process list cannot be read.
+   * What a lease records when pitbox boots a simulator, and what a shutdown for that lease checks it still runs.
+   */
+  async bootMarks(): Promise<Map<string, string>> {
+    if (process.platform !== 'darwin') return new Map();
+    const r = await run('ps', ['-ax', '-o', 'pid=,etime=,command='], {timeoutMs: 10_000, env: {...process.env, LC_ALL: 'C'}});
+    return r.code === 0 ? parseSimulatorBoots(r.stdout) : new Map();
   }
 
   /** Forgets the kept list: the set of booted simulators is about to change. */

@@ -7,19 +7,23 @@
 // lease may be the one that died) and `pitbox lease list`. For each stale lease, once ORPHAN_GRACE_MS has passed
 // since it went stale (the same session, restarted, takes its device again within it — lease.ts `sameSession`):
 //
-// - a device pitbox booted for the lease, still the very device (a simulator's udid; an emulator's instance, never a
-//   bare serial), is shut down: the lease is first replaced by a short one of the reaper, so no session takes the
-//   device while it goes down, then released;
-// - any other stale lease — a device pitbox did not boot, a device no longer running, an emulator serial now another
-//   emulator's, a device booted for a project that keeps its devices up — is only removed. A device pitbox did not
-//   boot is never shut down.
+// - a device pitbox booted for the lease that still runs the very boot pitbox made (Lease.boot: a simulator's
+//   launchd_sim process, an emulator's process — never a bare udid or serial) is shut down: the lease is first
+//   replaced by a short one of the reaper, so no session takes the device while it goes down, then released;
+// - any other stale lease — a device pitbox did not boot, a device no longer running, a simulator booted again since
+//   (by hand, Xcode, another tool), an emulator serial now another emulator's, a lease with no boot mark (written by
+//   pitbox before 0.3.2, or a boot whose mark could not be read), a device booted for a project that keeps its
+//   devices up — is only removed. A device pitbox did not boot, or cannot tell it booted, is never shut down.
 //
 // A platform whose device list could not be read is not judged at all.
 
-import {describeHolder, listLeases, ORPHAN_GRACE_MS, release, replaceStale, staleReason, staleSince, type Lease, type Platform} from './lease.ts';
+import {describeHolder, listLeases, ORPHAN_GRACE_MS, release, replaceStale, sameBoot, staleReason, staleSince, type Lease, type Platform} from './lease.ts';
 
-/** A device that runs now (not shut down), as the drivers list it. `instance` is an emulator's process. */
-export type Running = {platform: Platform; id: string; name?: string; instance?: string};
+/**
+ * A device that runs now (not shut down), as the drivers list it. `instance` is an emulator's process; `boot` a
+ * simulator's current boot (its launchd_sim process, AppleDriver.bootMarks), when it could be read.
+ */
+export type Running = {platform: Platform; id: string; name?: string; instance?: string; boot?: string};
 
 export type ReapOptions = {
   running: Running[];
@@ -36,12 +40,15 @@ export const REAPER_TTL_MS = 5 * 60_000;
 
 const REAPER = 'reaper:';
 
-/** Whether the running device is the one the lease was taken on, beyond doubt. */
-const sameDevice = (l: Lease, dev: Running | undefined): boolean => {
-  if (!dev) return false;
-  if (l.platform === 'apple') return true;
-  // An emulator serial goes to the next emulator on its port: only the same emulator process counts.
-  return !!l.instance && l.instance === dev.instance;
+/**
+ * Whether the running device still runs the boot pitbox made for the lease, beyond doubt: the only case in which a
+ * lease may lead to a shutdown. A lease without a boot mark (an older pitbox's) never does; nor a simulator booted
+ * again since (a crashed daemon's udid, booted later by hand or by Xcode), nor an emulator serial another emulator took.
+ */
+export const stillBootedByPitbox = (l: Lease, dev: Running | undefined): boolean => {
+  if (!dev || !l.boot) return false;
+  if (l.platform === 'apple') return sameBoot(l.boot, dev.boot);
+  return !!dev.instance && l.boot === dev.instance && (!l.instance || l.instance === dev.instance);
 };
 
 /** Shuts down the devices pitbox booted for leases that ended, and clears the other stale leases (see the top). */
@@ -56,7 +63,7 @@ export const reapLeases = async (o: ReapOptions): Promise<Reaped> => {
     const reused = !!(dev?.instance && l.instance && dev.instance !== l.instance);
     if (!reused && now - staleSince(l) < ORPHAN_GRACE_MS) continue;
     const {stale: _, ...seen} = l as Lease & {stale?: string};
-    if (!(l.booted && !l.keep && sameDevice(l, dev))) {
+    if (!(l.booted && !l.keep && stillBootedByPitbox(l, dev))) {
       if (replaceStale(seen)) out.swept.push(seen);
       continue;
     }
@@ -68,6 +75,7 @@ export const reapLeases = async (o: ReapOptions): Promise<Reaped> => {
       device: l.device,
       name: l.name,
       instance: l.instance,
+      boot: l.boot,
       purpose: was,
       since: now,
       heartbeat: now,
@@ -104,7 +112,7 @@ export const describeReaped = (r: Reaped): string[] => [
 export const leaseWarnings = (leases: (Lease & {stale?: string})[], now = Date.now()): string[] => {
   const out: string[] = [];
   for (const l of leases) {
-    if (!l.stale || !l.booted || l.keep || l.owner.startsWith(REAPER)) continue;
+    if (!l.stale || !l.booted || l.keep || !l.boot || l.owner.startsWith(REAPER)) continue;
     const left = Math.max(0, Math.ceil((staleSince(l) + ORPHAN_GRACE_MS - now) / 60_000));
     out.push(`${l.name ?? l.device} (${l.device}) was booted by pitbox for ${describeHolder(l, now)}, whose lease ended: if it still runs, it is shut down ${left ? `in about ${left} min` : 'on the next sweep'} unless that session takes it again`);
   }

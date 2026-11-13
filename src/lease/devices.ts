@@ -2,12 +2,12 @@
 // and giving everything back when it stops. The lease files themselves are in lease.ts.
 
 import path from 'node:path';
-import {acquire, DAEMON_TTL_MS, describeHolder, heartbeat, listLeases, processStart, readLease, refusal, release, staleReason, type Holder, type Lease, type Platform} from './lease.ts';
+import {acquire, DAEMON_TTL_MS, describeHolder, heartbeat, listLeases, markBoot, processStart, readLease, refusal, release, staleReason, type Holder, type Lease, type Platform} from './lease.ts';
 
 /** A device online now. `instance` is its current boot (Android), to tell a reused serial from the leased device. */
 export type Candidate = {platform: Platform; id: string; name?: string; instance?: string; offline?: boolean};
 
-export type Held = {platform: Platform; id: string; name?: string; instance?: string; booted: boolean; created: boolean};
+export type Held = {platform: Platform; id: string; name?: string; instance?: string; booted: boolean; created: boolean; boot?: string};
 
 const key = (platform: Platform, id: string) => `${platform}:${id}`;
 
@@ -50,7 +50,7 @@ export class DeviceLeases {
   }
 
   /** Takes the device or renews the hold; throws the refusal naming its holder when someone else has it. */
-  claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean; created?: boolean; instance?: string} = {}): Lease {
+  claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean; created?: boolean; instance?: string; boot?: string} = {}): Lease {
     const r = acquire(platform, id, this.holder, {...opts, ...(opts.booted && this.keepBooted() ? {keep: true} : {}), ttlMs: DAEMON_TTL_MS}, this.isMine);
     if (!r.ok) throw new Error(refusal(r.lease, opts.name ?? r.lease.name ?? id));
     const was = this.#held.get(key(platform, id));
@@ -61,8 +61,17 @@ export class DeviceLeases {
       instance: r.lease.instance ?? opts.instance,
       booted: !!(r.lease.booted || opts.booted),
       created: !!(r.lease.created || opts.created),
+      boot: r.lease.boot,
     });
     return r.lease;
+  }
+
+  /** Records the boot pitbox just made for this session's lease (Lease.boot). */
+  markBoot(platform: Platform, id: string, boot: string): boolean {
+    if (!markBoot(platform, id, this.holder.owner, boot)) return false;
+    const h = this.#held.get(key(platform, id));
+    if (h) h.boot = boot;
+    return true;
   }
 
   /** Whether this daemon may drive the device without asking: it holds it. */
@@ -171,7 +180,7 @@ export class DeviceLeases {
     for (const l of listLeases()) {
       if (l.owner !== this.holder.owner) continue;
       if (!heartbeat(l.platform, l.device, l.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart, label: this.holder.label})) continue;
-      const h: Held = {platform: l.platform, id: l.device, name: l.name, instance: l.instance, booted: !!l.booted, created: !!l.created};
+      const h: Held = {platform: l.platform, id: l.device, name: l.name, instance: l.instance, booted: !!l.booted, created: !!l.created, boot: l.boot};
       this.#held.set(key(l.platform, l.device), h);
       adopted.push(h);
     }
@@ -185,12 +194,15 @@ export class DeviceLeases {
   }
 
   /**
-   * Gives every device back. `shutdown` is called for the devices this daemon booted (when the config lets it);
-   * devices it found running stay running.
+   * Gives every device back. `shutdown` is called for the devices this daemon booted (when the config lets it) and
+   * only while `stillBooted` says the device runs the very boot pitbox made for the lease (reap.ts
+   * `stillBootedByPitbox`): an emulator that took the serial since, a simulator booted again by hand, or a lease with
+   * no boot mark is only released. Devices it found running stay running.
    */
-  async releaseAll(shutdown?: (h: Held) => Promise<unknown>): Promise<{released: Held[]; shutDown: Held[]}> {
+  async releaseAll(shutdown?: (h: Held) => Promise<unknown>, stillBooted: (l: Lease) => boolean = () => false): Promise<{released: Held[]; shutDown: Held[]; kept: Held[]}> {
     const released: Held[] = [];
     const shutDown: Held[] = [];
+    const kept: Held[] = [];
     for (const h of [...this.#held.values()]) {
       const l = readLease(h.platform, h.id);
       // Someone else's by now, or a shell lease of this project that this daemon only used: not ours to end.
@@ -198,7 +210,8 @@ export class DeviceLeases {
         this.#held.delete(key(h.platform, h.id));
         continue;
       }
-      if (h.booted && shutdown) {
+      if (h.booted && shutdown && !stillBooted(l)) kept.push(h);
+      else if (h.booted && shutdown) {
         try {
           await shutdown(h);
           shutDown.push(h);
@@ -209,6 +222,6 @@ export class DeviceLeases {
       this.release(h.platform, h.id);
       released.push(h);
     }
-    return {released, shutDown};
+    return {released, shutDown, kept};
   }
 }

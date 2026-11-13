@@ -40,9 +40,9 @@ import {lanAddress} from '../util/lan.ts';
 import {httpAlive, portAnswers, portListener, withinFolder} from '../util/net.ts';
 import {run} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
-import {describeHolder, listLeases, machineLock, refusal, staleReason} from '../lease/lease.ts';
+import {describeHolder, listLeases, machineLock, refusal, staleReason, type Lease} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
-import {describeReaped, reapLeases, type Running} from '../lease/reap.ts';
+import {describeReaped, reapLeases, stillBootedByPitbox, type Running} from '../lease/reap.ts';
 import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated} from '../lease/created.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
@@ -748,12 +748,16 @@ export class Engine {
     // The project's devices, also those another daemon of it left (one stopped as unreachable, one that crashed).
     this.#leases.adopt();
     const shutdown = this.config.devices?.shutdownOnRelease === false ? undefined : (h: Held) => this.#shutdownHeld(h);
-    const r = await this.#leases.releaseAll(shutdown);
+    // Shut down only a device that still runs the boot pitbox made (an adopted lease's serial may be another
+    // emulator's by now, its udid a simulator booted again by hand): judged on the devices running now.
+    const {online, unread} = shutdown ? await this.#listRunning() : {online: [], unread: new Set<string>()};
+    const still = (l: Lease) => !unread.has(l.platform) && stillBootedByPitbox(l, online.find(d => d.platform === l.platform && d.id === l.device));
+    const r = await this.#leases.releaseAll(shutdown, still);
     for (const h of r.released) {
       this.#uis.delete(h.id);
       this.#forwarded.delete(h.id);
     }
-    return {released: r.released.map(h => h.name ?? h.id), shutDown: r.shutDown.map(h => h.name ?? h.id)};
+    return {released: r.released.map(h => h.name ?? h.id), shutDown: r.shutDown.map(h => h.name ?? h.id), ...(r.kept.length ? {keptRunning: r.kept.map(h => h.name ?? h.id)} : {})};
   }
 
   async #shutdownNow(t: {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices}) {
@@ -824,6 +828,12 @@ export class Engine {
     this.#booting.add(pick.udid);
     try {
       const r = await s.boot(pick.udid, opts);
+      // The boot pitbox made, on the lease: only while the simulator still runs it may a release or the reaper shut
+      // it down (not one booted again later by hand or by Xcode on the same udid).
+      if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) {
+        const mark = (await this.#bootMarks())?.get(pick.udid);
+        if (mark) this.#leases.markBoot('apple', pick.udid, mark);
+      }
       return {
         ...r,
         platform: 'apple',
@@ -928,7 +938,8 @@ export class Engine {
     }
     const instance = (await a.devices().catch(() => [])).find(d => d.serial === r.serial)?.instance;
     try {
-      this.#leases.claim('android', r.serial, {name, booted: true, instance, ...(twin ? {created: true} : {})});
+      const known = instance ?? l.instance;
+      this.#leases.claim('android', r.serial, {name, booted: true, instance: known, ...(known ? {boot: known} : {}), ...(twin ? {created: true} : {})});
     } catch (e) {
       // Not leasable (held under its serial a moment ago): the emulator this launch started — known by its process —
       // is not left running behind the session's back.
@@ -1209,17 +1220,14 @@ export class Engine {
     if (!this.#isLocalApple(this.apple)) skip.add('apple');
     if (!this.android) skip.add('android');
     if (!online) {
-      online = [];
-      try {
-        if (!skip.has('apple')) online.push(...(await this.apple!.simulators()).filter(x => x.state !== 'Shutdown').map(x => ({platform: 'apple' as const, id: x.udid, name: x.name})));
-      } catch {
-        skip.add('apple');
-      }
-      try {
-        if (!skip.has('android')) online.push(...(await this.android!.devices()).map(d => ({platform: 'android' as const, id: d.serial, name: d.avd, instance: d.instance})));
-      } catch {
-        skip.add('android');
-      }
+      const listed = await this.#listRunning(skip);
+      online = listed.online;
+      for (const p of listed.unread) skip.add(p);
+    } else if (!skip.has('apple') && online.some(r => r.platform === 'apple' && !r.boot)) {
+      // The beat's list names no simulator boots: read once here, as a shutdown is judged by them.
+      const marks = await this.#bootMarks();
+      if (marks) online = online.map(r => (r.platform === 'apple' ? {...r, boot: marks.get(r.id)} : r));
+      else skip.add('apple');
     }
     const r = await reapLeases({
       running: online,
@@ -1232,6 +1240,39 @@ export class Engine {
       },
     });
     for (const line of describeReaped(r)) process.stderr.write(`${new Date().toISOString()} ${line}\n`);
+  }
+
+  /** The boot each running local simulator is in (AppleDriver.bootMarks); undefined when it cannot be read. */
+  async #bootMarks(): Promise<Map<string, string> | undefined> {
+    const s = this.apple as (AppleDevices & {bootMarks?: () => Promise<Map<string, string>>}) | undefined;
+    if (!s?.bootMarks || !this.#isLocalApple(s)) return undefined;
+    return s.bootMarks().catch(() => undefined);
+  }
+
+  /**
+   * Every running device of this machine with what tells its boot apart (an emulator's process, a simulator's
+   * launchd_sim), for judging whether a lease may lead to a shutdown. A platform whose list cannot be read is unread.
+   */
+  async #listRunning(skip: Set<'apple' | 'android'> = new Set()): Promise<{online: Running[]; unread: Set<'apple' | 'android'>}> {
+    const online: Running[] = [];
+    const unread = new Set(skip);
+    if (!this.#isLocalApple(this.apple)) unread.add('apple');
+    if (!this.android) unread.add('android');
+    try {
+      if (!unread.has('apple')) {
+        const sims = (await this.apple!.simulators()).filter(x => x.state !== 'Shutdown');
+        const marks = await this.#bootMarks();
+        online.push(...sims.map(x => ({platform: 'apple' as const, id: x.udid, name: x.name, ...(marks?.get(x.udid) ? {boot: marks.get(x.udid)} : {})})));
+      }
+    } catch {
+      unread.add('apple');
+    }
+    try {
+      if (!unread.has('android')) online.push(...(await this.android!.devices()).map(d => ({platform: 'android' as const, id: d.serial, name: d.avd, instance: d.instance})));
+    } catch {
+      unread.add('android');
+    }
+    return {online, unread};
   }
 
   #beatTimer?: NodeJS.Timeout;
@@ -1736,12 +1777,17 @@ export class Engine {
       const h = this.#leases.holderOf(t.platform, t.id, instance);
       if (!h) return {released: t.id, note: 'nobody held it'};
       if (!h.mine && !force) throw new Error(`${refusal(h.lease)}\nhint: force=true with the device named releases it anyway`);
-      const down = h.mine && h.lease.booted && !bool(p, 'keep') && this.config.devices?.shutdownOnRelease !== false;
+      let down = h.mine && h.lease.booted && !bool(p, 'keep') && this.config.devices?.shutdownOnRelease !== false;
+      // Only the boot pitbox made goes down: not a simulator booted again since by hand, nor a lease with no boot mark.
+      const boot = down && t.platform === 'apple' ? (await this.#bootMarks())?.get(t.id) : undefined;
+      const stays = down && !stillBootedByPitbox(h.lease, {platform: t.platform, id: t.id, instance, boot});
+      if (stays) down = false;
       this.#leases.release(t.platform, t.id, {force: true, instance});
       this.#forwarded.delete(t.id);
       if (down) return {released: h.lease.name ?? t.id, ...(await this.#shutdownHeld({platform: t.platform, id: t.id, name: h.lease.name, instance, booted: true, created: !!h.lease.created}))};
       await this.#uis.get(t.id)?.stop().catch(() => undefined);
       this.#uis.delete(t.id);
+      if (stays) return {released: h.lease.name ?? t.id, note: 'left running: it no longer runs the boot pitbox made for this session (booted again since, or leased by a pitbox older than 0.3.2)'};
       return {released: h.lease.name ?? t.id, ...(h.mine ? {} : {note: `it was held by ${describeHolder(h.lease)}`})};
     },
 

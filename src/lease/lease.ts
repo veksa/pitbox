@@ -33,7 +33,7 @@ export type Lease = Holder & {
   device: string;
   /** What a person calls it: the AVD, the simulator's name. */
   name?: string;
-  /** The boot of the device the lease was taken on (Android: the kernel's boot id). */
+  /** Android: the emulator the lease was taken on (`pid:<n>`, its process): a serial goes to the next emulator. */
   instance?: string;
   purpose?: string;
   since: number;
@@ -46,6 +46,13 @@ export type Lease = Holder & {
   created?: boolean;
   /** Booted for a project that keeps its devices up (`devices.shutdownOnRelease: false`): never shut down by reap.ts. */
   keep?: boolean;
+  /**
+   * The boot pitbox made for the holder (written since 0.3.2): a simulator's `launchd_sim:<pid>@<start>`, an
+   * emulator's instance. A device is shut down for a lease only while it still runs that very boot — never a
+   * simulator booted again since by hand, Xcode or another tool — so a lease without it (an older pitbox's) never
+   * leads to a shutdown.
+   */
+  boot?: string;
 };
 
 /** A daemon's lease does not expire while it runs; this is only what it says about itself. */
@@ -103,6 +110,18 @@ export const processStart = (pid: number): number | undefined => {
  * another program started later than that.
  */
 export const sameStart = (a: unknown, b: unknown): boolean => typeof a !== 'number' || typeof b !== 'number' || Math.abs(a - b) <= 3;
+
+/**
+ * Whether two boot marks (Lease.boot) are one boot: `<what>:<pid>@<start>` the same process (its start read within a
+ * few seconds), anything else the same text. A missing mark is never the same.
+ */
+export const sameBoot = (a?: string, b?: string): boolean => {
+  if (!a || !b) return false;
+  const pa = /^(.*):(\d+)@(\d+)$/.exec(a);
+  const pb = /^(.*):(\d+)@(\d+)$/.exec(b);
+  if (pa && pb) return pa[1] === pb[1] && pa[2] === pb[2] && Math.abs(Number(pa[3]) - Number(pb[3])) <= 3;
+  return a === b;
+};
 
 /** How a holder's process is checked; tests stand in for it. */
 export const probe = {alive: isAlive, start: processStart};
@@ -396,7 +415,7 @@ export const withLockAsync = async <T>(file: string, fn: () => Promise<T>, waitM
 /** A machine-wide lock under the lease folder, for work no two sessions may do at once (naming a new simulator). */
 export const machineLock = <T>(name: string, fn: () => Promise<T>, waitMs?: number) => withLockAsync(path.join(leaseDir(), name), fn, waitMs);
 
-export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; keep?: boolean; ttlMs?: number; instance?: string; now?: number};
+export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; keep?: boolean; ttlMs?: number; instance?: string; boot?: string; now?: number};
 
 export type Acquired =
   | {ok: true; lease: Lease; renewed: boolean; replaced?: {lease: Lease; why: string; adopted?: boolean}}
@@ -427,6 +446,7 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
         booted: current.booted || opts.booted || undefined,
         created: current.created || opts.created || undefined,
         keep: current.keep || opts.keep || undefined,
+        boot: opts.boot ?? current.boot,
       };
       writeWhole(file, JSON.stringify(renewed, null, 1));
       return {ok: true as const, lease: renewed, renewed: true};
@@ -449,6 +469,7 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
       booted: opts.booted || (adopted && current?.booted) || undefined,
       created: opts.created || (adopted && current?.created) || undefined,
       keep: opts.keep || (adopted && current?.keep) || undefined,
+      boot: opts.boot ?? (adopted ? current?.boot : undefined),
     };
     try {
       writeWhole(file, JSON.stringify(fresh, null, 1));
@@ -468,6 +489,17 @@ export const heartbeat = (platform: Platform, device: string, owner: string, pat
     // An instance only fills in one the lease was taken without: it never moves a lease to another emulator.
     const {instance, ...rest} = patch;
     writeWhole(file, JSON.stringify({...current, ...rest, instance: current.instance ?? instance, heartbeat: now}, null, 1));
+    return true;
+  });
+};
+
+/** Records the boot pitbox just made on the holder's own lease (Lease.boot); false when the lease is not theirs. */
+export const markBoot = (platform: Platform, device: string, owner: string, boot: string): boolean => {
+  const file = leaseFile(platform, device);
+  return withLock(file, () => {
+    const current = parse(file);
+    if (!current || current.owner !== owner) return false;
+    writeWhole(file, JSON.stringify({...current, boot}, null, 1));
     return true;
   });
 };

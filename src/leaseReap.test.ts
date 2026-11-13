@@ -9,7 +9,7 @@ import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {leaseCli, leaseCommand} from './lease/cli.ts';
 import {DeviceLeases} from './lease/devices.ts';
-import {acquire, DEAD_GRACE_MS, leaseDir, ORPHAN_GRACE_MS, readLease, type Holder, type Platform} from './lease/lease.ts';
+import {acquire, DEAD_GRACE_MS, leaseDir, ORPHAN_GRACE_MS, readLease, sameBoot, type Holder, type Platform} from './lease/lease.ts';
 import {describeReaped, leaseWarnings, reapLeases, REAPER_TTL_MS, type Running} from './lease/reap.ts';
 
 /** A pid that runs nothing: far above any real one. */
@@ -20,10 +20,17 @@ beforeEach(() => fs.rmSync(leaseDir(), {recursive: true, force: true}));
 afterEach(() => (leaseCli.reap = realReap));
 
 /** A daemon of `root` that died; its lease's last heartbeat `agoMs` ago. */
-const deadDaemon = (platform: Platform, device: string, agoMs: number, extra: {booted?: boolean; created?: boolean; instance?: string; name?: string} = {}, root = '/work/shop', session = 'pass') =>
+const deadDaemon = (platform: Platform, device: string, agoMs: number, extra: {booted?: boolean; created?: boolean; instance?: string; name?: string; boot?: string} = {}, root = '/work/shop', session = 'pass') =>
   acquire(platform, device, {owner: `daemon:${root}`, label: `${path.basename(root)} · ${session}`, pid: DEAD_PID, root, session}, {...extra, now: Date.now() - agoMs});
 
 const LONG_AGO = DEAD_GRACE_MS + ORPHAN_GRACE_MS + 60_000;
+
+/** The boot pitbox recorded when it booted simulator U1, and U1 running that boot. */
+const BOOT = 'launchd_sim:501@1700000000';
+const U1: Running = {platform: 'apple', id: 'U1', boot: 'launchd_sim:501@1700000002'};
+
+/** A pre-0.3.0 lease as `lease list` sees it: booted, with neither a boot mark nor a keep field. */
+const readLeaseLike = (platform: Platform, device: string) => ({owner: 'daemon:/work/old', label: 'old', pid: DEAD_PID, root: '/work/old', platform, device, since: 0, heartbeat: 0, ttlMs: 600_000, booted: true});
 
 const driver = () => {
   const down: string[] = [];
@@ -32,18 +39,18 @@ const driver = () => {
 
 describe('reaping leases that ended', () => {
   it('shuts down a simulator pitbox booted once its holder has been gone past the grace, and clears the lease', async () => {
-    deadDaemon('apple', 'U1', LONG_AGO, {booted: true, name: 'iPhone 17 (pitbox 2)'});
+    deadDaemon('apple', 'U1', LONG_AGO, {booted: true, name: 'iPhone 17 (pitbox 2)', boot: BOOT});
     const d = driver();
-    const r = await reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: d.shutdown});
+    const r = await reapLeases({running: [U1], shutdown: d.shutdown});
     expect(d.down).toEqual(['apple:U1']);
     expect(readLease('apple', 'U1')).toBeUndefined();
     expect(describeReaped(r)).toEqual([expect.stringMatching(/^shut down iPhone 17 \(pitbox 2\) \(U1\): pitbox booted it for "shop · pass"/)]);
   });
 
   it('leaves it running within the grace, and says when it goes', async () => {
-    deadDaemon('apple', 'U1', DEAD_GRACE_MS + 60_000, {booted: true});
+    deadDaemon('apple', 'U1', DEAD_GRACE_MS + 60_000, {booted: true, boot: BOOT});
     const d = driver();
-    const r = await reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: d.shutdown});
+    const r = await reapLeases({running: [U1], shutdown: d.shutdown});
     expect(d.down).toEqual([]);
     expect(r.swept).toEqual([]);
     expect(readLease('apple', 'U1')?.booted).toBe(true);
@@ -69,7 +76,7 @@ describe('reaping leases that ended', () => {
   it('never shuts down an emulator by its serial alone: another instance on the port, or a lease with no instance', async () => {
     deadDaemon('android', 'emulator-5554', LONG_AGO, {booted: true, instance: 'pid:100'});
     deadDaemon('android', 'emulator-5556', LONG_AGO, {booted: true});
-    deadDaemon('android', 'emulator-5558', LONG_AGO, {booted: true, instance: 'pid:300'});
+    deadDaemon('android', 'emulator-5558', LONG_AGO, {booted: true, instance: 'pid:300', boot: 'pid:300'});
     const running: Running[] = [
       {platform: 'android', id: 'emulator-5554', instance: 'pid:999'},
       {platform: 'android', id: 'emulator-5556', instance: 'pid:200'},
@@ -79,6 +86,32 @@ describe('reaping leases that ended', () => {
     const r = await reapLeases({running, shutdown: d.shutdown});
     expect(d.down).toEqual(['android:emulator-5558']);
     expect(r.swept.map(l => l.device).sort()).toEqual(['emulator-5554', 'emulator-5556']);
+  });
+
+  it('never shuts down a simulator booted again since pitbox booted it (by hand, Xcode, another tool): only the lease goes', async () => {
+    deadDaemon('apple', 'U1', LONG_AGO, {booted: true, boot: BOOT});
+    deadDaemon('apple', 'U2', LONG_AGO, {booted: true, boot: 'launchd_sim:777@1700000000'});
+    const d = driver();
+    const r = await reapLeases({running: [{platform: 'apple', id: 'U1', boot: 'launchd_sim:9001@1700005000'}, {platform: 'apple', id: 'U2'}], shutdown: d.shutdown});
+    expect(d.down).toEqual([]);
+    expect(r.swept.map(l => l.device).sort()).toEqual(['U1', 'U2']);
+  });
+
+  it('never shuts anything down for a lease written before 0.3.0 (no boot mark, no keep field): it is only removed', async () => {
+    const old = (platform: Platform, device: string, extra: Record<string, unknown>) =>
+      fs.writeFileSync(
+        path.join(leaseDir(), `${platform}-${device}.json`),
+        JSON.stringify({owner: 'daemon:/work/old', label: 'old', pid: DEAD_PID, root: '/work/old', platform, device, since: Date.now() - LONG_AGO, heartbeat: Date.now() - LONG_AGO, ttlMs: 600_000, booted: true, ...extra}),
+      );
+    fs.mkdirSync(leaseDir(), {recursive: true});
+    old('apple', 'U1', {created: true});
+    old('android', 'emulator-5554', {instance: 'pid:100'});
+    const d = driver();
+    const r = await reapLeases({running: [{...U1}, {platform: 'android', id: 'emulator-5554', instance: 'pid:100'}], shutdown: d.shutdown});
+    expect(d.down).toEqual([]);
+    expect(r.swept.map(l => l.device).sort()).toEqual(['U1', 'emulator-5554']);
+    expect(fs.readdirSync(leaseDir()).filter(f => f.endsWith('.json'))).toEqual([]);
+    expect(leaseWarnings([{...readLeaseLike('apple', 'U1'), stale: 'gone'}])).toEqual([]);
   });
 
   it('clears at once a lease whose serial another emulator took, even within the grace', async () => {
@@ -109,32 +142,43 @@ describe('reaping leases that ended', () => {
   });
 
   it('holds the device under its own lease while it shuts down: no session takes it half way', async () => {
-    deadDaemon('apple', 'U1', LONG_AGO, {booted: true});
+    deadDaemon('apple', 'U1', LONG_AGO, {booted: true, boot: BOOT});
     const bob: Holder = {owner: 'daemon:/work/bob', label: 'bob', pid: process.pid, root: '/work/bob'};
     let during: boolean | undefined;
-    await reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: async () => void (during = acquire('apple', 'U1', bob).ok)});
+    await reapLeases({running: [U1], shutdown: async () => void (during = acquire('apple', 'U1', bob).ok)});
     expect(during).toBe(false);
     expect(readLease('apple', 'U1')).toBeUndefined();
   });
 
   it('keeps its lease on a shutdown that fails, and tries again once that lease runs out', async () => {
-    deadDaemon('apple', 'U1', LONG_AGO, {booted: true});
-    const r = await reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: async () => Promise.reject(new Error('simctl hung'))});
+    deadDaemon('apple', 'U1', LONG_AGO, {booted: true, boot: BOOT});
+    const r = await reapLeases({running: [U1], shutdown: async () => Promise.reject(new Error('simctl hung'))});
     expect(describeReaped(r)).toEqual([expect.stringMatching(/could not shut down U1 \(U1\): simctl hung; the next sweep tries again/)]);
-    expect(readLease('apple', 'U1')?.owner).toMatch(/^reaper:/);
+    expect(readLease('apple', 'U1')).toMatchObject({owner: expect.stringMatching(/^reaper:/), boot: BOOT});
     const d = driver();
-    await reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: d.shutdown});
+    await reapLeases({running: [U1], shutdown: d.shutdown});
     expect(d.down).toEqual([]);
-    await reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: d.shutdown, now: Date.now() + REAPER_TTL_MS + ORPHAN_GRACE_MS + 1000});
+    await reapLeases({running: [U1], shutdown: d.shutdown, now: Date.now() + REAPER_TTL_MS + ORPHAN_GRACE_MS + 1000});
     expect(d.down).toEqual(['apple:U1']);
     expect(readLease('apple', 'U1')).toBeUndefined();
   });
 
   it('takes two reapers racing for one device as one shutdown', async () => {
-    deadDaemon('apple', 'U1', LONG_AGO, {booted: true});
+    deadDaemon('apple', 'U1', LONG_AGO, {booted: true, boot: BOOT});
     const d = driver();
-    await Promise.all([reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: d.shutdown}), reapLeases({running: [{platform: 'apple', id: 'U1'}], shutdown: d.shutdown})]);
+    await Promise.all([reapLeases({running: [U1], shutdown: d.shutdown}), reapLeases({running: [U1], shutdown: d.shutdown})]);
     expect(d.down).toEqual(['apple:U1']);
+  });
+});
+
+describe('boot marks', () => {
+  it('are one boot for the same process read a moment apart, and never when either is missing', () => {
+    expect(sameBoot('launchd_sim:501@1700000000', 'launchd_sim:501@1700000003')).toBe(true);
+    expect(sameBoot('launchd_sim:501@1700000000', 'launchd_sim:501@1700000060')).toBe(false);
+    expect(sameBoot('launchd_sim:501@1700000000', 'launchd_sim:502@1700000000')).toBe(false);
+    expect(sameBoot('pid:300', 'pid:300')).toBe(true);
+    expect(sameBoot(undefined, 'pid:300')).toBe(false);
+    expect(sameBoot(undefined, undefined)).toBe(false);
   });
 });
 
@@ -195,7 +239,7 @@ describe('lease warnings', () => {
   });
 
   it('are printed by lease list after it reaps', async () => {
-    deadDaemon('apple', 'U1', DEAD_GRACE_MS + 60_000, {booted: true});
+    deadDaemon('apple', 'U1', DEAD_GRACE_MS + 60_000, {booted: true, boot: BOOT});
     let reaped = false;
     leaseCli.reap = async () => ((reaped = true), {shutDown: [], swept: [], failed: []});
     const r = await leaseCommand(['list'], {});
