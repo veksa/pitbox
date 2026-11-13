@@ -433,4 +433,32 @@ export const webTouch: Rule = {
       })),
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch];
+/**
+ * A project tool that reaches a device by `simctl … booted`, a bare `adb` or a Gradle install task acts on whichever
+ * device the system picks: with several sessions up, often another session's. `{apple_device}` / `{android_device}`
+ * name the session's own.
+ */
+export const toolDeviceGuesses = (run: string, env: Record<string, string> = {}): string[] => {
+  const out: string[] = [];
+  // One shell command at a time: `adb -s x a; adb b` still guesses in its second command.
+  for (const cmd of run.split(/;|&&|\|\||\||\n/)) {
+    if (/(^|\s)['"]?booted['"]?(\s|$)/.test(cmd)) out.push('`booted`');
+    if (/(^|[\s/])adb(\s|$)/.test(cmd) && !/\s-s\s/.test(cmd) && !/\bANDROID_SERIAL=/.test(cmd) && !env.ANDROID_SERIAL) out.push('`adb` without `-s`');
+    if (/\binstall(Debug|Release)\b/.test(cmd) && !/\bANDROID_SERIAL=/.test(cmd) && !env.ANDROID_SERIAL) out.push('a Gradle install without ANDROID_SERIAL');
+  }
+  return [...new Set(out)];
+};
+
+const toolDevices: Rule = {
+  id: 'tool-device',
+  title: "project tools name the session's device",
+  check: async ctx =>
+    Object.entries(ctx.config.tools ?? {}).flatMap(([name, t]) => {
+      const guesses = toolDeviceGuesses(t.run, t.env);
+      return guesses.length
+        ? [{rule: 'tool-device', severity: 'warn' as const, message: `tool ${name} reaches a device by ${guesses.join(', ')}: with several devices up it may act on another session's`, hint: 'name the device with {apple_device} / {android_device} (docs/config.md, tools)'}]
+        : [];
+    }),
+};
+
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices];

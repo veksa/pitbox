@@ -125,6 +125,25 @@ describe('doctor services rule', () => {
   });
 });
 
+describe('doctor tool rule', () => {
+  it("warns about a tool that reaches a device the system picks, not the session's", async () => {
+    const tools = {
+      fresh: {run: 'xcrun simctl uninstall booted com.example.app; xcrun simctl install {apple_device} {app}', params: {app: 'path'}},
+      wipe: {run: 'adb shell pm clear com.example.app'},
+      build: {run: 'cd android && ./gradlew installDebug'},
+      ok: {run: 'adb -s {android_device} shell true && xcrun simctl install {apple_device} x.app'},
+      serial: {run: './gradlew installDebug', env: {ANDROID_SERIAL: 'emulator-5554'}},
+    };
+    const rule = builtinRules.find(r => r.id === 'tool-device')!;
+    const findings = await rule.check({root: dir, config: {tools}, exposedPorts: []} as unknown as DoctorContext);
+    expect(findings.map(f => f.message)).toEqual([
+      "tool fresh reaches a device by `booted`: with several devices up it may act on another session's",
+      "tool wipe reaches a device by `adb` without `-s`: with several devices up it may act on another session's",
+      "tool build reaches a device by a Gradle install without ANDROID_SERIAL: with several devices up it may act on another session's",
+    ]);
+  });
+});
+
 describe('doctor device rules', () => {
   it('neither checks nor fixes a device another session holds', async () => {
     const reversed: string[] = [];

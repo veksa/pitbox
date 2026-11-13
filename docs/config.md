@@ -250,7 +250,8 @@ tools: {
 "Holds" is the lease of [parallel.md](parallel.md): a device the session booted or drove through pitbox, or took
 with `pitbox lease acquire` in the project. When the session holds no such device, or several on that platform, the
 tool does not run and the answer says why (`device action=boot` gives it one); pitbox never falls back to another
-device. A caller cannot pass the placeholders as parameters.
+device. A caller cannot pass the placeholders as parameters. `doctor` (`tool-device`) warns about a tool that still reaches a device
+by `booted`, an `adb` without `-s` or a Gradle install task without `ANDROID_SERIAL`.
 
 ## mocks
 
