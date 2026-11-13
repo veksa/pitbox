@@ -554,17 +554,20 @@ describe("a daemon's leases", () => {
     const d = new DeviceLeases('/work/alice', process.pid, 'alice');
     d.claim('apple', 'FOUND');
     d.claim('apple', 'BOOTED', {booted: true, created: true});
+    d.claim('apple', 'REBOOTED', {booted: true});
     const down: string[] = [];
-    const r = await d.releaseAll(async h => down.push(`${h.id}${h.created ? ' (created)' : ''}`));
+    // Only a device that still runs the boot pitbox made goes down; one booted again since is only released.
+    const r = await d.releaseAll(async h => down.push(`${h.id}${h.created ? ' (created)' : ''}`), l => l.device === 'BOOTED');
     expect(down).toEqual(['BOOTED (created)']);
-    expect(r.released.map(h => h.id).sort()).toEqual(['BOOTED', 'FOUND']);
+    expect(r.kept.map(h => h.id)).toEqual(['REBOOTED']);
+    expect(r.released.map(h => h.id).sort()).toEqual(['BOOTED', 'FOUND', 'REBOOTED']);
     expect(listLeases()).toEqual([]);
   });
 
   it('adopts the leases a previous daemon of the project left, booted flag and all', () => {
     acquire('apple', 'U1', {owner: 'daemon:/work/alice', label: 'alice', pid: DEAD_PID, root: '/work/alice'}, {booted: true});
     const d = new DeviceLeases('/work/alice', process.pid, 'alice');
-    expect(d.adopt()).toEqual([{platform: 'apple', id: 'U1', name: undefined, instance: undefined, booted: true, created: false}]);
+    expect(d.adopt()).toEqual([{platform: 'apple', id: 'U1', name: undefined, instance: undefined, booted: true, created: false, boot: undefined}]);
     expect(readLease('apple', 'U1')?.pid).toBe(process.pid);
   });
 
