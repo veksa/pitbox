@@ -22,6 +22,8 @@ export type UiHooks = {
   networkIdle?: (timeoutMs: number) => Promise<void>;
   /** JS errors the app reported since `since` (ms epoch), symbolicated. */
   jsErrors?: (since: number) => Promise<AppEvent[]>;
+  /** Before a tap, a gesture or the mouse goes to a point: waits out a window still moving there (an app just launched). */
+  beforePointer?: () => Promise<void>;
 };
 
 const quote = (s: string) => JSON.stringify(s);
@@ -383,6 +385,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   async press(selector: string, kind: 'tap' | 'longpress' | 'doubletap' = 'tap'): Promise<ActResult> {
     const t0 = this.#begin();
+    // Before the target is looked up: a window still moving puts its nodes where it is on the way.
+    await this.#hooks.beforePointer?.();
     let {snap, target} = await this.#target(selector);
     let at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
     // Covered all over, nothing of it left to tap: a cover on its way out (an overlay the last step hid, a sheet
@@ -538,6 +542,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
    */
   async mouse(action: 'right' | 'hover' | 'wheel', selector?: string, opts: {direction?: 'up' | 'down'; steps?: number} = {}): Promise<ActResult> {
     const t0 = this.#begin();
+    await this.#hooks.beforePointer?.();
     const before = this.last ?? (await this.snapshot());
     this.#front(before);
     let x: number;

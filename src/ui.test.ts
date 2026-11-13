@@ -416,6 +416,29 @@ describe('visual diff', () => {
   });
 });
 
+describe('a window still moving when an action starts', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const at = (y: number): UiNode => ({p: -1, w: 0, c: 'Button', b: [240, y, 440, y + 100], id: 'greet', f: 'c'});
+
+  it('is waited out before the target is looked up, so the tap goes where the window ends up', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let y = 284; // a freeform window sliding in: its nodes are where it is on the way
+    const taps: string[] = [];
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') taps.push(`${args.x},${args.y}`);
+        if (cmd === 'tree') return {windows: app, nodes: [at(y)]};
+        if (cmd === 'info') return {width: 3840, height: 2160};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never, {beforePointer: async () => void (y = 0)});
+    await ui.press('id=greet');
+    expect(taps).toEqual(['340,50']);
+  });
+});
+
 describe('a target with something drawn over its centre', () => {
   // A floating button with elevation: earlier in the tree, painted last.
   const fab: UiNode = {p: -1, w: 0, c: 'ImageView', b: [940, 140, 1080, 280], d: 'Tools', z: 2};

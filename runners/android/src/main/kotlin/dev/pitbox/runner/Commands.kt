@@ -38,6 +38,7 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     "tree" -> tree(req.optBoolean("all", false))
     "focus" -> focus()
     "idle" -> JSONObject().put("idle", idle(req.optLong("quiet", 300), req.optLong("timeout", 3000)))
+    "settle" -> settle(req.optLong("timeout", 2000))
     "tap" -> { tap(req.getInt("x"), req.getInt("y"), req.optLong("hold", 40)); JSONObject() }
     "doubletap" -> { doubleTap(req.getInt("x"), req.getInt("y"), req.optLong("gap", 90)); JSONObject() }
     "longpress" -> { tap(req.getInt("x"), req.getInt("y"), req.optLong("hold", 800)); JSONObject() }
@@ -209,6 +210,32 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     true
   } catch (e: TimeoutException) {
     false
+  }
+
+  /**
+   * Waits until the windows stop moving, up to `timeout`: a window still opening takes input where it is on the
+   * way, and a snapshot taken then puts its nodes there too. First the window manager's own animations (the wait
+   * the two-argument injection made before every event, see injectNoAnimationWait), then the windows' bounds, as a
+   * desktop's freeform window slides in under the system shell, which the window manager does not count. Bounds,
+   * not pixels: a spinner in the app would keep a screen from ever looking still.
+   */
+  private fun settle(timeout: Long): JSONObject {
+    val t0 = SystemClock.uptimeMillis()
+    val wm = runCatching {
+      val m = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null)!!
+      m.javaClass.getMethod("syncInputTransactions", Boolean::class.javaPrimitiveType).invoke(m, true)
+      true
+    }.getOrDefault(false)
+    fun bounds() = ui.windows.joinToString(";") { w -> Rect().also { w.getBoundsInScreen(it) }.flattenToString() }
+    var prev = bounds()
+    var still = 0
+    while (still < 2 && SystemClock.uptimeMillis() - t0 < timeout) {
+      SystemClock.sleep(40)
+      val now = bounds()
+      still = if (now == prev) still + 1 else 0
+      prev = now
+    }
+    return JSONObject().put("settled", still >= 2).put("wm", wm).put("ms", SystemClock.uptimeMillis() - t0)
   }
 
   private fun motion(downTime: Long, action: Int, x: Float, y: Float): MotionEvent =
@@ -566,5 +593,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 20
+  const val VERSION = 21
 }

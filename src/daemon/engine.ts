@@ -66,6 +66,9 @@ const list = (p: Params, k: string): string[] => {
 const machineRelayFile = () => path.join(os.homedir(), '.pitbox', 'relay-avds.json');
 
 /** What an Apple simulator cannot do of the Android-only form factor commands, and why. */
+/** How long after a launch the first pointer action waits for window animations: an opening one is over by then. */
+const LAUNCH_SETTLE_MS = 3000;
+
 const APPLE_HAS_NO = {
   posture: 'posture is for Android foldables here: a foldable iPhone folds through its own path',
   rotate: 'rotate is for Android here',
@@ -113,6 +116,8 @@ export class Engine {
   #watchTimer?: NodeJS.Timeout;
   #lastForwardCheck = 0;
   #dev?: DevServer;
+  /** When pitbox last launched an app on each device, until the first pointer action after it. */
+  readonly #launchedAt = new Map<string, number>();
   /**
    * Simulator apps whose saved dev server pitbox wrote (`udid|bundle id|host`), so a link need not write it again.
    * Forgotten whenever an app's data may have changed under it: install, clear, uninstall, a state restored.
@@ -284,6 +289,16 @@ export class Engine {
           if (answers.every(a => a.data.inflight <= 0)) return;
           await new Promise(r => setTimeout(r, 150));
         }
+      },
+      // An app launched a moment ago may still be in its window's opening animation: a desktop's freeform window
+      // slides in for about a second, taking input where it is on the way while its nodes already say where it ends
+      // up. Waited out once, on the first pointer action after a launch; later ones (a playing video never stops
+      // animating) do not wait.
+      beforePointer: async () => {
+        const at = this.#launchedAt.get(id);
+        if (at === undefined) return;
+        this.#launchedAt.delete(id);
+        if (t?.platform === 'android' && Date.now() - at < LAUNCH_SETTLE_MS) await ui!.runner.call('settle', {}, 8000).catch(() => undefined);
       },
     };
     ui = mac
@@ -1772,6 +1787,7 @@ export class Engine {
       }
       const t0 = Date.now();
       const opened = await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg});
+      this.#launchedAt.set(serial, Date.now());
       // A cold start of a dev build goes on after the activity: the bundle loads and starts running.
       const proxy = this.#dev?.proxy;
       const note = pointed ? {pointed: 'dev server saved before the link'} : {};
