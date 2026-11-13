@@ -57,6 +57,8 @@ describe('proxy', () => {
   let proxy: DevProxy;
   let port: number;
   let compiles = 0;
+  /** Appended to every bundle: a file the bundler serves changing where pitbox's watcher does not look. */
+  let extra = '';
   const seen: string[] = [];
 
   beforeAll(async () => {
@@ -66,7 +68,7 @@ describe('proxy', () => {
       seen.push(req.url ?? '');
       if (req.url === '/status') return void res.end('packager-status:running');
       if (req.url?.startsWith('/broken.bundle')) return void res.writeHead(500, {'content-type': 'application/json'}).end('{"message":"syntax error"}');
-      if (req.url?.includes('.bundle')) return void res.writeHead(200, {'content-type': 'application/javascript'}).end(`var src = ${JSON.stringify(req.url)};`);
+      if (req.url?.includes('.bundle')) return void res.writeHead(200, {'content-type': 'application/javascript'}).end(`var src = ${JSON.stringify(req.url)};${extra}`);
       res.writeHead(404).end();
     });
     upstream.on('upgrade', (_req, socket) => {
@@ -129,6 +131,28 @@ describe('proxy', () => {
     await get('/main.bundle?platform=android&lazy=true', 'multipart/mixed');
     expect(seen.length).toBe(before + 1);
     expect(compiles).toBe(1);
+  });
+
+  it('serves new code after a change outside the watched folder, which leaves the generation as it was', async () => {
+    const url = '/main.bundle?platform=android&lazy=true';
+    const generation = proxy.generation;
+    await get(url, 'multipart/mixed');
+    await proxy.whenIdle();
+    expect((await get(url, 'multipart/mixed')).body).toBe('HBC:var src = "/main.bundle?platform=android&lazy=false";');
+    extra = 'var linked = 2;';
+    try {
+      // Source first while the new bytecode compiles, then the new bytecode: never the cached old one.
+      expect((await get(url, 'multipart/mixed')).body).toBe('var src = "/main.bundle?platform=android&lazy=false";var linked = 2;');
+      await proxy.whenIdle();
+      expect((await get(url, 'multipart/mixed')).body).toBe('HBC:var src = "/main.bundle?platform=android&lazy=false";var linked = 2;');
+      expect(proxy.generation).toBe(generation);
+    } finally {
+      extra = '';
+    }
+    // Back to the old output: its bytecode is still cached, so nothing is compiled again.
+    const before = compiles;
+    expect((await get(url, 'multipart/mixed')).body).toBe('HBC:var src = "/main.bundle?platform=android&lazy=false";');
+    expect(compiles).toBe(before);
   });
 
   it('passes lazy bundles and other requests through as they are', async () => {

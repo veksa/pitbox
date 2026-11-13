@@ -74,7 +74,7 @@ devserver: {adapter: 'metro', root: 'mobile', bytecode: true},
 | `internalPort` | port of the bundler itself. Default `port + 1` |
 | `host` | where the proxy listens: `127.0.0.1` (default; devices behind adb), `lan` (phones on the network; the LAN address goes into links and Expo's manifest), or an address |
 | `env` | extra environment for the bundler |
-| `bytecode` | serve the main bundle as Hermes bytecode compiled on the host with the app's own `hermesc`. While bytecode for new code compiles, devices get source, so they are never slower than with the bundler alone. Off by default: the compiler must match the Hermes the app was built with |
+| `bytecode` | serve the main bundle as Hermes bytecode compiled on the host with the app's own `hermesc`. While bytecode for new code compiles, devices get source, so they are never slower than with the bundler alone. The bytecode is cached by the bundler's output, which every launch asks for, so an edit anywhere the bundler reads — the app's folder, watch folders, linked workspace packages, `node_modules` — reaches the device. Off by default: the compiler must match the Hermes the app was built with |
 | `inApp` | splice the in-app script into the dev bundle: freshness, network log and rules, trace headers, in-flight requests. Default on for `metro` and `rspack` |
 | `platforms` | platforms whose main bundle is built before a device asks. Default `android` and every platform a device has asked for since |
 | `bundlePath` | main bundle path for prewarming when it cannot be discovered from Expo's manifest or a device's request (`{platform}` placeholder) |

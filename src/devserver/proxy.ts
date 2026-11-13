@@ -93,7 +93,7 @@ type AppSession = AppInfo & {ws: WebSocket};
 export class DevProxy {
   readonly opts: ProxyOptions;
   readonly stats: ProxyStats = {requests: [], compiles: 0, cacheHits: 0};
-  /** Bumped by the file watcher; a cached answer from an older generation is not trusted without a check. */
+  /** Bumped by the file watcher: what freshness and prewarming go by. Bundles are always checked with the bundler. */
   generation = 0;
   /** When the file watcher last saw a change. */
   lastChangeAt = 0;
@@ -114,7 +114,6 @@ export class DevProxy {
   #server?: http.Server;
   /** Upgraded (WebSocket) connections, which the HTTP server no longer tracks. */
   readonly #sockets = new Set<net.Socket>();
-  readonly #served = new Map<string, {generation: number; key: string; bundle: string}>();
   readonly #compiling = new Map<string, Promise<Buffer>>();
   readonly #wss = new WebSocketServer({noServer: true});
   readonly #hotWss = new WebSocketServer({noServer: true});
@@ -202,15 +201,9 @@ export class DevProxy {
   async bundleFor(url: string, host: string, wait: boolean): Promise<{kind: 'bytecode' | 'source'; body: Buffer; cached: boolean; status: number; error?: boolean; bundle?: string}> {
     const bc = this.debugSource ? undefined : this.opts.bytecode;
     const generation = this.generation;
-    const servedKey = `${host}|${url}`;
-    const served = this.#served.get(servedKey);
-    if (bc && served && served.generation === generation) {
-      const hit = bc.cache.get(served.key);
-      if (hit) {
-        this.stats.cacheHits++;
-        return {kind: 'bytecode', body: hit, cached: true, status: 200, bundle: served.bundle};
-      }
-    }
+    // The bundler is asked every time and the cache is keyed by what it answers. pitbox's own watcher sees only
+    // the app's folder, while the bundler also bundles watched folders, linked workspace packages and
+    // node_modules: a cached answer trusted because pitbox saw no change served code edited outside the folder.
     const res = await fetch(`http://127.0.0.1:${this.opts.upstreamPort}${bc ? eagerUrl(url) : url}`, {headers: {accept: 'application/javascript', host}});
     const source = Buffer.from(await res.arrayBuffer());
     if (res.status !== 200 || /json/.test(res.headers.get('content-type') ?? '')) {
@@ -235,13 +228,9 @@ export class DevProxy {
     const hit = bc.cache.get(key);
     if (hit) {
       this.stats.cacheHits++;
-      this.#served.set(servedKey, {generation, key, bundle});
       return {kind: 'bytecode', body: hit, cached: true, status: 200, bundle};
     }
-    const compile = this.#compile(key, body).then(b => {
-      this.#served.set(servedKey, {generation, key, bundle});
-      return b;
-    });
+    const compile = this.#compile(key, body);
     if (wait) return {kind: 'bytecode', body: await compile, cached: false, status: 200, bundle};
     compile.catch(() => undefined);
     return {kind: 'source', body, cached: false, status: 200, bundle};
