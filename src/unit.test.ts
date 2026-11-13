@@ -6,6 +6,7 @@ import {failed, parseArgs, toCall} from './cli.ts';
 import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
+import {AndroidDriver, CONNECT_PREFS, mergeConnectPrefs} from './drivers/android/driver.ts';
 import {instrumentCommand} from './drivers/android/runner.ts';
 import {shownPath} from './format.ts';
 import {parseProbe, probePort} from './stand/health.ts';
@@ -63,6 +64,48 @@ describe('config', () => {
 
   it('collects exposed ports from services, extra reverses and the mock', () => {
     expect(exposedPorts({services: {a: {expose: [3000, 8080]}, b: {expose: 3000}}, android: {reverse: [8097]}, mocks: {llm: {port: 4010}}})).toEqual([3000, 4010, 8080, 8097]);
+  });
+});
+
+describe('dev server pointer on android', () => {
+  it("sets the dev server in the connect library's preferences and keeps the other hosts", () => {
+    const xml = `<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n    <string name="api">10.0.2.2:3000</string>\n    <string name="devserver">localhost:8081</string>\n</map>\n`;
+    expect(mergeConnectPrefs(xml, {devserver: 'localhost:8081'})).toBeUndefined();
+    const next = mergeConnectPrefs(xml, {devserver: 'localhost:9090'})!;
+    expect(next).toContain('<string name="api">10.0.2.2:3000</string>');
+    expect(next).toContain('<string name="devserver">localhost:9090</string>');
+    expect(mergeConnectPrefs('', {devserver: 'localhost:8081'})).toMatch(/^<\?xml[^]*<map>\n {4}<string name="devserver">localhost:8081<\/string>\n<\/map>\n$/);
+  });
+
+  it.skipIf(process.platform === 'win32')("writes the preferences through the device's shell as the app, once, and leaves a build run-as refuses alone", async () => {
+    const {execFileSync} = await import('node:child_process');
+    const dir = tmp();
+    const data = path.join(dir, 'data');
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(data);
+    fs.mkdirSync(bin);
+    // run-as as Android has it: the package, then a command run in the app's data directory.
+    fs.writeFileSync(path.join(bin, 'run-as'), `#!/bin/sh\n[ -f "${dir}/refuse" ] && { echo "run-as: package not debuggable: $1" >&2; exit 1; }\nshift\ncd "${data}" && exec "$@"\n`, {mode: 0o755});
+    const commands: string[] = [];
+    const driver = Object.assign(Object.create(AndroidDriver.prototype) as AndroidDriver, {
+      shell: async (_serial: string, command: string) => {
+        commands.push(command);
+        try {
+          return execFileSync('/bin/sh', ['-c', command], {encoding: 'utf8', env: {...process.env, PATH: `${bin}:${process.env.PATH}`}, stdio: ['ignore', 'pipe', 'pipe']});
+        } catch (e) {
+          const out = String((e as {stdout?: string}).stdout ?? '');
+          if (out) return out;
+          throw e;
+        }
+      },
+    });
+    expect(await driver.saveConnectHosts('emulator-5554', 'com.example.app', {devserver: "localhost:8081"})).toBe(true);
+    expect(fs.readFileSync(path.join(data, CONNECT_PREFS), 'utf8')).toContain('<string name="devserver">localhost:8081</string>');
+    const writes = commands.length;
+    expect(await driver.saveConnectHosts('emulator-5554', 'com.example.app', {devserver: 'localhost:8081'})).toBe(false);
+    expect(commands.length).toBe(writes + 1);
+    fs.writeFileSync(path.join(dir, 'refuse'), '');
+    expect(await driver.saveConnectHosts('emulator-5554', 'com.example.app', {devserver: 'localhost:9090'})).toBeUndefined();
   });
 });
 

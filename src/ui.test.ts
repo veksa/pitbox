@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {fillRoute, parseFlow, tokenize, validateFlow} from './flows/flow.ts';
+import {fillRoute, isAppLink, parseFlow, tokenize, validateFlow} from './flows/flow.ts';
 import {runFlow, type FlowHost} from './flows/run.ts';
 import type {DeviceUi} from './ui/device.ts';
 import {buildSnapshot, closest, diffSnapshots, resolveTarget, selectorFor, type UiNode, type UiWindow} from './ui/snapshot.ts';
@@ -204,6 +204,16 @@ describe('flows', () => {
   it('fills routes and refuses missing parameters', () => {
     expect(fillRoute('item', 'myapp://item/{id}?t={t}', {id: '42', t: 'a b'})).toBe('myapp://item/42?t=a%20b');
     expect(() => fillRoute('item', 'myapp://item/{id}', {})).toThrow(/needs id/);
+  });
+
+  it("tells a link into the app (its scheme or a route's) from another app's link and from the connect link", () => {
+    const routes = {item: 'myapp://item/{id}', web: 'https://example.test/item/{id}'};
+    expect(isAppLink('MyApp://item/42', {scheme: 'myapp'}, undefined)).toBe(true);
+    expect(isAppLink('myapp://item/42', undefined, routes)).toBe(true);
+    expect(isAppLink('https://example.test/item/42', undefined, routes)).toBe(true);
+    expect(isAppLink('otherapp://x', {scheme: 'myapp'}, routes)).toBe(false);
+    expect(isAppLink('pitbox.com.example.app://connect?devserver=localhost:8081', {scheme: 'pitbox.com.example.app'}, undefined)).toBe(false);
+    expect(isAppLink('com.example.app', {scheme: 'myapp'}, routes)).toBe(false);
   });
 
   it('substitutes parameters and validates before running', () => {

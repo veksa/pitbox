@@ -94,6 +94,19 @@ export const fillRoute = (route: string, template: string, params: Record<string
     return encodeURIComponent(params[k]!);
   });
 
+/**
+ * Whether a link opens the app itself: its scheme is the app's (`app.scheme`) or one of its routes'. pitbox's own
+ * connect link is not one — it is the pointer, not a screen.
+ */
+export const isAppLink = (target: string, app: {scheme?: string} | undefined, routes: Record<string, string> | undefined): boolean => {
+  const at = target.indexOf('://');
+  if (at <= 0) return false;
+  const scheme = target.slice(0, at).toLowerCase();
+  if (scheme.startsWith('pitbox.')) return false;
+  const own = [app?.scheme, ...Object.values(routes ?? {}).map(r => (r.includes('://') ? r.slice(0, r.indexOf('://')) : undefined))];
+  return own.some(s => !!s && s.toLowerCase() === scheme);
+};
+
 export const parseFlow =(source: string, params: Record<string, string> = {}): Step[] =>
   source
     .split(/\r?\n/)

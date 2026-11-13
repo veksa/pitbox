@@ -329,6 +329,28 @@ export class AndroidError extends Error {
   }
 }
 
+/** Single-quoted for the device's shell. */
+const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Where pitbox's connect library keeps its hosts, relative to the app's data directory. */
+export const CONNECT_PREFS = 'shared_prefs/pitbox.connect.xml';
+
+/**
+ * The connect library's preferences file with `hosts` set in it (other names kept), or `undefined` when it already
+ * holds them. Values are host:port pairs; the file is Android's SharedPreferences XML.
+ */
+export const mergeConnectPrefs = (xml: string, hosts: Record<string, string>): string | undefined => {
+  const entries = new Map<string, string>();
+  for (const m of xml.matchAll(/<string name="([^"]*)">([^<]*)<\/string>/g)) entries.set(m[1]!, m[2]!);
+  const changed = Object.entries(hosts).filter(([k, v]) => entries.get(escapeXml(k)) !== escapeXml(v));
+  if (!changed.length) return undefined;
+  for (const [k, v] of changed) entries.set(escapeXml(k), escapeXml(v));
+  const lines = [...entries].map(([k, v]) => `    <string name="${k}">${v}</string>`);
+  return `<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n${lines.join('\n')}\n</map>\n`;
+};
+
 export class AndroidDriver {
   readonly adbPath: string;
   readonly #runningDirs: string[];
@@ -773,6 +795,33 @@ export class AndroidDriver {
 
   async stop(serial: string, pkg: string) {
     await this.shell(serial, `am force-stop ${pkg}`);
+  }
+
+  /** Whether the app has a process. */
+  async appRunning(serial: string, pkg: string): Promise<boolean> {
+    // pidof exits 1 when nothing runs, which the shell reports as a failure.
+    return !!(await this.shell(serial, `pidof ${pkg}`).catch(() => '')).trim();
+  }
+
+  /**
+   * Saves hosts where pitbox's connect library keeps them, as its connect link would, without starting the app:
+   * its provider hands the dev server to React Native before the app's code runs. Call it with the app stopped,
+   * or the running app's own copy of its preferences wins. Only a debuggable build lets anyone into its data
+   * (`run-as`): `undefined` then, `false` when the hosts were there already, `true` once written.
+   */
+  async saveConnectHosts(serial: string, pkg: string, hosts: Record<string, string>): Promise<boolean | undefined> {
+    const runAs = (script: string) => `run-as ${pkg} sh -c ${shq(script)}`;
+    let xml: string;
+    try {
+      // A missing file is an empty one; a build run-as refuses fails with nothing on stdout.
+      xml = await this.shell(serial, runAs(`cat ${CONNECT_PREFS} 2>/dev/null; true`));
+    } catch {
+      return undefined;
+    }
+    const next = mergeConnectPrefs(xml, hosts);
+    if (!next) return false;
+    await this.shell(serial, `printf '%s' ${shq(next)} | ${runAs(`mkdir -p shared_prefs && cat > ${CONNECT_PREFS}`)}`);
+    return mergeConnectPrefs(await this.shell(serial, runAs(`cat ${CONNECT_PREFS}`)), hosts) === undefined ? true : undefined;
   }
 
   async clear(serial: string, pkg: string) {

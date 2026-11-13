@@ -31,7 +31,7 @@ import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import type {PerfData} from '../flows/budget.ts';
 import {formatResult} from '../format.ts';
-import {fillRoute} from '../flows/flow.ts';
+import {fillRoute, isAppLink} from '../flows/flow.ts';
 import {DeviceUi, type UiHooks} from '../ui/device.ts';
 import {parseWidget, widget} from '../ui/widget.ts';
 import {AndroidRunner} from '../drivers/android/runner.ts';
@@ -113,6 +113,11 @@ export class Engine {
   #watchTimer?: NodeJS.Timeout;
   #lastForwardCheck = 0;
   #dev?: DevServer;
+  /**
+   * Simulator apps whose saved dev server pitbox wrote (`udid|bundle id|host`), so a link need not write it again.
+   * Forgotten whenever an app's data may have changed under it: install, clear, uninstall, a state restored.
+   */
+  readonly #pointedApple = new Set<string>();
   readonly #uis = new Map<string, DeviceUi>();
   /** A QR pairing in progress: the phone is found, paired and connected in the background. */
   #pairing?: {name: string; file: string; startedAt: number; result?: {serial?: string; error?: string}; done: Promise<void>};
@@ -146,7 +151,7 @@ export class Engine {
       const save = async (n: string) => {
         if ((await s.appStateSave(sim.udid, bundleId, n)).wasRunning) await this.methods.open({device: sim.udid});
       };
-      return {snap: {id: sim.udid, label: sim.name, kind: 'app-data', save, load: n => s.appStateRestore(sim.udid, bundleId, n), remove: n => s.appStateDelete(sim.udid, bundleId, n)}};
+      return {snap: {id: sim.udid, label: sim.name, kind: 'app-data', save, load: n => (this.#pointedApple.clear(), s.appStateRestore(sim.udid, bundleId, n)), remove: n => s.appStateDelete(sim.udid, bundleId, n)}};
     }
     if (!a || t?.platform !== 'android') return {};
     const serial = t.id;
@@ -1666,6 +1671,7 @@ export class Engine {
         this.#needApple();
         const t = await this.#target(str(p, 'device'), {platform: 'apple'});
         if (t.platform !== 'apple') throw new Error('an .app installs on a simulator');
+        this.#pointedApple.clear();
         return {udid: t.id, ...(await t.s.install(t.id, file))};
       }
       this.#needAndroid();
@@ -1703,15 +1709,30 @@ export class Engine {
         // `RCT_jsLocation` default and the connect library reads `pitbox.<name>`. Saved in the app's preferences
         // (a launch from the home screen keeps it) and passed as launch arguments (they win over a cached value).
         // A simulator shares the Mac's network, so localhost is the Mac.
-        if (this.#dev && bundleId && target === bundleId) {
+        const pointer = async () => {
           // A remote Mac reaches this machine at the address it sees; a local simulator at localhost.
           const here = t.s instanceof RemoteApple ? await t.s.localAddress() : 'localhost';
-          const host = `${here ?? 'localhost'}:${this.#dev.port}`;
-          const values = {RCT_jsLocation: host, 'pitbox.devserver': host};
+          const host = `${here ?? 'localhost'}:${this.#dev!.port}`;
+          return {key: `${t.id}|${bundleId}|${host}`, values: {RCT_jsLocation: host, 'pitbox.devserver': host}};
+        };
+        let pointed = false;
+        if (this.#dev && bundleId && target === bundleId) {
+          const {key, values} = await pointer();
           await t.s.stop(t.id, bundleId);
           await t.s.setDefaults(t.id, bundleId, values).catch(() => undefined);
+          this.#pointedApple.add(key);
           args = Object.entries(values).flatMap(([k, v]) => [`-${k}`, v]);
           relaunch = true;
+        } else if (this.#dev && bundleId && isAppLink(target, this.config.app, this.config.routes)) {
+          // A link that starts the app cold carries no launch arguments, and a build whose data is new (installed,
+          // cleared) has no saved dev server: it would ask the bundler address it was built with. The defaults
+          // are saved before the link, once per app data (a running app reads them on its next start).
+          const {key, values} = await pointer();
+          if (relaunch || !this.#pointedApple.has(key)) {
+            if (relaunch) await t.s.stop(t.id, bundleId);
+            pointed = await t.s.setDefaults(t.id, bundleId, values).then(() => true, () => false);
+            if (pointed) this.#pointedApple.add(key);
+          }
         }
         const r = await t.s.open(t.id, target, {relaunch, bundleId, args});
         // A runner already attached reads the shell until the launched app comes to the front.
@@ -1730,22 +1751,37 @@ export class Engine {
         }
         const lanHost = this.config.devserver?.host;
         const unreachable = t.s instanceof RemoteApple && this.#dev && (!lanHost || lanHost === '127.0.0.1' || lanHost === 'localhost');
-        return {udid: t.id, target, ...r, ...(confirmed ? {confirmed: 'the open-in-app question'} : {}), ...(unreachable ? {note: "the dev server listens on loopback only, out of the Mac's reach: set devserver.host: '0.0.0.0' (or this machine's VPN address)"} : {})};
+        return {udid: t.id, target, ...r, ...(pointed ? {pointed: 'dev server saved before the link'} : {}), ...(confirmed ? {confirmed: 'the open-in-app question'} : {}), ...(unreachable ? {note: "the dev server listens on loopback only, out of the Mac's reach: set devserver.host: '0.0.0.0' (or this machine's VPN address)"} : {})};
       }
       const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this
       // dev server, whatever a launcher remembered.
       const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p);
+      const pkg = str(p, 'pkg') ?? this.config.app?.android;
+      // A link that starts the app cold skips the connect link, and a build whose data is new (installed, cleared)
+      // has no saved dev server: it would ask the bundler address it was built with. pitbox writes what the connect
+      // link would have saved before the link goes (a debug build only; with its own connect link a dev launcher
+      // keeps its own state, so then nothing is written).
+      let pointed = false;
+      if (this.#dev && pkg && !this.config.app?.connect && isAppLink(target, this.config.app, this.config.routes)) {
+        const cold = bool(p, 'relaunch') || !(await a.appRunning(serial, pkg));
+        if (cold) {
+          if (bool(p, 'relaunch')) await a.stop(serial, pkg);
+          pointed = !!(await a.saveConnectHosts(serial, pkg, {devserver: `localhost:${this.#dev.port}`}).catch(() => undefined));
+        }
+      }
       const t0 = Date.now();
-      const opened = await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg: str(p, 'pkg') ?? this.config.app?.android});
+      const opened = await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg});
       // A cold start of a dev build goes on after the activity: the bundle loads and starts running.
       const proxy = this.#dev?.proxy;
-      if (!bool(p, 'relaunch') || !proxy?.listening || !proxy.opts.inApp) return {serial, target, ...opened};
+      const note = pointed ? {pointed: 'dev server saved before the link'} : {};
+      if (!bool(p, 'relaunch') || !proxy?.listening || !proxy.opts.inApp) return {serial, target, ...opened, ...note};
       const js = await proxy.startAfter(t0);
       return {
         serial,
         target,
         ...opened,
+        ...note,
         ...(js.runningAt ? {jsMs: js.runningAt - t0} : {}),
         ...(js.bundle ? {bundle: {kind: js.bundle.kind, kb: Math.round(js.bundle.bytes / 1024), ms: js.bundle.ms, note: js.bundle.note}} : {}),
       };
@@ -1785,6 +1821,7 @@ export class Engine {
       }
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
+        this.#pointedApple.clear();
         await t.s.clear(t.id, this.#bundleId(p));
         return {udid: t.id};
       }
@@ -1795,6 +1832,7 @@ export class Engine {
     uninstall: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
+        this.#pointedApple.clear();
         await t.s.uninstall(t.id, this.#bundleId(p));
         return {udid: t.id};
       }
