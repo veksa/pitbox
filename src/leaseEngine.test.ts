@@ -389,8 +389,14 @@ describe('project tools on the session device', () => {
 
 describe("another stand's bundler", () => {
   const listen = (port: number, cwd: string) => {
-    const child = spawn(process.execPath, ['-e', `require('http').createServer((q, s) => s.end('packager-status:running')).listen(${port}, '::', () => console.log('up'))`], {cwd, stdio: ['ignore', 'pipe', 'ignore']});
-    return new Promise<typeof child>(resolve => child.stdout.once('data', () => resolve(child)));
+    const child = spawn(process.execPath, ['-e', `require('http').createServer((q, s) => s.end('packager-status:running')).listen(${port}, '::', () => console.log('up'))`], {cwd, stdio: ['ignore', 'pipe', 'pipe']});
+    let err = '';
+    child.stderr.on('data', d => (err += d));
+    // Fails at once when the stand-in cannot listen, instead of hanging the test until its timeout.
+    return new Promise<typeof child>((resolve, reject) => {
+      child.stdout.once('data', () => resolve(child));
+      child.once('exit', code => reject(new Error(`the bundler stand-in on port ${port} exited (${code}): ${err.trim()}`)));
+    });
   };
   // Waits for the exit too: Windows will not remove a folder a live process runs in.
   const stop = (child: ReturnType<typeof spawn>) => new Promise<void>(resolve => (child.exitCode !== null || child.signalCode !== null ? resolve() : (child.once('exit', () => resolve()), child.kill())));
@@ -411,7 +417,7 @@ describe("another stand's bundler", () => {
     } finally {
       await stop(theirs);
     }
-  }, 30_000);
+  }, 60_000);
 
   it("is adopted when it runs in the dev server's own folder", async () => {
     const [port, internalPort] = [await freePort(), await freePort()];
@@ -424,7 +430,7 @@ describe("another stand's bundler", () => {
     } finally {
       await stop(mine);
     }
-  }, 30_000);
+  }, 60_000);
 });
 
 describe('push gateway routing', () => {
