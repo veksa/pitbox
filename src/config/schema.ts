@@ -83,7 +83,7 @@ export const devserverSchema = z.object({
   start: z.string().optional(),
   /** Port the device talks to (pitbox's proxy). Default 8081. */
   port: z.number().int().positive().optional(),
-  /** Port the bundler itself listens on. Default `port + 1`. */
+  /** Port the bundler itself listens on. Default `port + 1`, or `port + 2` when that is React DevTools' 8097. */
   internalPort: z.number().int().positive().optional(),
   /** Where the proxy listens: `127.0.0.1` (default, devices behind adb), `lan` (phones on the network) or an address. */
   host: z.string().optional(),

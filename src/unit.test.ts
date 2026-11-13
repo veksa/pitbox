@@ -51,6 +51,36 @@ describe('config', () => {
     await expect(loadConfig({cwd: dir})).rejects.toThrow(/missing query/);
   });
 
+  it("keeps the dev server off React DevTools' port", async () => {
+    const {defaultInternalPort} = await import('./devserver/devserver.ts');
+    expect(defaultInternalPort(8081)).toBe(8082);
+    expect(defaultInternalPort(8096)).toBe(8098);
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({devserver: {port: 8097}}));
+    await expect(loadConfig({cwd: dir})).rejects.toThrow(/devserver\.port: 8097 is React DevTools' port/);
+  });
+
+  it('picks its own ports from PITBOX_PORTS, past one that answers', async () => {
+    const {freePort, portAnswers, portRange} = await import('./util/net.ts');
+    const net = await import('node:net');
+    const taken = net.createServer();
+    await new Promise<void>(r => taken.listen(0, '::', () => r()));
+    const p = (taken.address() as import('node:net').AddressInfo).port;
+    try {
+      // A range of two whose other port is free: the taken one is never given, wherever the pick starts.
+      const other = p > 1024 ? p - 1 : p + 1;
+      const range = other < p ? `${other}-${p}` : `${p}-${other}`;
+      // The neighbour may be some other program's on a busy machine: then there is nothing to check here.
+      if (await portAnswers(other)) return;
+      for (let i = 0; i < 5; i++) expect(await freePort({PITBOX_PORTS: range})).toBe(other);
+      await expect(freePort({PITBOX_PORTS: `${p}-${p}`})).rejects.toThrow(/no free port in PITBOX_PORTS/);
+    } finally {
+      taken.close();
+    }
+    expect(() => portRange({PITBOX_PORTS: '9000'})).toThrow(/expected a range/);
+    expect(portRange({})).toBeUndefined();
+  });
+
   it('takes the device placeholders as built in and refuses to declare them', async () => {
     const dir = tmp();
     fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({tools: {fresh: {run: 'simctl install {apple_device} {app}; adb -s {android_device} shell true', params: {app: 'app path'}}}}));

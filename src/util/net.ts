@@ -67,13 +67,53 @@ export const httpAlive = async (url: string, timeoutMs = 1500): Promise<HttpProb
   }
 };
 
-export const freePort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
+/** React DevTools' port: apps in development connect to it, so pitbox never takes it for itself. */
+export const REACT_DEVTOOLS_PORT = 8097;
+
+/**
+ * The range pitbox picks its own ports from (actors, the Apple runner): `PITBOX_PORTS=lo-hi`, for machines that
+ * keep local servers to set ranges. Unset: any port the system gives out.
+ */
+export const portRange = (env: NodeJS.ProcessEnv = process.env): [number, number] | undefined => {
+  const raw = env.PITBOX_PORTS?.trim();
+  if (!raw) return undefined;
+  const m = /^(\d+)-(\d+)$/.exec(raw);
+  const [lo, hi] = m ? [Number(m[1]), Number(m[2])] : [NaN, NaN];
+  if (!(lo >= 1 && hi <= 65535 && lo <= hi)) throw new Error(`PITBOX_PORTS=${raw}: expected a range such as 4200-4299`);
+  return [lo, hi];
+};
+
+const bindFree = (port: number): Promise<number | undefined> =>
+  new Promise(resolve => {
     const server = net.createServer();
     server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.once('error', () => resolve(undefined));
+    server.listen(port, '127.0.0.1', () => {
       const address = server.address();
-      server.close(() => (address && typeof address === 'object' ? resolve(address.port) : reject(new Error('no port'))));
+      server.close(() => resolve(address && typeof address === 'object' ? address.port : undefined));
     });
   });
+
+/**
+ * A port nobody listens on: from `PITBOX_PORTS` when set (starting at a random place in it, so two daemons rarely
+ * try the same one first), else one the system gives out. Never React DevTools' port, never one that answers.
+ */
+export const freePort = async (env: NodeJS.ProcessEnv = process.env): Promise<number> => {
+  const range = portRange(env);
+  if (!range) {
+    for (let i = 0; i < 5; i++) {
+      const p = await bindFree(0);
+      if (p && p !== REACT_DEVTOOLS_PORT && !(await portAnswers(p))) return p;
+    }
+    throw new Error('no free port');
+  }
+  const [lo, hi] = range;
+  const size = hi - lo + 1;
+  const first = Math.floor(Math.random() * size);
+  for (let i = 0; i < size; i++) {
+    const p = lo + ((first + i) % size);
+    if (p === REACT_DEVTOOLS_PORT || (await portAnswers(p))) continue;
+    if ((await bindFree(p)) === p) return p;
+  }
+  throw new Error(`no free port in PITBOX_PORTS=${lo}-${hi}: every one answers or is React DevTools' (${REACT_DEVTOOLS_PORT})`);
+};

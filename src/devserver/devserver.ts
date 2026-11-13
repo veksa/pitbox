@@ -7,6 +7,7 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import type {DevserverConfig, ServiceConfig} from '../config/schema.ts';
 import {lanAddress} from '../util/lan.ts';
+import {REACT_DEVTOOLS_PORT} from '../util/net.ts';
 import {runShell} from '../util/proc.ts';
 import {BytecodeCache, findHermesc, hermesCompiler} from './hermes.ts';
 import {JsDebugger} from './jsdebug.ts';
@@ -60,6 +61,9 @@ const preloadPath = () => {
   return path.join(path.dirname(here), `preload${path.extname(here)}`);
 };
 
+/** The bundler's port when none is set: the next one after the proxy's, past React DevTools' port. */
+export const defaultInternalPort = (port: number) => (port + 1 === REACT_DEVTOOLS_PORT ? port + 2 : port + 1);
+
 export class DevServer {
   readonly cfg: DevserverConfig;
   readonly root: string;
@@ -78,7 +82,7 @@ export class DevServer {
     this.cfg = cfg;
     this.root = cfg.root ? path.resolve(configRoot, cfg.root) : configRoot;
     this.port = cfg.port ?? 8081;
-    this.internalPort = cfg.internalPort ?? this.port + 1;
+    this.internalPort = cfg.internalPort ?? defaultInternalPort(this.port);
     this.hermesc = cfg.bytecode ? findHermesc(this.root) : undefined;
     this.#stateFile = path.join(stateDir, 'devserver.json');
     this.#stateDir = stateDir;

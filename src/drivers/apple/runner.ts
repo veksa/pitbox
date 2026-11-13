@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
+import {freePort} from '../../util/net.ts';
 import {run} from '../../util/proc.ts';
 import {AppleError, type AppleDriver, type SimKind} from './driver.ts';
 
@@ -40,17 +41,6 @@ export const sourceHash = (dir: string): string => {
   walk(dir);
   return h.digest('hex').slice(0, 12);
 };
-
-const freePort = () =>
-  new Promise<number>((resolve, reject) => {
-    const s = net.createServer();
-    s.unref();
-    s.on('error', reject);
-    s.listen(0, '127.0.0.1', () => {
-      const port = (s.address() as net.AddressInfo).port;
-      s.close(() => resolve(port));
-    });
-  });
 
 type Built = {xctestrun: string; built: boolean; ms: number};
 

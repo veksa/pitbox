@@ -100,7 +100,8 @@ left to each agent's discipline.
 - **Ports are checked, not trusted.** A stand's proxy, push gateway and LLM mock start only on a port nobody
   answers on, and its bundler's port is adopted only from a bundler running in the dev server's folder: a stand
   never serves, or forwards to, another stand's bundle ([config.md](config.md#devserver)). Worktrees of one
-  project need ports of their own, a pair apart.
+  project need ports of their own, a pair apart, and none of them takes 8097, React DevTools' port.
+  `PITBOX_PORTS=lo-hi` keeps the ports pitbox picks itself inside a range ([config.md](config.md#actors)).
 - **Forwards follow leases.** The daemon applies `adb reverse` only on devices it holds, and removes only the
   ports it forwarded, never another stand's.
 - **The push gateway delivers only to devices the session holds.** Never to another session's, never to one that

@@ -20,6 +20,7 @@ const quietTypelessConfig = () => {
     for (const h of handlers) h(w);
   });
 };
+import {REACT_DEVTOOLS_PORT} from '../util/net.ts';
 import {configSchema, isDevicePlaceholder, type PitboxConfig} from './schema.ts';
 
 export const CONFIG_NAMES = ['pitbox.config.ts', 'pitbox.config.mts', 'pitbox.config.mjs', 'pitbox.config.js', 'pitbox.config.json'];
@@ -75,6 +76,11 @@ export const loadConfig = async (opts: {file?: string; cwd?: string} = {}): Prom
     if (reserved.length) throw new Error(`invalid config ${file}:\n  tools.${name}.params: ${reserved.join(', ')} is built in (the device this session holds) and cannot be declared`);
     const missing = [...tool.run.matchAll(/\{(\w+)\}/g)].map(m => m[1]).filter(p => p && !declared.has(p) && !isDevicePlaceholder(p));
     if (missing.length) throw new Error(`invalid config ${file}:\n  tools.${name}.params: missing ${[...new Set(missing)].join(', ')}`);
+  }
+  for (const field of ['port', 'internalPort'] as const) {
+    if (config.devserver?.[field] === REACT_DEVTOOLS_PORT) {
+      throw new Error(`invalid config ${file}:\n  devserver.${field}: ${REACT_DEVTOOLS_PORT} is React DevTools' port, which apps in development connect to; pick another`);
+    }
   }
   if (config.devserver && config.services?.devserver) {
     throw new Error(`invalid config ${file}:\n  services.devserver: the name is reserved for the devserver section`);
