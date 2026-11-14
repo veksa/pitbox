@@ -16,7 +16,13 @@ android {
 
   defaultConfig {
     minSdk safeExt('minSdkVersion', 24)
-    consumerProguardFiles 'proguard-rules.pro'
+  }
+
+  buildTypes {
+    // The consumer rules serve the push receiver, which only the debug variant has; a release build gets none.
+    debug {
+      consumerProguardFiles 'proguard-rules.pro'
+    }
   }
 
   compileOptions {
