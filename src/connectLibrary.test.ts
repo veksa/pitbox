@@ -39,6 +39,13 @@ describe('android connect library', () => {
     expect(fs.readdirSync(path.join(android, 'src/main')).sort()).toEqual(['AndroidManifest.xml', 'java']);
   });
 
+  it('gives its consumer rules to the debug variant only', () => {
+    const gradle = read('build.gradle').replace(/\/\/.*$/gm, '');
+    expect(gradle.match(/consumerProguardFiles/g)).toHaveLength(1);
+    const debug = /buildTypes\s*\{\s*debug\s*\{([^}]*)\}/.exec(gradle)?.[1] ?? '';
+    expect(debug).toContain('consumerProguardFiles');
+  });
+
   it('declares the provider, the connect activity and the push receiver in the debug manifest', () => {
     const manifest = withoutComments(read('src/debug/AndroidManifest.xml'));
     for (const name of COMPONENTS) expect(manifest).toContain(`android:name="${name}"`);

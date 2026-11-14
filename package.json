@@ -48,6 +48,7 @@
     "test": "vitest run",
     "check-all": "yarn compile && yarn test",
     "build-runner": "node scripts/build-runner.mjs",
+    "check-connect": "node scripts/check-connect.mjs",
     "e2e": "node scripts/e2e.mjs",
     "e2e:apple": "node scripts/e2e-apple.mjs",
     "e2e:mac": "node scripts/e2e-mac.mjs",

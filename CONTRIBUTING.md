@@ -27,6 +27,9 @@ library, Swift for the Apple runner and connect library.
 ## Tests
 
 - `yarn test` — unit tests (vitest).
+- `yarn check-connect` — builds the Android connect library in both variants and checks that the release variant
+  (what an app's release build takes in) declares no component and carries no code but the empty package class.
+  Needs a JDK and the Android SDK.
 - `yarn e2e` — drives the example apps through the CLI on every kind of Android emulator found on the machine
   (phone, foldable, tablet, desktop, TV, XR, glasses, watch, car) and the React Native example through
   pitbox's dev server, with a verdict per device kind.

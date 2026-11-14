@@ -112,3 +112,5 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - run: ./runners/android/gradlew -p runners/android assembleRelease
       - run: ./runners/android/gradlew -p android/standalone publishToMavenLocal
+      # The release variant an app's release build takes in: no component, no code but the package class, no rules.
+      - run: node scripts/check-connect.mjs
