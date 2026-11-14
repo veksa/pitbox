@@ -58,6 +58,9 @@ jobs:
             const files = new Set(require("./pack.json")[0].files.map(f => f.path));
             const need = ["dist/bin.js", "dist/index.js", "runners/android/pitbox-runner.apk",
               "runners/apple/PitboxRunner.xcodeproj/project.pbxproj", "android/build.gradle",
+              "android/src/main/AndroidManifest.xml", "android/src/main/java/dev/pitbox/connect/PitboxPackage.kt",
+              "android/src/debug/AndroidManifest.xml", "android/src/debug/java/dev/pitbox/connect/PitboxConnect.kt",
+              "android/src/debug/java/dev/pitbox/connect/PitboxPushReceiver.kt", "android/proguard-rules.pro",
               "react-native.config.js", "PitboxConnect.podspec", "docs/agents.md", "docs/flows.md",
               "connect/apple/Sources/PitboxConnect/PitboxConnect.swift"];
             const missing = need.filter(f => !files.has(f));
