@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-  <!-- Release builds ship with the connect components disabled; src/debug overrides this. -->
-  <bool name="pitbox_connect_enabled">false</bool>
-</resources>

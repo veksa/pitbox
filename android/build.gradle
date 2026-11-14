@@ -1,5 +1,7 @@
 // pitbox connect: points a debug build at the dev server without a dev launcher. Autolinked into React Native
 // apps; uses the host app's Android Gradle and Kotlin plugins, so it declares no versions of its own.
+// Everything that runs lives in the debug source set (src/debug); src/main holds only the empty package class,
+// so an app's release build carries no component and no code of the library.
 
 apply plugin: 'com.android.library'
 apply plugin: 'org.jetbrains.kotlin.android'

@@ -18,8 +18,9 @@ import java.util.concurrent.TimeUnit
  *
  * Real FCM arrives as `com.google.android.c2dm.intent.RECEIVE` from Play services, a broadcast only a holder of
  * its signature may send. This receiver takes its place: it is reached by explicit component from `adb shell am
- * broadcast`, guarded by the DUMP permission (held by the shell, never by an installed app), enabled only in
- * debug builds (res/values/pitbox.xml) and checks the build is debuggable before it does anything.
+ * broadcast`, guarded by the DUMP permission (held by the shell, never by an installed app), exists only in the
+ * library's debug variant (a release build carries none of it) and checks the build is debuggable before it does
+ * anything.
  *
  * Extras: `op` (`deliver`, default; `clear` cancels the app's notifications; `probe` reports the service) and
  * `payload`, a base64 JSON object of string extras — the FCM wire format (`gcm.n.e`, `gcm.notification.title`,

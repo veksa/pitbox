@@ -1,38 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
-
-  <application>
-    <!-- Applies the saved dev server before the app's own code runs. Off in release (res/values/pitbox.xml). -->
-    <provider
-      android:name="dev.pitbox.connect.PitboxConnectProvider"
-      android:authorities="${applicationId}.pitbox"
-      android:enabled="@bool/pitbox_connect_enabled"
-      android:exported="false"
-      android:initOrder="1000" />
-
-    <!-- pitbox.<applicationId>://connect?devserver=host:port — what `pitbox qr` encodes. Off in release. -->
-    <activity
-      android:name="dev.pitbox.connect.PitboxConnectActivity"
-      android:enabled="@bool/pitbox_connect_enabled"
-      android:excludeFromRecents="true"
-      android:exported="true"
-      android:noHistory="true"
-      android:theme="@android:style/Theme.Translucent.NoTitleBar">
-      <intent-filter>
-        <action android:name="android.intent.action.VIEW" />
-        <category android:name="android.intent.category.DEFAULT" />
-        <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="pitbox.${applicationId}" android:host="connect" />
-      </intent-filter>
-    </activity>
-
-    <!-- `pitbox push`: hands an emulated FCM message to the app's own FirebaseMessagingService. Reached only by
-         explicit component from adb (the DUMP permission is the shell's, never an installed app's). Off in release. -->
-    <receiver
-      android:name="dev.pitbox.connect.PitboxPushReceiver"
-      android:enabled="@bool/pitbox_connect_enabled"
-      android:exported="true"
-      android:permission="android.permission.DUMP"
-      tools:ignore="ExportedReceiver" />
-  </application>
-</manifest>
+<!-- Every variant: nothing but the empty package class React Native autolinking needs. The connect components and
+     their code live in the debug source set (src/debug), so a release build of an app carries none of them. -->
+<manifest />

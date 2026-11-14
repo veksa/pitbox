@@ -1,6 +1,6 @@
 // The versions a React Native app would otherwise bring, and the Maven publication of the connect library.
-// The artifact is the debug variant: the library is meant for debug builds only (`debugImplementation`), and
-// its release variant ships with the connect components switched off.
+// The artifact is the debug variant: the library is meant for debug builds only (`debugImplementation`). Its
+// release variant carries only the empty package class React Native autolinking needs: no components, no code.
 buildscript {
   ext {
     compileSdkVersion = 36
