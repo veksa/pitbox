@@ -46,8 +46,10 @@ Small debug-only libraries that point an app at pitbox's dev server and named ho
 physical devices and in native apps that read named hosts. The Android library also carries the receiver that
 `push` delivers through (an Android app needs it for [push notifications](push.md); iOS needs nothing).
 
-**React Native** — comes with the npm package. Android is autolinked. On iOS, add the pod to the app's
-`Podfile`:
+**React Native** — comes with the npm package. Android is autolinked; everything the library does lives in its
+debug variant, and its release variant carries only the empty package class autolinking needs (no components, no
+code), so a release build ships none of it. iOS is not autolinked: add the pod to the app's `Podfile`, for the
+Debug configuration only:
 
 ```ruby
 pod 'PitboxConnect', :path => '../node_modules/@veksa/pitbox', :configurations => ['Debug']

@@ -101,9 +101,10 @@ services) and no network: only the app's Firebase client library and an initiali
 `google-services.json`). A message is delivered to an app that was force-stopped too (`app stop`); real FCM
 would not wake one, so the verdict then carries a note saying so.
 
-**Release builds are not affected.** The receiver is switched off in release builds (`pitbox_connect_enabled` is
-`false` outside the debug source set), it answers only in a debuggable app, and it is guarded by the `DUMP`
-permission, which the adb shell holds and no installed app can.
+**Release builds are not affected.** The receiver exists only in the library's debug variant: the release variant
+carries nothing but the empty package class React Native autolinking needs, so a release build has no receiver, no
+connect components and none of their code. In a debug build the receiver answers only in a debuggable app, and it
+is guarded by the `DUMP` permission, which the adb shell holds and no installed app can.
 
 ## Recipes
 
