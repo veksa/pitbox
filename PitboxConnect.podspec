@@ -19,4 +19,6 @@ Pod::Spec.new do |s|
   s.visionos.deployment_target = '1.0'
   s.osx.deployment_target = '12.0'
   s.source_files = 'connect/apple/Sources/PitboxConnect/**/*.swift'
+  # The Live Activity hook: ActivityKit is there from iOS 16.1, and the hook checks for it at run time.
+  s.ios.weak_frameworks = 'ActivityKit'
 end
