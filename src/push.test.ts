@@ -447,6 +447,34 @@ describe('push gateway', () => {
   });
 });
 
+describe('push routing', () => {
+  const center = (online: {android: string[]; apple: string[]}) => new PushCenter({target: async () => Promise.reject(new Error('unused')), online: async () => online, ui: async () => Promise.reject(new Error('unused'))});
+
+  it("sends a placeholder token to its platform, binds it when one device fits, and refuses one on the wrong service", async () => {
+    const c = center({android: ['emulator-5554'], apple: ['SIM-1']});
+    expect(await c.route('fcm', 'pitbox-ios-0a1b')).toEqual({device: 'SIM-1'});
+    expect(c.tokens.get('pitbox-ios-0a1b')).toBe('SIM-1');
+    expect(await c.route('fcm', 'pitbox-android-0a1b')).toEqual({device: 'emulator-5554'});
+    expect((await c.route('apns', 'pitbox-android-0a1b')).device).toBe('emulator-5554');
+    expect(await c.route('apns', 'pitbox-android-ffff')).toMatchObject({dead: expect.stringMatching(/Android placeholder/)});
+  });
+
+  it('says so when a placeholder token has several devices to go to, and binds none', async () => {
+    const c = center({android: [], apple: ['SIM-1', 'SIM-2']});
+    const r = await c.route('fcm', 'pitbox-ios-1');
+    expect(r.device).toBe('SIM-1');
+    expect(r.note).toMatch(/2 devices online/);
+    expect(c.tokens.has('pitbox-ios-1')).toBe(false);
+    expect(await center({android: ['emulator-5554'], apple: []}).route('fcm', 'pitbox-ios-2')).toEqual({device: undefined});
+  });
+
+  it('answers a dead placeholder as APNs and FCM answer a dead token', async () => {
+    const c = {...fakeCenter(), route: async () => ({dead: 'an Android placeholder token on an APNs request'})};
+    expect(await handlePush(c, {method: 'POST', path: '/3/device/pitbox-android-1', headers: {}, body: '{"aps":{"alert":"hi"}}'}, {})).toMatchObject({status: 400, body: {reason: 'BadDeviceToken'}});
+    expect((await handlePush(c, {method: 'POST', path: '/v1/projects/p/messages:send', headers: {}, body: '{"message":{"token":"x","notification":{"title":"T"}}}'}, {})).status).toBe(404);
+  });
+});
+
 describe('push input checks', () => {
   it('lets only package names through to the shell', () => {
     expect(() => assertPackage('com.example.app')).not.toThrow();

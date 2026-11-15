@@ -78,6 +78,7 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
       return {status: 400, body: {reason: 'PayloadEmpty'}};
     }
     const routed = await center.route('apns', token);
+    if (routed.dead) return {status: 400, body: {reason: 'BadDeviceToken', pitbox: routed.dead}};
     if (!routed.device) return {status: 503, body: {reason: 'ServiceUnavailable', pitbox: 'no simulator of this session booted (devices held by other sessions or nobody are not delivered to)'}};
     const s = await deliver(center, {device: routed.device, app: topic ?? apps.apple, apns: payload, apnsHeaders: apnsHeaders(req.headers), wait: 2000, fromGateway: true, routeNote: routed.note}, 'gateway apns', token);
     if ('error' in s) return s.unregistered ? {status: 400, body: {reason: 'BadDeviceToken', pitbox: s.error}} : {status: 500, body: {reason: 'InternalServerError', pitbox: s.error}};
@@ -104,6 +105,10 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     const sent: Sent[] = [];
     for (const token of tokens) {
       const routed = await center.route('fcm', token || undefined);
+      if (routed.dead) {
+        sent.push({error: routed.dead, unregistered: true});
+        continue;
+      }
       if (!routed.device) return {status: 503, body: {error: {code: 503, message: 'pitbox: no emulator or simulator of this session online', status: 'UNAVAILABLE'}}};
       sent.push(await deliver(center, {device: routed.device, app: undefined, fcm: message, wait: 2000, fromGateway: true, routeNote: routed.note}, v1 ? 'gateway fcm' : 'gateway fcm legacy', token || undefined));
     }
@@ -132,6 +137,7 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     const kind = body.apns || body.platform === 'ios' || body.platform === 'apple' ? 'apns' : 'fcm';
     const given = typeof body.device === 'string' ? body.device : undefined;
     const routed = given ? {device: given} : await center.route(kind, token);
+    if ('dead' in routed && routed.dead) return {status: 404, body: {ok: false, verdict: routed.dead}};
     if (!routed.device) return {status: 503, body: {ok: false, verdict: 'no emulator or simulator of this session online'}};
     const {token: _t, platform: _p, headers, device: _d, ...rest} = body;
     const opts = {...rest, device: routed.device, fromGateway: true, routeNote: 'note' in routed ? routed.note : undefined} as PushOptions;

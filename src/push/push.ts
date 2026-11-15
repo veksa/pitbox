@@ -81,6 +81,12 @@ export type PushResult = {
 export type PushRecord = PushResult & {at: number; token?: string};
 
 const yes = (v: unknown) => v === true || v === 'true' || v === '1';
+
+/** The platform a placeholder token names (`pitbox-ios-<id>`, `pitbox-android-<id>`), if it is one. */
+export const placeholderPlatform = (token: string): 'apple' | 'android' | undefined => {
+  const m = /^pitbox-(ios|android)-/.exec(token);
+  return m ? (m[1] === 'ios' ? 'apple' : 'android') : undefined;
+};
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /** A notification counts as this push's when it is new or changed since the snapshot before sending. */
@@ -455,8 +461,12 @@ export class PushCenter {
     };
   }
 
-  /** Which device a gateway request goes to: a bound token, else by the kind of request and what is online. */
-  async route(kind: 'apns' | 'fcm', token?: string): Promise<{device?: string; note?: string}> {
+  /**
+   * Which device a gateway request goes to: a bound token, else a placeholder token's platform, else by the kind of
+   * request and what is online. `dead`: the token cannot belong to any device here (the gateway answers as for a
+   * dead token).
+   */
+  async route(kind: 'apns' | 'fcm', token?: string): Promise<{device?: string; note?: string; dead?: string}> {
     // `online` is the devices this session may deliver to (with leases: the ones it holds, never another's).
     const online = await this.#deps.online();
     let skipped: string | undefined;
@@ -465,7 +475,18 @@ export class PushCenter {
       if (online.android.includes(bound) || online.apple.includes(bound)) return {device: bound};
       skipped = `the token is bound to ${bound}, which this session does not hold now: routed by kind instead`;
     }
-    const withNote = (r: {device?: string; note?: string}) => ({...r, note: [skipped, r.note].filter(Boolean).join('; ') || undefined});
+    const withNote = (r: {device?: string; note?: string; dead?: string}) => ({...r, note: [skipped, r.note].filter(Boolean).join('; ') || undefined});
+    // A debug build with no real token (no APNs on a simulator, no Play services on an emulator) registers
+    // `pitbox-ios-…` / `pitbox-android-…`: the platform is in the token, so it is never a guess.
+    const placeholder = token ? placeholderPlatform(token) : undefined;
+    if (placeholder) {
+      if (kind === 'apns' && placeholder === 'android') return withNote({dead: 'an Android placeholder token on an APNs request'});
+      const candidates = placeholder === 'apple' ? online.apple : online.android;
+      // The only device of its platform: bound, so the token keeps finding it when more devices come online.
+      if (candidates.length === 1) this.bind(token!, candidates[0]!);
+      const note = candidates.length > 1 ? `a ${placeholder === 'apple' ? 'pitbox-ios' : 'pitbox-android'} token with ${candidates.length} devices online went to ${candidates[0]}: \`push bind <token> --device …\` picks another` : undefined;
+      return withNote({device: candidates[0], note});
+    }
     if (kind === 'apns') return withNote({device: online.apple[0]});
     // An APNs device token is 64 hex digits; an FCM token is not.
     if (token && /^[0-9a-f]{64}$/i.test(token) && online.apple.length) return withNote({device: online.apple[0]});
