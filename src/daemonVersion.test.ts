@@ -132,7 +132,7 @@ const s = require('http').createServer((q, r) => { let b = ''; q.on('data', c =>
   if (m === ${JSON.stringify(DAEMON_STOP)} && ${!!opts.refuseStop}) return r.end(JSON.stringify({ok: false, error: 'in use'}));
   r.end(JSON.stringify({ok: true, result: 'pong'}));
   if (m === ${JSON.stringify(DAEMON_STOP)}) setTimeout(() => process.exit(0), 50); }); });
-s.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(daemonFile(stateDir))}, JSON.stringify({pid: process.pid, port: s.address().port, token: 't', config: '', root: ${JSON.stringify(dir)}, startedAt: Date.now(), version: ${JSON.stringify(opts.version)}})));`,
+s.listen(0, '127.0.0.1', () => { const f = ${JSON.stringify(daemonFile(stateDir))}; fs.writeFileSync(f + '.tmp', JSON.stringify({pid: process.pid, port: s.address().port, token: 't', config: '', root: ${JSON.stringify(dir)}, startedAt: Date.now(), version: ${JSON.stringify(opts.version)}})); fs.renameSync(f + '.tmp', f); });`,
   );
   const child = spawn(process.execPath, [script], {stdio: 'ignore'});
   children.push(child);

@@ -61,7 +61,7 @@ describe('a daemon of another version', () => {
       old,
       `const s = require('http').createServer((q, r) => { let b = ''; q.on('data', c => (b += c)); q.on('end', () => {
   r.end(JSON.stringify({ok: true, result: 'pong'})); if (JSON.parse(b || '{}').method === ${JSON.stringify(DAEMON_STOP)}) setTimeout(() => process.exit(0), 50); }); });
-s.listen(0, '127.0.0.1', () => require('fs').writeFileSync(${JSON.stringify(daemonFile(stateDir))}, JSON.stringify({pid: process.pid, port: s.address().port, token: 't', config: '', root: ${JSON.stringify(dir)}, startedAt: Date.now(), version: '0.0.0'})));`,
+s.listen(0, '127.0.0.1', () => { const f = ${JSON.stringify(daemonFile(stateDir))}; require('fs').writeFileSync(f + '.tmp', JSON.stringify({pid: process.pid, port: s.address().port, token: 't', config: '', root: ${JSON.stringify(dir)}, startedAt: Date.now(), version: '0.0.0'})); require('fs').renameSync(f + '.tmp', f); });`,
     );
     const child = spawn(process.execPath, [old], {stdio: 'ignore'});
     while (!fs.existsSync(daemonFile(stateDir))) await new Promise(r => setTimeout(r, 50));
