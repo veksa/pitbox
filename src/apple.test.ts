@@ -83,7 +83,10 @@ describe('apple driver', () => {
     expect(sourceHash(dir)).toBe(first);
     fs.writeFileSync(path.join(dir, 'Runner', 'A.swift'), 'let a = 2');
     expect(sourceHash(dir)).not.toBe(first);
-  });
+    fs.rmSync(dir, {recursive: true, force: true, maxRetries: 5});
+    // Synchronous from end to end, so a time limit could never stop it hanging: it would only fail it when the
+    // machine stalls file writes for a while, as a loaded Windows runner does while other tests start processes.
+  }, 60_000);
 
   const ips = (o: {bundle?: string; udid?: string; bug?: string; exception?: boolean} = {}) =>
     `${JSON.stringify({bug_type: o.bug ?? '309', bundleID: o.bundle ?? 'com.example.app'})}\n${JSON.stringify({
