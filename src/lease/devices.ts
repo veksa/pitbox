@@ -7,7 +7,7 @@ import {acquire, DAEMON_TTL_MS, describeHolder, heartbeat, listLeases, markBoot,
 /** A device online now. `instance` is its current boot (Android), to tell a reused serial from the leased device. */
 export type Candidate = {platform: Platform; id: string; name?: string; instance?: string; offline?: boolean};
 
-export type Held = {platform: Platform; id: string; name?: string; instance?: string; booted: boolean; created: boolean; boot?: string};
+export type Held = {platform: Platform; id: string; name?: string; instance?: string; booted: boolean; created: boolean; boot?: string; pairedWith?: string};
 
 const key = (platform: Platform, id: string) => `${platform}:${id}`;
 
@@ -50,7 +50,7 @@ export class DeviceLeases {
   }
 
   /** Takes the device or renews the hold; throws the refusal naming its holder when someone else has it. */
-  claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean; created?: boolean; instance?: string; boot?: string} = {}): Lease {
+  claim(platform: Platform, id: string, opts: {name?: string; purpose?: string; booted?: boolean; created?: boolean; instance?: string; boot?: string; pairedWith?: string} = {}): Lease {
     const r = acquire(platform, id, this.holder, {...opts, ...(opts.booted && this.keepBooted() ? {keep: true} : {}), ttlMs: DAEMON_TTL_MS}, this.isMine);
     if (!r.ok) throw new Error(refusal(r.lease, opts.name ?? r.lease.name ?? id));
     const was = this.#held.get(key(platform, id));
@@ -62,6 +62,7 @@ export class DeviceLeases {
       booted: !!(r.lease.booted || opts.booted),
       created: !!(r.lease.created || opts.created),
       boot: r.lease.boot,
+      pairedWith: r.lease.pairedWith,
     });
     return r.lease;
   }
@@ -100,6 +101,9 @@ export class DeviceLeases {
     }
     const names = (list: Candidate[]) => list.map(c => c.name ?? c.id).join(', ');
     if (mine.length === 1) return mine[0]!;
+    // A watch paired for the session is its phone's companion: a call that names no device means the phone.
+    const unpaired = mine.filter(c => !this.holderOf(c.platform, c.id, c.instance)?.lease.pairedWith);
+    if (mine.length > 1 && unpaired.length === 1) return unpaired[0]!;
     if (mine.length > 1) throw new Error(`you hold several devices\nhint: pass a device: ${names(mine)}`);
     if (opts.observe && candidates.length === 1) return candidates[0]!;
     const lines = [...taken.map(t => `${t.c.name ?? t.c.id} — held by ${describeHolder(t.lease)}`), ...unleased.map(c => `${c.name ?? c.id} (${c.id}) — ${UNLEASED}`)];
@@ -180,7 +184,7 @@ export class DeviceLeases {
     for (const l of listLeases()) {
       if (l.owner !== this.holder.owner) continue;
       if (!heartbeat(l.platform, l.device, l.owner, {pid: this.holder.pid, pidStart: this.holder.pidStart, label: this.holder.label})) continue;
-      const h: Held = {platform: l.platform, id: l.device, name: l.name, instance: l.instance, booted: !!l.booted, created: !!l.created, boot: l.boot};
+      const h: Held = {platform: l.platform, id: l.device, name: l.name, instance: l.instance, booted: !!l.booted, created: !!l.created, boot: l.boot, pairedWith: l.pairedWith};
       this.#held.set(key(l.platform, l.device), h);
       adopted.push(h);
     }

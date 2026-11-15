@@ -1,5 +1,5 @@
-// The devices pitbox created for sessions, by id: simulators (`<name> (pitbox N)`, by udid) and AVDs
-// (`<avd>_pitbox_N`, as `android:<name>`). Only these are ever deleted — on release, and by `devices clean` — and an
+// The devices pitbox created for sessions, by id: simulators (`<name> (pitbox N)`, by udid), AVDs
+// (`<avd>_pitbox_N`, as `android:<name>`) and watch pairs (`pair:<pair id>`, with their phone and watch). Only these are ever deleted — on release, and by `devices clean` — and an
 // AVD only while its folder is still the one pitbox made (`stamp`). One someone named the same way by hand is not on
 // the list and stays.
 
@@ -17,6 +17,9 @@ export type Created = {
   stamp?: string;
   /** Made for a session that keeps what it creates (`devices.deleteCreated: false`): only `devices clean` deletes it. */
   keep?: boolean;
+  /** A watch pair pitbox made (`pair:<pair id>`): its phone and watch, unpaired only while it still joins these two. */
+  phone?: string;
+  watch?: string;
 };
 
 const file = () => path.join(pitboxHome(), 'created-simulators.json');
@@ -58,7 +61,7 @@ export const createdEntry = (udid: string): Created | undefined => read().find(c
 
 export const isCreated = (udid: string): boolean => read().some(c => c.udid === udid);
 
-export const recordCreated = (udid: string, name: string, extra: Partial<Pick<Created, 'like' | 'stamp' | 'keep'>> = {}) =>
+export const recordCreated = (udid: string, name: string, extra: Partial<Pick<Created, 'like' | 'stamp' | 'keep' | 'phone' | 'watch'>> = {}) =>
   withLock(file(), () => write([...read().filter(c => c.udid !== udid), {udid, name, at: Date.now(), ...extra}]));
 
 export const updateCreated = (udid: string, patch: Partial<Pick<Created, 'stamp'>>) => withLock(file(), () => write(read().map(c => (c.udid === udid ? {...c, ...patch} : c))));

@@ -53,6 +53,8 @@ export type Lease = Holder & {
    * leads to a shutdown.
    */
   boot?: string;
+  /** An Apple Watch simulator taken for a pair (`device action=pair value=watch`): the udid of its phone. */
+  pairedWith?: string;
 };
 
 /** A daemon's lease does not expire while it runs; this is only what it says about itself. */
@@ -415,7 +417,7 @@ export const withLockAsync = async <T>(file: string, fn: () => Promise<T>, waitM
 /** A machine-wide lock under the lease folder, for work no two sessions may do at once (naming a new simulator). */
 export const machineLock = <T>(name: string, fn: () => Promise<T>, waitMs?: number) => withLockAsync(path.join(leaseDir(), name), fn, waitMs);
 
-export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; keep?: boolean; ttlMs?: number; instance?: string; boot?: string; now?: number};
+export type AcquireOptions = {name?: string; purpose?: string; booted?: boolean; created?: boolean; keep?: boolean; ttlMs?: number; instance?: string; boot?: string; pairedWith?: string; now?: number};
 
 export type Acquired =
   | {ok: true; lease: Lease; renewed: boolean; replaced?: {lease: Lease; why: string; adopted?: boolean}}
@@ -447,6 +449,7 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
         created: current.created || opts.created || undefined,
         keep: current.keep || opts.keep || undefined,
         boot: opts.boot ?? current.boot,
+        pairedWith: opts.pairedWith ?? current.pairedWith,
       };
       writeWhole(file, JSON.stringify(renewed, null, 1));
       return {ok: true as const, lease: renewed, renewed: true};
@@ -470,6 +473,7 @@ export const acquire = (platform: Platform, device: string, holder: Holder, opts
       created: opts.created || (adopted && current?.created) || undefined,
       keep: opts.keep || (adopted && current?.keep) || undefined,
       boot: opts.boot ?? (adopted ? current?.boot : undefined),
+      pairedWith: opts.pairedWith ?? (adopted ? current?.pairedWith : undefined),
     };
     try {
       writeWhole(file, JSON.stringify(fresh, null, 1));

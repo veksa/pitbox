@@ -118,7 +118,8 @@ export const leaseWarnings = (leases: (Lease & {stale?: string})[], now = Date.n
   }
   const byHolder = new Map<string, Lease[]>();
   for (const l of leases) {
-    if (l.stale || l.owner.startsWith(REAPER)) continue;
+    // A watch taken for a pair is the phone's companion, not a second device left behind.
+    if (l.stale || l.owner.startsWith(REAPER) || l.pairedWith) continue;
     const k = `${l.owner}|${l.platform}`;
     byHolder.set(k, [...(byHolder.get(k) ?? []), l]);
   }
