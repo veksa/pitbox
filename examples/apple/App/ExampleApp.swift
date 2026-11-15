@@ -9,9 +9,23 @@ import AVFoundation
 import RealityKit
 #endif
 
+#if os(iOS)
+import PitboxConnect
+#endif
+
 @main
 struct ExampleApp: App {
   @State private var detail: String?
+
+  init() {
+    #if os(iOS)
+    // The delivery Live Activity, for `push activity` and the push gateway: started, updated and ended by pitbox.
+    if #available(iOS 16.2, *) {
+      PitboxLiveActivity.register(DeliveryAttributes.self)
+      PitboxLiveActivity.start()
+    }
+    #endif
+  }
 
   var body: some SwiftUI.Scene {
     WindowGroup {

@@ -112,6 +112,17 @@ export const featureChecks = async ({pitbox, device, dir, platform, bin}) => {
   on(['clear-app']);
   check('clear-app', fresh().code === 0);
 
+  // ---- Live Activities (iOS): started, updated and ended through the example's debug hook ----
+  if (!android) {
+    fresh();
+    const started = on(['push', 'activity', 'start', 'type=DeliveryAttributes', 'attributes={"order":"42"}', 'state={"status":"Packed","progress":0.2}']);
+    const updated = on(['push', 'activity', 'update', 'state={"status":"On the way","progress":0.6}']);
+    const listed = on(['push', 'activities']);
+    const ended = on(['push', 'activity', 'end', 'dismissal=0']);
+    head(started.out, 1);
+    check('a Live Activity starts, updates and ends', /✓ .*Live Activity started/.test(started.out) && /✓ .*Live Activity updated/.test(updated.out) && /active/.test(listed.out) && /✓ .*Live Activity ended/.test(ended.out), [started.out, updated.out, ended.out].find(o => !/✓/.test(o)));
+  }
+
   // ---- recording, named states, the matrix, signing in ----
   const recorded = path.join(dir, 'flows', 'e2e-recorded.flow');
   fs.rmSync(recorded, {force: true});
