@@ -182,6 +182,8 @@ export class JsDebugger {
   readonly #reload: () => Promise<unknown>;
   #session?: CdpSession;
   #debuggerOn = false;
+  /** While `Debugger.enable` runs: the scripts parsed meanwhile are its report of those already loaded, not a reload. */
+  #enabling = false;
   /** Bundle scripts the runtime has parsed in this session, by script id, with when they were parsed. */
   readonly #scripts = new Map<string, {url: string; at: number}>();
   readonly #maps = new Map<string, RawSourceMap>();
@@ -225,6 +227,8 @@ export class JsDebugger {
           : 'no debuggable app: none runs a dev build against this dev server, or its JS has not started yet',
       );
     }
+    // Closed by pitbox to move to another app, not lost with a runtime that went away.
+    if (cur) this.#session = undefined;
     cur?.close();
     const s = await CdpSession.open(page, this.#port, 5000, this.#origins);
     this.#session = s;
@@ -245,8 +249,9 @@ export class JsDebugger {
       const url = String(e.params.url ?? '');
       if (!isBundle(url)) return;
       this.#scripts.set(String(e.params.scriptId), {url, at: Date.now()});
-      // A reload parses a new main bundle in the same session: the breakpoints of the old one are gone.
-      if (isMain(url) && this.#logpoints.size) this.#replaceSoon(true);
+      // A reload parses a new main bundle in the same session: the breakpoints of the old one are gone. The scripts
+      // `Debugger.enable` reports in a new session are the ones already running, which `#placeAll` covers.
+      if (isMain(url) && this.#logpoints.size && !this.#enabling) this.#replaceSoon(true);
     } else if (e.method === 'Runtime.executionContextsCleared') {
       this.#scripts.clear();
     } else if (e.method === 'Debugger.paused') {
@@ -299,7 +304,19 @@ export class JsDebugger {
         `${device} has no app on the dev server to inspect: no JS runtime of a dev build runs there${pages.length ? ` (debuggable apps: ${[...new Set(pages.map(p => p.deviceName ?? p.title))].join(', ')})` : ''}`,
       );
     }
-    const s = await this.#open(page.deviceName ?? page.title);
+    const app = page.deviceName ?? page.title;
+    const cur = this.#session;
+    // Logpoints live in the session to their device: a read of another device's app goes through a session of its
+    // own, or opening it would close theirs and their breakpoints with it.
+    if (this.#logpoints.size && cur && !cur.closed && cur.page.id !== page.id) {
+      const s = await CdpSession.open(page, this.#port, 5000, this.#origins);
+      try {
+        return {value: await this.#value<T>(s, expression, timeoutMs), app};
+      } finally {
+        s.close();
+      }
+    }
+    const s = await this.#open(app);
     return {value: await this.#value<T>(s, expression, timeoutMs), app: s.page.deviceName ?? s.page.title};
   }
 
@@ -331,7 +348,12 @@ export class JsDebugger {
 
   async #enableDebugger(s: CdpSession) {
     if (this.#debuggerOn) return;
-    await s.send('Debugger.enable');
+    this.#enabling = true;
+    try {
+      await s.send('Debugger.enable');
+    } finally {
+      this.#enabling = false;
+    }
     this.#debuggerOn = true;
     const end = Date.now() + 3000;
     while (![...this.#scripts.values()].some(x => isMain(x.url)) && Date.now() < end) await new Promise(r => setTimeout(r, 50));
@@ -365,6 +387,8 @@ export class JsDebugger {
 
   /** Sets the logpoint's breakpoint in whichever parsed bundle holds its file (the main one first). */
   async #place(s: CdpSession, lp: Placed) {
+    // Placed again in the same session (a reload): the old breakpoint goes first, or a line could run it twice.
+    for (const bp of lp.bps) await s.send('Debugger.removeBreakpoint', {breakpointId: bp}).catch(() => undefined);
     lp.bps = [];
     const scripts = [...this.#scripts.entries()].sort((a, b) => Number(isMain(b[1].url)) - Number(isMain(a[1].url)));
     if (!scripts.length) throw new Error('the app has no bundle loaded yet');
@@ -414,16 +438,20 @@ export class JsDebugger {
   async #tick() {
     if (!this.#logpoints.size) return;
     let s = this.#session;
-    if (!s || s.closed) {
+    // Gone (the app restarted), or moved to another device's app by an eval there: back to the device the logpoints
+    // are for — with several apps debuggable, any other one would do nothing — and their breakpoints set again.
+    if (!s || s.closed || (this.#device && !pageMatches(s.page, this.#device))) {
+      const was = s;
       try {
-        // Back to the device the logpoints are for: with several apps debuggable, any other one would do nothing.
         s = await this.#open(this.#device, 0);
       } catch {
         return;
       }
-      const restarted = this.#lost;
-      this.#lost = false;
-      await this.#placeAll(restarted).catch(() => undefined);
+      if (s !== was) {
+        const restarted = this.#lost;
+        this.#lost = false;
+        await this.#placeAll(restarted).catch(() => undefined);
+      }
     }
     const hits = await this.#value<{id: string; at: number; v: string}[]>(s, 'globalThis.__pitboxJs ? globalThis.__pitboxJs.drain() : []', 5000).catch(() => []);
     for (const h of hits ?? []) {

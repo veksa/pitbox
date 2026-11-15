@@ -177,18 +177,24 @@ describe('js profiles', () => {
 
 // ---- a fake Hermes page behind an inspector proxy ------------------------------------------------------------
 
-type Fake = {port: number; origins: string[]; app: vm.Context; reparse: () => void; breakpoints: Map<string, {line: number; column: number; condition: string}>; runLine: (locals: Record<string, unknown>) => void; pauseLine: (locals: Record<string, unknown>) => Promise<void>; resumed: () => number; close: () => Promise<void>};
+type Fake = {port: number; origins: string[]; app: vm.Context; watch: vm.Context; reparse: () => void; breakpoints: Map<string, {line: number; column: number; condition: string}>; runLine: (locals: Record<string, unknown>) => void; drop: () => void; pauseLine: (locals: Record<string, unknown>) => Promise<void>; resumed: () => number; close: () => Promise<void>};
 
-/** `allow`: which origins the inspector takes (a refused one gets 401, as React Native's verifyClient answers). */
-const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake> => {
+/**
+ * `allow`: which origins the inspector takes (a refused one gets 401, as React Native's verifyClient answers).
+ * `watch`: a second debuggable app on another device (a watch next to the phone), with a runtime of its own.
+ */
+const fakeInspector = async (allow?: (origin: string) => boolean, opts: {watch?: boolean} = {}): Promise<Fake> => {
   const port = await freePort();
   const app = vm.createContext({console});
+  const watch = vm.createContext({console});
   const breakpoints = new Map<string, {line: number; column: number; condition: string}>();
   const origins: string[] = [];
   const bundle = `http://127.0.0.1:${port}/index.bundle?platform=android&dev=true`;
   const server = http.createServer((req, res) => {
     if (req.url === '/json/list') {
-      res.end(JSON.stringify([{id: 'd-1', title: 'com.example.app (sdk_phone)', deviceName: 'sdk_phone', webSocketDebuggerUrl: `ws://localhost:${port}/inspector/debug?device=d&page=1`}]));
+      const phone = {id: 'd-1', title: 'com.example.app (sdk_phone)', deviceName: 'sdk_phone', webSocketDebuggerUrl: `ws://localhost:${port}/inspector/debug?device=d&page=1`};
+      const wear = {id: 'd-2', title: 'com.example.app (sdk_gwear)', deviceName: 'sdk_gwear', webSocketDebuggerUrl: `ws://localhost:${port}/inspector/debug?device=w&page=2`};
+      res.end(JSON.stringify(opts.watch ? [phone, wear] : [phone]));
     } else if (req.url?.startsWith('/index.map')) {
       res.end(JSON.stringify(map));
     } else res.writeHead(404).end();
@@ -204,12 +210,18 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
   };
   wss.on('connection', (ws, req) => {
     origins.push(String(req.headers.origin));
+    const ctx = /page=2/.test(req.url ?? '') ? watch : app;
+    // A debugger's breakpoints go with its connection, as the runtime drops a client's own when it leaves.
+    const mine = new Set<string>();
+    ws.on('close', () => {
+      for (const id of mine) breakpoints.delete(id);
+    });
     ws.on('message', raw => {
       const {id, method, params} = JSON.parse(String(raw));
       const reply = (result: unknown) => ws.send(JSON.stringify({id, result}));
       if (method === 'Runtime.evaluate') {
         try {
-          const value = vm.runInContext(params.expression, app);
+          const value = vm.runInContext(params.expression, ctx);
           reply({result: {type: typeof value, value: JSON.parse(JSON.stringify(value ?? null))}});
         } catch (e) {
           reply({result: {type: 'object'}, exceptionDetails: {text: 'Uncaught', exception: {description: String(e)}}});
@@ -220,6 +232,7 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
       } else if (method === 'Debugger.setBreakpoint') {
         const breakpointId = String(++seq);
         breakpoints.set(breakpointId, {...params.location, condition: params.condition});
+        mine.add(breakpointId);
         reply({breakpointId, actualLocation: {scriptId: '3', lineNumber: params.location.lineNumber, columnNumber: params.location.columnNumber}});
       } else if (method === 'Profiler.stop') {
         reply({profile: profileOf(bundle)});
@@ -239,6 +252,7 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
     port,
     origins,
     app,
+    watch,
     // A reload: the runtime parses a new main bundle in the same session.
     reparse: () => {
       for (const c of wss.clients) c.send(JSON.stringify({method: 'Debugger.scriptParsed', params: {scriptId: String(++seq + 100), url: bundle}}));
@@ -263,6 +277,10 @@ const fakeInspector = async (allow?: (origin: string) => boolean): Promise<Fake>
         for (const c of wss.clients) c.send(JSON.stringify({method: 'Debugger.paused', params: {reason: 'other', callFrames}}));
         for (const end = Date.now() + 2000; resumed === before && Date.now() < end; ) await new Promise(r => setTimeout(r, 10));
       }
+    },
+    // The app's runtime going away (a crash, a cold start): every debugger connection drops.
+    drop: () => {
+      for (const c of wss.clients) c.terminate();
     },
     resumed: () => resumed,
     close: async () => {
@@ -362,9 +380,8 @@ describe('the app runtime', () => {
       await new Promise(r => setTimeout(r, 50));
       ({logpoints} = await js.hits());
     }
-    // The old bundle's breakpoint went with the old bundle.
-    expect(fake.breakpoints.size).toBe(2);
-    fake.breakpoints.delete([...fake.breakpoints.keys()][0]!);
+    // The old bundle's breakpoint is removed before the new one is set: one breakpoint, so one hit per run.
+    expect(fake.breakpoints.size).toBe(1);
     expect(logpoints[0]!.restarts).toBe(1);
     expect(logpoints[0]!.placedAt!).toBeGreaterThanOrEqual(before);
     expect(formatResult('jsHits', {logpoints})).toMatch(/the app restarted 1× since it was set; placed again \d+\.\ds ago — a line that ran at start-up before that is not seen/);
@@ -416,6 +433,46 @@ describe('the app runtime', () => {
     vm.runInContext(`globalThis.__pitboxJs = {hits: [], hit: function (id, fs) { this.hits.push([id, fs.length]); return false; }}`, ctx);
     expect(vm.runInContext(conditionFor('lp9', []), ctx)).toBe(false);
     expect(vm.runInContext('globalThis.__pitboxJs.hits', ctx)).toEqual([['lp9', 0]]);
+  });
+});
+
+describe('logpoints with two debuggable apps', () => {
+  it("stay on their device while another device's app is read or evaluated", async () => {
+    const fake = await fakeInspector(undefined, {watch: true});
+    const proxy = {opts: {}, servedKind: new Map(), debugSource: false, generation: 0} as unknown as DevProxy;
+    const js = new JsDebugger(proxy, fake.port, async () => undefined);
+    try {
+      await js.log('screens/Home.tsx:3', ['user.name'], 'sdk_phone');
+      expect(fake.breakpoints.size).toBe(1);
+      // The network log of the watch, read from its own runtime: the phone's logpoint keeps its breakpoint.
+      vm.runInContext('globalThis.__pitbox = {log: [{n: 1}]}', fake.watch);
+      expect(await js.readOn('sdk_gwear', 'globalThis.__pitbox.log')).toEqual({value: [{n: 1}], app: 'sdk_gwear'});
+      expect(fake.breakpoints.size).toBe(1);
+      fake.runLine({user: {name: 'Ann'}});
+      let {logpoints} = await js.hits();
+      expect(logpoints[0]).toMatchObject({count: 1, attached: true});
+      // An eval on the watch moves the session there; the next drain goes back to the phone and places the logpoint again.
+      expect(await js.evaluate('1 + 2', 'sdk_gwear')).toMatchObject({value: '3', app: 'sdk_gwear'});
+      ({logpoints} = await js.hits());
+      expect(fake.breakpoints.size).toBe(1);
+      fake.runLine({user: {name: 'Bob'}});
+      ({logpoints} = await js.hits());
+      expect(logpoints[0]!.hits.map(h => h.v)).toEqual(['"Ann"', '"Bob"']);
+      expect(logpoints[0]!.restarts).toBe(0);
+      // The app restarts: the drain attaches to its new runtime and counts one restart, placed once.
+      fake.drop();
+      for (const end = Date.now() + 3000; !logpoints[0]!.restarts && Date.now() < end; ) {
+        await new Promise(r => setTimeout(r, 50));
+        ({logpoints} = await js.hits());
+      }
+      await new Promise(r => setTimeout(r, 500));
+      ({logpoints} = await js.hits());
+      expect(logpoints[0]!.restarts).toBe(1);
+      expect(fake.breakpoints.size).toBe(1);
+    } finally {
+      js.stop();
+      await fake.close();
+    }
   });
 });
 
