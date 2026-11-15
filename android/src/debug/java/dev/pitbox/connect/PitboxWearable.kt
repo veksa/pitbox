@@ -44,7 +44,7 @@ object PitboxWearable {
   const val TARGET_NODE_NOT_CONNECTED = 4000
 
   private const val FILE = "pitbox-wear.json"
-  private const val TIMEOUT_MS = 5_000
+  private const val TIMEOUT_MS = 15_000
   private val io = Executors.newCachedThreadPool { Thread(it, "pitbox-wear").apply { isDaemon = true } }
   private val main = Handler(Looper.getMainLooper())
   private val listeners = CopyOnWriteArrayList<MessageClient.OnMessageReceivedListener>()

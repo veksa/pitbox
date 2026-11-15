@@ -54,8 +54,9 @@ class PitboxWearReceiver : BroadcastReceiver() {
    * A message is waiting in the daemon (`id`): fetched over the app's own connection — no message content travels on
    * a command line —, then handed over the way Play services hands it: every listener the app added gets it, and
    * so does each `WearableListenerService` the app declares for `MESSAGE_RECEIVED` whose data filter matches the
-   * path, started in this process even when nothing of the app was running. What the app did goes back to the
-   * daemon's log.
+   * path, started in this process even when nothing of the app was running. The broadcast is finished as soon as
+   * the message is in hand, so neither the receiver's time limit nor the listeners delay the sender. What the app
+   * did goes back to the daemon's log.
    */
   private fun message(context: Context, intent: Intent) {
     val id = intent.getStringExtra("id")?.toIntOrNull() ?: return answer(2, "error bad-message")
@@ -64,19 +65,19 @@ class PitboxWearReceiver : BroadcastReceiver() {
     val ordered = isOrderedBroadcast
     val pending = goAsync()
     Thread {
-      var result = 1 to "ok accepted"
-      try {
-        val m = PitboxWearable.take(pairing, id)
-        val event = PitboxMessageEvent(id, m.path, m.data, m.source)
-        val heard = PitboxWearable.deliverToListeners(event)
-        val served = messageServices(app, m.source, m.path).map { name -> runService(app, name, event) }
-        PitboxWearable.report(pairing, id, "listeners=$heard services=${served.joinToString(",").ifEmpty { "-" }}")
+      val m = try {
+        PitboxWearable.take(pairing, id)
       } catch (e: Exception) {
-        result = 2 to "error ${e.javaClass.simpleName}: ${e.message}"
-      } finally {
-        if (ordered) pending.setResult(result.first, result.second, null)
+        if (ordered) pending.setResult(2, "error ${e.javaClass.simpleName}: ${e.message}", null)
         pending.finish()
+        return@Thread
       }
+      if (ordered) pending.setResult(1, "ok accepted", null)
+      pending.finish()
+      val event = PitboxMessageEvent(id, m.path, m.data, m.source)
+      val heard = PitboxWearable.deliverToListeners(event)
+      val served = messageServices(app, m.source, m.path).map { name -> runService(app, name, event) }
+      PitboxWearable.report(pairing, id, "listeners=$heard services=${served.joinToString(",").ifEmpty { "-" }}")
     }.start()
   }
 

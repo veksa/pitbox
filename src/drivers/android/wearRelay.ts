@@ -82,8 +82,9 @@ export class WearRelay {
 
   async #broadcast(serial: string, pkg: string, extras: string): Promise<{code: number; data?: string}> {
     assertPackage(pkg);
-    // 0x10000020: FLAG_RECEIVER_FOREGROUND | FLAG_INCLUDE_STOPPED_PACKAGES — a stopped app is woken as Play services would.
-    return parseBroadcast(await this.shell(serial, `am broadcast -f 0x10000020 -n ${pkg}/${WEAR_RECEIVER} ${extras}`, 20_000));
+    // 0x20: FLAG_INCLUDE_STOPPED_PACKAGES — a stopped app is woken as Play services would. A background broadcast: the
+    // receiver hands its work off and finishes at once, so no foreground time limit applies.
+    return parseBroadcast(await this.shell(serial, `am broadcast -f 0x20 -n ${pkg}/${WEAR_RECEIVER} ${extras}`, 20_000));
   }
 
   /** The app's side on one device; throws why it cannot be paired. */
@@ -179,11 +180,13 @@ export class WearRelay {
     this.#waiting.set(id, {to: peer, pair, source: me.node, path, data, who, at: Date.now()});
     const r = await this.#broadcast(peer.serial, pair.pkg, `--es op message --es id ${id}`).catch((e: Error) => ({code: -1, data: `error ${e.message.split('\n')[0]}`}));
     pair.messages++;
+    // Accepted once the other app has it in hand, as Play services answers once the node has it; what the app did
+    // with it (listeners, services) comes later, into the pair's log.
     if (r.code === 1) return {ok: true, id};
     this.#waiting.delete(id);
-    this.#note(pair, `${who}: not delivered (${r.data?.replace(/^error\s*/, '') ?? 'no answer from the app'})`);
-    if (/not-paired/.test(r.data ?? '')) return {ok: false, code: TARGET_NODE_NOT_CONNECTED, error: `the app on ${peer.name} is not paired (reinstalled or cleared?)`};
-    return {ok: true, id};
+    const why = r.data?.replace(/^error\s*/, '') ?? 'no answer from the app';
+    this.#note(pair, `${who}: not delivered (${why})`);
+    return {ok: false, code: TARGET_NODE_NOT_CONNECTED, error: /not-paired/.test(why) ? `the app on ${peer.name} is not paired (reinstalled or cleared?)` : `${peer.name} did not take the message: ${why}`};
   }
 
   async #pairSide(side: WearSide, pkg: string, port: number) {

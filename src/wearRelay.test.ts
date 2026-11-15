@@ -86,8 +86,8 @@ describe('wear relay', () => {
     expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: "/it's; reboot", data})).toEqual({ok: true, id: 1});
     const sent = adb.calls.at(-1)!;
     expect(sent.serial).toBe('emulator-5554');
-    // Nothing the app sent is on the command line: only the op and a number.
-    expect(sent.command).toBe(`am broadcast -f 0x10000020 -n com.example.app/${WEAR_RECEIVER} --es op message --es id 1`);
+    // Nothing the app sent is on the command line: only the op and a number. Stopped packages included, no foreground.
+    expect(sent.command).toBe(`am broadcast -f 0x20 -n com.example.app/${WEAR_RECEIVER} --es op message --es id 1`);
     // Only the device it is for may fetch it.
     expect(await relay.handle({token: pair.watch.token, op: 'take', id: 1})).toMatchObject({ok: false});
     expect(await relay.handle({token: pair.phone.token, op: 'take', id: 1})).toEqual({ok: true, source: pair.watch.node, path: "/it's; reboot", data});
@@ -111,6 +111,26 @@ describe('wear relay', () => {
     expect(adb.calls.length).toBe(before);
     expect(isBase64('')).toBe(true);
     expect(isBase64('aGk=')).toBe(true);
+  });
+
+  it('fails a send the other device did not take with 4000, whatever the cause', async () => {
+    const adb = new FakeAdb();
+    adb.probes.set('emulator-5554', PROBE).set('emulator-5556', PROBE);
+    const relay = new WearRelay(adb.shell, {listen: false});
+    const {pair} = await relay.pair('com.example.app', {serial: 'emulator-5554', name: 'Phone'}, {serial: 'emulator-5556', name: 'Watch'});
+    const send = () => relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: '/x', data: ''});
+    adb.delivered.set('emulator-5554', 'error not-paired');
+    expect(await send()).toMatchObject({ok: false, code: TARGET_NODE_NOT_CONNECTED, error: expect.stringMatching(/not paired/)});
+    expect(pair.log.at(-1)).toContain('not delivered (not-paired)');
+    // The device went away: adb fails.
+    const shell = adb.shell;
+    adb.shell = async (serial, command) => {
+      if (command.includes('op message')) throw new Error("adb: device 'emulator-5554' not found");
+      return shell(serial, command);
+    };
+    const gone = new WearRelay(adb.shell, {listen: false});
+    const p2 = (await gone.pair('com.example.app', {serial: 'emulator-5554', name: 'Phone'}, {serial: 'emulator-5556', name: 'Watch'})).pair;
+    expect(await gone.handle({token: p2.watch.token, op: 'send', node: p2.phone.node, path: '/x', data: ''})).toMatchObject({ok: false, code: TARGET_NODE_NOT_CONNECTED, error: expect.stringMatching(/not found/)});
   });
 
   it('pairs a side again with its own token, and forgets both on unpair', async () => {
