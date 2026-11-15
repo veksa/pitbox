@@ -187,6 +187,41 @@ describe('live activities through the gateway', () => {
   });
 });
 
+describe('live activities over FCM', () => {
+  const center = (route: Awaited<ReturnType<PushCenter['routeActivity']>>, reason?: 'unregistered') => {
+    const c = {
+      sent: [] as {device?: string}[],
+      routed: [] as string[],
+      // The FCM token alone would name another device, or none.
+      route: async (_k: string, t?: string) => (c.routed.push(t ?? ''), {dead: 'not this one'}),
+      bind: () => undefined,
+      routeActivity: async () => route,
+      send: async (opts: {device?: string}) => (c.sent.push(opts), {id: 'm1', platform: 'apple' as const, device: opts.device ?? '?', app: 'com.example.app', sent: 'x', ok: !reason, verdict: reason ? 'gone' : 'Live Activity updated (stand-in)', ...(reason ? {reason} : {})}),
+    };
+    return c;
+  };
+  const message = {token: 'fcm-token-of-the-phone', apns: {live_activity_token: 'bb'.repeat(32), headers: {'apns-topic': 'com.example.app.push-type.liveactivity'}, payload: {aps: {timestamp: 1, event: 'update', 'content-state': {}}}}};
+  const v1 = {method: 'POST', path: '/v1/projects/p/messages:send', headers: {}, body: JSON.stringify({message})};
+  const own = {method: 'POST', path: '/push', headers: {}, body: JSON.stringify({token: message.token, fcm: message})};
+
+  it('routes by the activity token, not by the FCM token', async () => {
+    const c = center({device: 'SIM-2'});
+    expect(await handlePush(c, v1, {})).toMatchObject({status: 200, body: {name: 'projects/p/messages/m1'}});
+    expect(await handlePush(c, own, {})).toMatchObject({status: 200});
+    expect(c.sent.map(x => x.device)).toEqual(['SIM-2', 'SIM-2']);
+    expect(c.routed).toEqual([]);
+  });
+
+  it('never answers UNREGISTERED for the FCM token because of a gone activity', async () => {
+    for (const c of [center({dead: 'unregistered'}), center({device: 'SIM-2'}, 'unregistered')]) {
+      const a = await handlePush(c, v1, {});
+      expect(a.status).toBe(400);
+      expect(JSON.stringify(a.body)).not.toContain('UNREGISTERED');
+      expect((await handlePush(c, own, {})).status).toBe(400);
+    }
+  });
+});
+
 describe('push activity on the command line', () => {
   it('maps the event and the fields', () => {
     expect(toCall(parseArgs(['push', 'activity', 'start', 'type=DeliveryAttributes', 'attributes={"order":"1"}', 'state={"a":1}']))).toMatchObject({params: {action: 'activity', event: 'start', type: 'DeliveryAttributes', attributes: '{"order":"1"}', state: '{"a":1}'}});

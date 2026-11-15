@@ -295,7 +295,7 @@ tokens, passed to `PitboxLiveActivity.onSyntheticToken` for the app to send on.
 | Gateway answer | When |
 |---|---|
 | `200` | handed to the hook; the verdict says what it did, or why the system would drop the push (no `timestamp`, an update with no `content-state`, a start with no `attributes-type`, an older `timestamp` than the last one applied, an update sent to a push-to-start token) |
-| APNs `410 Unregistered` · FCM `404 UNREGISTERED` | no simulator of the session has an activity or push-to-start token like it (the activity ended, the app was reinstalled) |
+| APNs `410 Unregistered` · FCM and `/push` `400 INVALID_ARGUMENT` | no simulator of the session has an activity or push-to-start token like it (the activity ended, the app was reinstalled). FCM routes by `live_activity_token`, not by the FCM token, and never answers `UNREGISTERED` for it: a gone activity is no reason to delete a live FCM token |
 | `500` | the app has no hook to tell which activity the token is |
 | `503` | no simulator of the session booted |
 

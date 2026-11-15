@@ -17,7 +17,7 @@ import http2 from 'node:http2';
 import net from 'node:net';
 import {assertPortFree} from '../util/net.ts';
 import {isLiveActivity} from './liveactivity.ts';
-import {PushUnregistered, type PushCenter, type PushOptions, type PushResult} from './push.ts';
+import {liveActivityOf, PushUnregistered, type PushCenter, type PushOptions, type PushResult} from './push.ts';
 
 export type GatewayRequest = {method: string; path: string; headers: Record<string, string | undefined>; body: string};
 export type GatewayAnswer = {status: number; headers?: Record<string, string>; body?: unknown};
@@ -116,6 +116,20 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     if (!message || typeof message !== 'object') return {status: 400, body: {error: {code: 400, message: 'no message', status: 'INVALID_ARGUMENT'}}};
     const {token: _t, to: _to, registration_ids: _r, ...content} = message;
     if (Buffer.byteLength(JSON.stringify(content)) > MAX_PAYLOAD) return {status: 400, body: {error: {code: 400, message: 'Request contains an invalid argument: the message is too big (4 KB at most)', status: 'INVALID_ARGUMENT'}}};
+    // A Live Activity push names its activity by `apns.live_activity_token`: routed by that, not by the FCM token, and
+    // never answered UNREGISTERED for it — the server would delete a live FCM token over a gone activity.
+    const la = v1 && center.routeActivity ? liveActivityOf({fcm: message}) : undefined;
+    if (la?.token) {
+      const invalid = (verdict: string) => ({status: 400, headers: {'x-pitbox-verdict': plain(verdict)}, body: {error: {code: 400, message: verdict, status: 'INVALID_ARGUMENT', details: [{'@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode: 'INVALID_ARGUMENT'}]}}});
+      const r = await center.routeActivity!(la.token, laTopic(message) ?? apps.apple);
+      if (r.dead === 'unregistered') return invalid('apns.live_activity_token: no simulator of this session has an activity or push-to-start token like it');
+      if (r.dead === 'nohook') return {status: 500, body: {error: {code: 500, message: 'the app has no Live Activity hook (PitboxLiveActivity in its debug build)', status: 'INTERNAL'}}};
+      if (!r.device) return {status: 503, body: {error: {code: 503, message: 'pitbox: no simulator of this session online', status: 'UNAVAILABLE'}}};
+      const s = await deliver(center, {device: r.device, app: laTopic(message) ?? apps.apple, fcm: message, wait: 2000, fromGateway: true}, 'gateway fcm', typeof message.token === 'string' ? message.token : undefined);
+      if ('error' in s || s.result.reason === 'nohook') return {status: 500, body: {error: {code: 500, message: 'error' in s ? s.error : s.result.verdict, status: 'INTERNAL'}}};
+      if (unregistered(s.result)) return invalid(s.result.verdict);
+      return {status: 200, headers: verdictHeader(s.result), body: {name: `projects/${v1![1]}/messages/${s.result.id}`}};
+    }
     const tokens = legacy ? (Array.isArray(message.registration_ids) ? (message.registration_ids as string[]) : [String(message.to ?? '')]) : [String(message.token ?? '')];
     const sent: Sent[] = [];
     for (const token of tokens) {
@@ -151,6 +165,19 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     const token = typeof body.token === 'string' ? body.token : undefined;
     const kind = body.apns || body.platform === 'ios' || body.platform === 'apple' ? 'apns' : 'fcm';
     const given = typeof body.device === 'string' ? body.device : undefined;
+    // A Live Activity push goes where its activity token is; a gone activity is not a dead push token (400, not 404).
+    const la = center.routeActivity ? liveActivityOf(body as PushOptions) : undefined;
+    if (la?.token && !given) {
+      const r = await center.routeActivity!(la.token, typeof body.app === 'string' ? body.app : apps.apple);
+      if (r.dead) return {status: r.dead === 'nohook' ? 500 : 400, body: {ok: false, verdict: r.dead === 'nohook' ? 'the app has no Live Activity hook (PitboxLiveActivity in its debug build)' : 'no simulator of this session has an activity or push-to-start token like the Live Activity token'}};
+      if (!r.device) return {status: 503, body: {ok: false, verdict: 'no simulator of this session online'}};
+      const {token: _t, platform: _p, headers, device: _d, ...rest} = body;
+      const opts = {...rest, device: r.device, fromGateway: true} as PushOptions;
+      if (headers && typeof headers === 'object') opts.apnsHeaders = apnsHeaders(headers as Record<string, unknown>);
+      const s = await deliver(center, opts, 'gateway', token);
+      if ('error' in s) return {status: 400, body: {ok: false, verdict: s.error}};
+      return {status: unregistered(s.result) ? 400 : 200, headers: verdictHeader(s.result), body: s.result};
+    }
     const routed = given ? {device: given} : await center.route(kind, token);
     if ('dead' in routed && routed.dead) return {status: 404, body: {ok: false, verdict: routed.dead}};
     if (!routed.device) return {status: 503, body: {ok: false, verdict: 'no emulator or simulator of this session online'}};
@@ -164,6 +191,13 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     return {status: unregistered(s.result) ? 404 : 200, headers: verdictHeader(s.result), body: s.result};
   }
   return {status: 404, body: {reason: 'NotFound'}};
+};
+
+/** The bundle id an FCM message's `apns-topic` names, without a Live Activity's suffix. */
+const laTopic = (message: Record<string, unknown>): string | undefined => {
+  const apns = message.apns as {headers?: Record<string, unknown>} | undefined;
+  const t = apns?.headers?.['apns-topic'];
+  return typeof t === 'string' ? t.replace(/\.push-type\.liveactivity$/, '') : undefined;
 };
 
 /** The APNs headers that shape a push (collapse id, priority, push type). */
