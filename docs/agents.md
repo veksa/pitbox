@@ -155,7 +155,10 @@ Many explorations at once, each finding proven before it is reported:
   app, a crash) pitbox places it again in the new runtime, on the device it was set for, but code that ran during
   start-up before that is not seen — `js action=hits` says so, and with 0 hits it says whether the line simply has
   not run. To catch start-up code, start the app first and reach the line by navigating.
-- Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough.
+- Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough. Its answer
+  says how the image maps to `press x,y`: the image is smaller than the screen by its scale (and Apple devices tap
+  in points, not pixels), so a point read off the image is multiplied by the factor it gives. A watch's screen is
+  not downscaled. A `press` at a point names the control it hit, or says that it hit no element.
 
 ## Web apps
 

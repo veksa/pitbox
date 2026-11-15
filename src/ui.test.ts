@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {fillRoute, isAppLink, parseFlow, tokenize, validateFlow} from './flows/flow.ts';
 import {runFlow, type FlowHost} from './flows/run.ts';
@@ -436,6 +439,42 @@ describe('a window still moving when an action starts', () => {
     const ui = new DeviceUi('dev', runner as never, {beforePointer: async () => void (y = 0)});
     await ui.press('id=greet');
     expect(taps).toEqual(['340,50']);
+  });
+});
+
+describe('a tap at a point', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const play: UiNode = {p: -1, w: 0, c: 'Button', b: [100, 100, 200, 200], t: 'Play', f: 'c'};
+  const runnerWith = (shot?: {width: number; height: number}) => ({
+    call: async (cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'tree') return {windows: app, nodes: [play]};
+      if (cmd === 'info') return {width: 384, height: 384};
+      if (cmd === 'screenshot') return {jpeg: '', width: Math.round(384 * (args.scale as number)), height: Math.round(384 * (args.scale as number)), ...shot};
+      return {idle: true};
+    },
+    stop: async () => undefined,
+  });
+
+  it('names what it hit, or says that it hit no element or was off the screen', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const ui = new DeviceUi('watch', runnerWith() as never);
+    expect((await ui.press('150,150')).note).toMatch(/hit @e\d+ .*Play/);
+    expect((await ui.press('30,30')).note).toMatch(/^no control at 30,30: the tap hit no element \(the screen is 384×384 in press coordinates/);
+    expect((await ui.press('500,20')).note).toMatch(/^500,20 is off the screen/);
+  });
+
+  it('a screenshot says how its image maps to press coordinates, and a watch screen is not downscaled', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const {formatResult} = await import('./format.ts');
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-shot-')), 'w.jpg');
+    const ui = new DeviceUi('watch', runnerWith() as never);
+    const full = await ui.screenshot(file);
+    expect(full).toMatchObject({width: 384, screen: {width: 384, height: 384}, toScreen: 1});
+    expect(formatResult('uiShot', full)).toMatch(/press takes x,y as on the image \(384×384\)/);
+    const small = await ui.screenshot(file, 0.4);
+    expect(small.width).toBe(154);
+    expect(formatResult('uiShot', small)).toMatch(/press takes x,y on the 384×384 screen: image x,y × 2\.494/);
+    fs.rmSync(path.dirname(file), {recursive: true});
   });
 });
 

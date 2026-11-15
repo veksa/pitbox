@@ -125,7 +125,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
 
   // UI — every action waits for the UI to settle and answers with what changed.
   tool('snapshot', 'The screen as lines with refs (@e12). Once per new screen; actions then answer with diffs.', {bounds: opt.bool(), system: opt.bool(), device}, 'snapshot');
-  tool('press', 'Tap (kind: longpress, doubletap; right = mouse right click, hover = mouse over).', {target, kind: z.enum(['tap', 'longpress', 'doubletap', 'right', 'hover']).optional(), device}, a =>
+  tool('press', 'Tap (kind: longpress, doubletap; right = mouse right click, hover = mouse over). x,y are screen coordinates (the screenshot answer gives the factor from its image); the answer names what a point hit, or says it hit no element.', {target, kind: z.enum(['tap', 'longpress', 'doubletap', 'right', 'hover']).optional(), device}, a =>
     a.kind === 'right' || a.kind === 'hover' ? 'mouse' : 'press',
     a => (a.kind === 'right' || a.kind === 'hover' ? {...a, action: a.kind} : a),
   );
@@ -144,7 +144,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   tool('wait', 'Wait for a target (gone: until it disappears; timeout s), or with no target a plain pause of seconds=n (a countdown, a timer).', {target: target.optional(), gone: opt.bool(), timeout: opt.num(), seconds: opt.num(), device}, 'wait');
   tool(
     'inspect',
-    'Checks: media (video playing?), visual <name> (vs baseline; update, masks), focus, focus_map (D-pad audit), perf (reset first; trace=true adds the platform trace), tree (React tree from inside), network (app requests and WebSocket frames: #order, +time, → sent / ← received), errors (JS errors, source stacks), console (app console, level=warn|error, grep; warnings point at their source line), screenshot (file path).',
+    'Checks: media (video playing?), visual <name> (vs baseline; update, masks), focus, focus_map (D-pad audit), perf (reset first; trace=true adds the platform trace), tree (React tree from inside), network (app requests and WebSocket frames: #order, +time, → sent / ← received), errors (JS errors, source stacks), console (app console, level=warn|error, grep; warnings point at their source line), screenshot (file path; says how image x,y maps to press x,y — the image is downscaled, except on a watch).',
     {what: z.enum(['media', 'visual', 'focus', 'focus_map', 'perf', 'tree', 'network', 'errors', 'console', 'screenshot']), target: opt.str(), name: opt.str(), update: opt.bool(), masks: opt.list(), reset: opt.bool(), level: z.enum(['log', 'warn', 'error']).optional(), grep: opt.str(), trace: opt.bool(), device},
     a => ({media: 'media', visual: 'visual', focus: 'focus', focus_map: 'focusMap', perf: 'perf', tree: 'appTree', network: 'appLog', errors: 'appErrors', console: 'appConsole', screenshot: 'uiShot'})[a.what as string]!,
   );

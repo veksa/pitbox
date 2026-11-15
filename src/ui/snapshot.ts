@@ -365,6 +365,29 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
  * painted over it (a floating button, an overlay, a window above) owns the centre. `coveredBy` names the cover.
  * Within a window the painting order (`z`) decides; without it only windows above count.
  */
+/**
+ * What a tap at a point lands on: the smallest control (clickable, editable, checkable…) whose bounds hold the point,
+ * as its snapshot line; `none` when no control does (bare background, or a point off the screen).
+ */
+export const controlAt = (snap: Snapshot, x: number, y: number): {line: string} | {none: true} => {
+  let best: number | undefined;
+  let area = Infinity;
+  snap.nodes.forEach((n, i) => {
+    if (!interactive(n) || has(n, 'd')) return;
+    const [l, t, r, b] = n.b;
+    if (x < l || x >= r || y < t || y >= b) return;
+    const a = (r - l) * (b - t);
+    if (a < area || (a === area && (n.z ?? 0) >= (snap.nodes[best!]?.z ?? 0))) {
+      area = a;
+      best = i;
+    }
+  });
+  if (best === undefined) return {none: true};
+  const ref = snap.refOf.get(best);
+  const n = snap.nodes[best]!;
+  return {line: (ref && snap.lines.find(l => l.startsWith(`${ref} `))) || `${n.c}${n.t || n.d ? ` "${n.t ?? n.d}"` : ''}`};
+};
+
 export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; coveredBy?: string} => {
   const n = snap.nodes[index]!;
   const c = centre(n.b);

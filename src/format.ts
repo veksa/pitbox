@@ -360,8 +360,12 @@ export const formatResult = (method: string, r: unknown): string => {
       return x.status === 'saved' ? `baseline saved: ${x.baseline}` : x.status === 'match' ? `matches ${x.name} (score ${x.score})` : `differs from ${x.name}: score ${x.score}, ${Math.round((x.changedShare as number) * 1000) / 10}% of the screen, regions ${(x.regions as number[][]).map(r => `[${r.join(',')}]`).join(' ')}\ncurrent: ${x.current}\nbaseline: ${String(x.baseline).replace(/\.json$/, '.jpg')}`;
     case 'media':
       return `${x.playing ? 'playing' : x.black ? 'black' : x.moving ? 'moving (but dark)' : 'not moving'}${x.target ? ` ${x.target}` : ''} · motion ${x.motion} · brightness ${x.luma}`;
-    case 'uiShot':
-      return `${x.file} (${x.width}×${x.height}, ${x.kb} KB)`;
+    case 'uiShot': {
+      const scr = x.screen as {width: number; height: number} | undefined;
+      const k = x.toScreen as number | undefined;
+      const coords = scr ? (k && Math.abs(k - 1) > 0.01 ? `\npress takes x,y on the ${scr.width}×${scr.height} screen: image x,y × ${k}` : `\npress takes x,y as on the image (${scr.width}×${scr.height})`) : '';
+      return `${x.file} (${x.width}×${x.height}, ${x.kb} KB)${coords}`;
+    }
     case 'wait':
       return x.paused ? `waited ${seconds(x.ms as number)}` : `${x.gone ? 'gone' : 'appeared'} in ${x.ms} ms`;
     case 'goto':

@@ -8,10 +8,12 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {backButton, buildSnapshot, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
+/** A screen whose short side is below this (in press coordinates) is a watch's: its screenshot is not downscaled. */
+const SMALL_SCREEN = 500;
 
 export type ActResult = {action: string; target?: string; /** The flow step that repeats the action, when it differs from what the action was given. */ step?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
@@ -439,10 +441,21 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         if (this.#step) this.#step += `\n${outcome}`;
       }
     }
+    // A tap at a point says what it landed on, or that nothing there takes a tap (a point taken from a downscaled
+    // screenshot lands short of where it was meant to).
+    if (target.index === undefined) note = [note, await this.#pointNote(snap, at.x, at.y)].filter(Boolean).join('; ');
     // A system offer declined while the press settled (the sign-in it answered brought it up).
     const declined = this.declined.splice(0);
     if (declined.length) note = [note, ...declined].filter(Boolean).join('; ');
     return {action: kind, target: target.ref ?? `${target.x},${target.y}`, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0, note))};
+  }
+
+  async #pointNote(snap: Snapshot, x: number, y: number): Promise<string> {
+    const size = await this.size().catch(() => undefined);
+    const screen = size ? ` (the screen is ${size.width}×${size.height} in press coordinates; a screenshot's are smaller by its scale)` : '';
+    if (size && (x >= size.width || y >= size.height)) return `${x},${y} is off the screen${screen}`;
+    const hit = controlAt(snap, x, y);
+    return 'none' in hit ? `no control at ${x},${y}: the tap hit no element${screen}` : `the tap at ${x},${y} hit ${hit.line}`;
   }
 
   async fill(selector: string, text: string): Promise<ActResult> {
@@ -870,12 +883,20 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return this.runner.call('focus');
   }
 
-  async screenshot(file: string, scale = 0.4, quality = 70): Promise<{file: string; width: number; height: number; kb: number}> {
-    const r = await this.runner.call<{jpeg: string; width: number; height: number}>('screenshot', {scale, quality}, 20_000);
+  /**
+   * A downscaled JPEG of the screen. The answer names the screen's size in the coordinates `press x,y` takes and
+   * the factor from image to those coordinates: they differ (the scale, and points against pixels on Apple
+   * devices). With no scale given, a small screen (a watch) is not downscaled: its image would be a thumbnail.
+   */
+  async screenshot(file: string, scale?: number, quality = 70): Promise<{file: string; width: number; height: number; kb: number; screen?: {width: number; height: number}; toScreen?: number}> {
+    const size = await this.size().catch(() => undefined);
+    const s = scale ?? (size && Math.min(size.width, size.height) < SMALL_SCREEN ? 1 : 0.4);
+    const r = await this.runner.call<{jpeg: string; width: number; height: number}>('screenshot', {scale: s, quality}, 20_000);
     const buf = Buffer.from(r.jpeg, 'base64');
     fs.mkdirSync(path.dirname(file), {recursive: true});
     fs.writeFileSync(file, buf);
-    return {file, width: r.width, height: r.height, kb: Math.round(buf.length / 1024)};
+    const toScreen = size && r.width ? Math.round((size.width / r.width) * 1000) / 1000 : undefined;
+    return {file, width: r.width, height: r.height, kb: Math.round(buf.length / 1024), ...(size && {screen: size, toScreen})};
   }
 
   async stop() {
