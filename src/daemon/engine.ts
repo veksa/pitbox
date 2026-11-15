@@ -43,7 +43,7 @@ import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
 import {describeHolder, listLeases, machineLock, refusal, staleReason, type Lease} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
 import {describeReaped, reapLeases, stillBootedByPitbox, type Running} from '../lease/reap.ts';
-import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated} from '../lease/created.ts';
+import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated, type Created} from '../lease/created.ts';
 import {WearRelay} from '../drivers/android/wearRelay.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';

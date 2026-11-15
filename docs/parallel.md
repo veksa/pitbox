@@ -45,8 +45,10 @@ left to each agent's discipline.
   When another session holds it, or it runs with no lease: a shut-down simulator of the same model and runtime that
   nobody holds, else a new one (`iPhone 17 (pitbox 2)`, named under a machine-wide lock and deleted again when the
   session gives it back — `devices.deleteCreated: false` keeps it; `pitbox devices clean` / `device action=clean`
-  deletes leftover ones that are shut down and held by nobody). pitbox records each simulator it creates
-  (`$PITBOX_HOME/created-simulators.json`) and deletes only those, never one named like them by hand; cleaning runs
+  deletes this project's leftover ones that are shut down and held by nobody). pitbox records each simulator it creates
+  (`$PITBOX_HOME/created-simulators.json`) with the project that created it and deletes only those, never one named
+  like them by hand, and `clean` never one another project created — a twin it keeps is its next boot (one an older
+  pitbox recorded without a project goes only with `devices clean --all` / `force=true`); cleaning runs
   under the lock that creates them, so a simulator created a moment ago and not leased yet is never taken for a
   leftover. For Android: the instance of the AVD this session holds — or the copy of it pitbox made for the session
   — else the AVD when nothing runs it. The emulator starts a second instance of an AVD only when every instance
@@ -178,7 +180,7 @@ left to each agent's discipline.
 | | |
 |---|---|
 | `device action=list` · `pitbox devices` | every device with `[yours]`, `[held by "…" (pid, folder, for N min)]` or `[running, unleased]` |
-| `device action=clean` · `pitbox devices clean` | delete the shut-down simulators and AVD copies pitbox created for sessions that nobody holds (an AVD copy only 15 min after it was made) |
+| `device action=clean` · `pitbox devices clean` | delete the shut-down simulators and AVD copies pitbox created for this project's sessions that nobody holds (an AVD copy only 15 min after it was made); never another project's; `--all` / `force=true` also those an older pitbox recorded without a project |
 | `device action=boot` · `pitbox boot [name]` | your own device: the named one, or a free twin / new instance |
 | `device action=lease value=<purpose>` · `pitbox device lease [--device d] [--purpose text]` | hold a device now (it is taken on first use anyway) |
 | `device action=release [keep=true]` · `pitbox device release [--keep]` | give it back; one pitbox booted shuts down unless `keep` |

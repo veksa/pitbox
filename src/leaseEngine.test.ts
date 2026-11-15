@@ -274,16 +274,39 @@ describe('simulators', () => {
     expect(isCreated('NEW3')).toBe(true);
     // bob's daemon goes away keeping its lease: a held simulator is not cleaned, even a created one.
     await b.stopAll();
-    expect(await a.methods.cleanDevices({})).toEqual({deleted: []});
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: [], others: 1});
+    const b2 = await Engine.create(b.loaded.file, undefined, {android: null, apple: apple as never});
+    expect(await b2.methods.cleanDevices({})).toEqual({deleted: []});
     await b.methods.release({});
     expect(isCreated('NEW3')).toBe(false);
     // One recorded but left behind (a daemon killed before it gave it back).
     apple.sims.push({...apple.sims[0]!, udid: 'LEFT', name: 'iPhone 17 (pitbox 4)', state: 'Shutdown'});
-    recordCreated('LEFT', 'iPhone 17 (pitbox 4)');
-    recordCreated('GONE', 'iPhone 17 (pitbox 5)');
+    recordCreated('LEFT', 'iPhone 17 (pitbox 4)', {owner: a.loaded.root});
+    recordCreated('GONE', 'iPhone 17 (pitbox 5)', {owner: a.loaded.root});
     expect(await a.methods.cleanDevices({})).toEqual({deleted: ['iPhone 17 (pitbox 4)']});
     expect(apple.sims.map(s => s.name)).toEqual(['iPhone 17', 'iPhone 17 (pitbox 3)']);
     expect(isCreated('GONE')).toBe(false);
+  });
+
+  it("cleans only its own project's simulators, never a shut-down twin another project created and keeps", async () => {
+    const apple = new FakeApple([{}]);
+    const a = await session('alice', {apple});
+    const b = await session('bob', {apple}, {devices: {deleteCreated: false}});
+    await a.methods.boot({avd: 'iPhone 17'});
+    await b.methods.boot({avd: 'iPhone 17'});
+    // bob keeps the twin he created for his next boot: given back, shut down, held by nobody.
+    await b.methods.release({});
+    expect(apple.sims.find(s => s.udid === 'NEW2')).toMatchObject({name: 'iPhone 17 (pitbox 2)', state: 'Shutdown'});
+    expect(listCreated()).toMatchObject([{udid: 'NEW2', owner: b.loaded.root, keep: true}]);
+    // One an older pitbox recorded without a project: whose it is is unknown, so only `all` takes it.
+    apple.sims.push({...apple.sims[0]!, udid: 'OLD', name: 'iPhone 17 (pitbox 3)', state: 'Shutdown'});
+    recordCreated('OLD', 'iPhone 17 (pitbox 3)');
+    expect(await a.methods.cleanDevices({})).toEqual({deleted: [], others: 2});
+    expect(apple.deleted).toEqual([]);
+    expect(await a.methods.cleanDevices({all: true})).toEqual({deleted: ['iPhone 17 (pitbox 3)'], others: 1});
+    // bob's own clean takes his.
+    expect(await b.methods.cleanDevices({})).toEqual({deleted: ['iPhone 17 (pitbox 2)']});
+    expect(listCreated()).toEqual([]);
   });
 
   it('records the boot it made, and on a stop leaves a simulator booted again since by hand running', async () => {

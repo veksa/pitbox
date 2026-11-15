@@ -17,6 +17,11 @@ export type Created = {
   stamp?: string;
   /** Made for a session that keeps what it creates (`devices.deleteCreated: false`): only `devices clean` deletes it. */
   keep?: boolean;
+  /**
+   * The project root whose daemon created it. `devices clean` deletes only its own project's: a shut-down twin of
+   * another project may be kept for that project's next boot. Missing on entries an older pitbox wrote.
+   */
+  owner?: string;
   /** A watch pair pitbox made (`pair:<pair id>`): its phone and watch, unpaired only while it still joins these two. */
   phone?: string;
   watch?: string;
@@ -61,7 +66,7 @@ export const createdEntry = (udid: string): Created | undefined => read().find(c
 
 export const isCreated = (udid: string): boolean => read().some(c => c.udid === udid);
 
-export const recordCreated = (udid: string, name: string, extra: Partial<Pick<Created, 'like' | 'stamp' | 'keep' | 'phone' | 'watch'>> = {}) =>
+export const recordCreated = (udid: string, name: string, extra: Partial<Pick<Created, 'like' | 'stamp' | 'keep' | 'owner' | 'phone' | 'watch'>> = {}) =>
   withLock(file(), () => write([...read().filter(c => c.udid !== udid), {udid, name, at: Date.now(), ...extra}]));
 
 export const updateCreated = (udid: string, patch: Partial<Pick<Created, 'stamp'>>) => withLock(file(), () => write(read().map(c => (c.udid === udid ? {...c, ...patch} : c))));

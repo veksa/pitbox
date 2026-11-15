@@ -585,7 +585,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'shutdown':
       return (x.gone ? `${x.serial ?? x.udid} shut down in ${seconds(x.ms as number)}` : `${x.serial ?? x.udid} still listed after ${seconds(x.ms as number)}`) + (x.note ? `\nnote: ${x.note}` : '');
     case 'cleanDevices':
-      return [(x.deleted as string[]).length ? `deleted ${(x.deleted as string[]).join(', ')}` : 'no simulators pitbox created are left over', x.unpaired ? `unpaired ${x.unpaired} watch pair(s) pitbox made` : ''].filter(Boolean).join('\n');
+      return [(x.deleted as string[]).length ? `deleted ${(x.deleted as string[]).join(', ')}` : 'no simulators pitbox created are left over', x.unpaired ? `unpaired ${x.unpaired} watch pair(s) pitbox made` : '', x.others ? `left ${x.others} that another project created (or an older pitbox, without saying whose: --all takes those)` : ''].filter(Boolean).join('\n');
     case 'unpair':
       return `unpaired ${x.released ?? x.unpaired}${(x.done as string[] | undefined)?.length ? '' : ' (the pair was not made by pitbox: it stays)'}${x.released ? ', given back' : ''}`;
     case 'lease':
