@@ -309,6 +309,13 @@ describe('the app runtime', () => {
     }
   });
 
+  it("reads one device's app only, and says so when that device runs none (a watch next to the phone)", async () => {
+    vm.runInContext('globalThis.__pitbox = {log: [{n: 1, ws: "wss://api.example.test/ws", ev: "connect"}]}', fake.app);
+    expect(await js.readOn('sdk_phone', 'globalThis.__pitbox.log')).toEqual({value: [{n: 1, ws: 'wss://api.example.test/ws', ev: 'connect'}], app: 'sdk_phone'});
+    await expect(js.readOn('sdk_gwear', '1')).rejects.toThrow(/^sdk_gwear has no app on the dev server to inspect: .*\(debuggable apps: sdk_phone\)/);
+    vm.runInContext('delete globalThis.__pitbox', fake.app);
+  });
+
   it('awaits a promise the expression returns', async () => {
     expect(await js.evaluate('Promise.resolve().then(() => ({ok: true}))')).toMatchObject({value: '{ok: true}'});
     expect(await js.evaluate('Promise.reject(new TypeError("no"))')).toMatchObject({error: 'TypeError: no'});

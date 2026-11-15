@@ -286,6 +286,23 @@ export class JsDebugger {
     return r.result?.value as T;
   }
 
+  /**
+   * Reads a JSON value from the app on one device only: its runtime must be listed under that device's name. With
+   * none there it says so instead of answering for another device's app (a watch paired with a phone that runs the
+   * dev build has no runtime of its own).
+   */
+  async readOn<T>(device: string, expression: string, timeoutMs = 5000): Promise<{value: T; app: string}> {
+    const pages = await listPages(this.#port);
+    const page = pages.filter(p => pageMatches(p, device)).at(-1);
+    if (!page) {
+      throw new Error(
+        `${device} has no app on the dev server to inspect: no JS runtime of a dev build runs there${pages.length ? ` (debuggable apps: ${[...new Set(pages.map(p => p.deviceName ?? p.title))].join(', ')})` : ''}`,
+      );
+    }
+    const s = await this.#open(page.deviceName ?? page.title);
+    return {value: await this.#value<T>(s, expression, timeoutMs), app: s.page.deviceName ?? s.page.title};
+  }
+
   /** Evaluates `expr` in the app's global scope (statements allowed); a promise is awaited up to `timeoutMs`. */
   async evaluate(expr: string, device?: string, timeoutMs = 10_000): Promise<EvalResult> {
     const t0 = Date.now();

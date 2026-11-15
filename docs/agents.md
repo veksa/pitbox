@@ -128,7 +128,8 @@ Many explorations at once, each finding proven before it is reported:
 - `inspect what=network`, `inspect what=tree` — the app's requests and its React tree, from inside. The network
   log is in the order things happened: `#n` is the place in one sequence, `+s` the time since the first line
   shown; socket lines name the socket (`ws#2`), the direction (`→` sent, `←` received) and the frame's number on
-  it, with its size and the start of its text.
+  it, with its size and the start of its text. With `device`, only that device's app is read; a device with no
+  dev build of its own (a watch paired with the phone that runs it) is said to have none.
 - `inspect what=errors` — recent JS errors with source stacks (`src/file.ts:31:39` and the line itself), also
   the ones thrown at startup before any action. Errors during an action or a flow come back with it anyway.
 - `inspect what=console level=warn` — the app's console since it started (the newest 300 entries), filtered

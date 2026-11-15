@@ -260,7 +260,7 @@ type NetEntry = {n?: number; at?: number; ws?: string; sid?: number; ev?: string
  * its time since the first line shown, a socket line with the socket (ws#2), the direction (→ sent, ← received)
  * and the frame's number on that socket.
  */
-export const fmtAppLog = (x: {apps: {app: number; platform?: string; entries: NetEntry[]}[]}): string =>
+export const fmtAppLog = (x: {apps: {app: number | string; platform?: string; entries: NetEntry[]}[]}): string =>
   x.apps
     .map(a => {
       const t0 = a.entries[0]?.at ?? 0;
@@ -275,7 +275,7 @@ export const fmtAppLog = (x: {apps: {app: number; platform?: string; entries: Ne
         }
         return `${sock} ${e.ev}${e.code !== undefined ? ` ${e.code}` : ''} ${e.ws}${rule(e)}`;
       };
-      return [`app ${a.app} (${a.platform ?? '?'})${a.entries.some(e => e.ws) ? ' · ws: → sent, ← received' : ''}`, ...a.entries.map(e => `  ${head(e)}${line(e)}`)].join('\n');
+      return [`app ${a.app}${a.platform ? ` (${a.platform})` : typeof a.app === 'number' ? ' (?)' : ''}${a.entries.some(e => e.ws) ? ' · ws: → sent, ← received' : ''}`, ...a.entries.map(e => `  ${head(e)}${line(e)}`)].join('\n');
     })
     .join('\n') || 'no app connected';
 

@@ -1878,7 +1878,17 @@ export class Engine {
 
     appLog: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
-      const answers = await this.#dev.proxy.query<Record<string, unknown>[]>('log', {limit: num(p, 'limit') ?? 30});
+      const limit = num(p, 'limit') ?? 30;
+      const device = str(p, 'device');
+      // A named device: its own app's log, read from its runtime, never another device's (a watch next to the
+      // phone that runs the dev build).
+      if (device) {
+        const name = (await this.#jsDevice(device))!;
+        const r = await this.#dev.js.readOn<{log: Record<string, unknown>[]} | null>(name, `globalThis.__pitbox ? {log: globalThis.__pitbox.log.slice(-${Math.max(1, Math.floor(limit))})} : null`);
+        if (!r.value) throw new Error(`the app on ${device} (${r.app}) runs without pitbox's in-app script: it was not loaded through the dev server proxy`);
+        return {apps: [{app: r.app, entries: r.value.log}]};
+      }
+      const answers = await this.#dev.proxy.query<Record<string, unknown>[]>('log', {limit});
       return {apps: answers.map(a => ({app: a.app.id, platform: a.app.hello?.platform, entries: a.data}))};
     },
 
