@@ -35,6 +35,7 @@ the APNs and FCM requests a server sends, and delivers them to the running devic
 | `push status` | can the app take pushes here: the receiver, the FCM service, Firebase, the permission |
 | `push log [-n 10]` | the last pushes (from `push` and from the gateway) with their verdicts |
 | `push bind <token>` | send the gateway's pushes for this device token to this device |
+| `push activity start\|update\|end …` · `push activities` | iOS Live Activities through the app's debug hook ([Live Activities](#live-activities)) |
 
 `--device` picks the device, `--app` the package or bundle id (default: `app.android` / `app.apple` from the
 config). Over MCP it is the `push` tool with an `action`. A typical answer is one or two lines.
@@ -169,6 +170,10 @@ It answers the requests the real services take, on the same paths, so a server o
 | `POST /push` | pitbox's own: `{token?, device?, app?, apns? + headers? \| fcm? \| title, body, data…}`; answers the verdict as JSON |
 | `GET /health` | `200` while it runs |
 
+A Live Activity push — `apns-push-type: liveactivity` with the topic `<bundle id>.push-type.liveactivity`, or an FCM
+message with `apns.live_activity_token` (`liveActivityToken` in firebase-admin) — goes to the app's Live Activity
+hook on the simulator that has its token: [Live Activities](#live-activities).
+
 Every answer carries the verdict in `x-pitbox-verdict`, and `push log` lists what the server sent. The status
 codes are the ones the real services use, so the server's token handling runs as in production:
 
@@ -238,6 +243,73 @@ suffix.
 
 The [React Native example](../examples/react-native) has the whole loop: `tool notify` runs a backend script that
 sends an FCM v1 request to the gateway; the app shows it and opens the link a tapped push carries.
+
+## Live Activities
+
+A simulator takes no Live Activity push from outside: `simctl push` has no such push type. pitbox stands in for one
+through a debug-only hook in the app, `PitboxLiveActivity` in the Swift connect library, which calls the ActivityKit
+API the system would act on — `Activity.request`, `update`, `end` — and reports the push tokens the system gives.
+Every verdict says `(stand-in)`.
+
+```swift
+import PitboxConnect   // the pod or package, in debug builds only
+
+if #available(iOS 16.2, *) {
+  PitboxLiveActivity.register(DeliveryAttributes.self)   // by the name pushes give in attributes-type
+  PitboxLiveActivity.start()
+}
+```
+
+The attributes type (and its `ContentState`) must be visible to the code that registers it; the widget extension
+draws the activity as it always does. With CocoaPods: `pod 'PitboxConnect', :path => '../node_modules/@veksa/pitbox',
+:configurations => ['Debug']` in the app's target.
+
+```sh
+pitbox push activity start type=DeliveryAttributes attributes='{"order":"42"}' state='{"status":"Packed","progress":0.2}'
+# ✓ ios com.example.app: Live Activity started (stand-in) · DeliveryAttributes E904A4D9 · token 80473b77…0ed6
+pitbox push activity update state='{"status":"On the way","progress":0.6}' alert="Out for delivery"
+pitbox push activity end state='{"status":"Delivered","progress":1}' dismissal=0
+pitbox push activities     # types, running activities, push-to-start and activity tokens (real or synthetic)
+pitbox push file=start.json   # an APNs Live Activity payload goes the same way, as does one sent to the gateway
+```
+
+`update` and `end` take the only running activity, or `id=<activity id>` / `token=<its push token>`. `stale`,
+`dismissal`: seconds from now, epoch seconds or an ISO date; `relevance`; `alert` (a title, or `{"title","body"}`).
+`push status` on iOS adds whether the app carries the aps-environment entitlement, the hook, its types and its tokens.
+
+**How it is delivered.** pitbox writes the push into the app's data container
+(`Library/Caches/pitbox/liveactivity/in/`) and posts the Darwin notification `dev.pitbox.liveactivity.<bundle id>`
+in the simulator; the hook takes waiting pushes then and whenever the app becomes active, and answers in `out/`. A
+start is an `Activity.request`, which only an app in front may make, so pitbox brings the app to the front first; an
+update or an end goes to the running app, and brings it to the front only when it does not answer in 2 s (it is
+suspended). The verdict notes either. `key home` then shows the activity in the Dynamic Island.
+
+**Tokens and routing.** The hook writes the tokens ActivityKit gives — push-to-start per type (iOS 17.2+), one per
+activity — to `state.json`, where the gateway looks a request's token up on the simulators the session holds: the
+APNs path's device token, or FCM's `live_activity_token` (the FCM token itself picks the device, as for any push).
+A simulator gives real tokens to an app with the `aps-environment` entitlement (a simulator build carries it as it
+is), so the app's own token code sends them to its server unchanged. Without the entitlement the system gives none,
+and refuses a start with a push type: the hook then starts the activity without one and makes up stable 64-hex
+tokens, passed to `PitboxLiveActivity.onSyntheticToken` for the app to send on.
+
+| Gateway answer | When |
+|---|---|
+| `200` | handed to the hook; the verdict says what it did, or why the system would drop the push (no `timestamp`, an update with no `content-state`, a start with no `attributes-type`, an older `timestamp` than the last one applied, an update sent to a push-to-start token) |
+| APNs `410 Unregistered` · FCM `404 UNREGISTERED` | no simulator of the session has an activity or push-to-start token like it (the activity ended, the app was reinstalled) |
+| `500` | the app has no hook to tell which activity the token is |
+| `503` | no simulator of the session booted |
+
+**What the stand-in is not.**
+
+| | A real push | The stand-in |
+|---|---|---|
+| App code | none: the system starts, updates and ends the activity | the debug hook, which calls the same ActivityKit API |
+| App state | the app may be killed or suspended | a start brings the app to the front; an update to a suspended app does too |
+| Start alert | shown with a push-to-start | not shown (an update's alert is) |
+| `input-push-token` | a token only when asked for | always a token (real, or synthetic without aps-environment) |
+| Broadcast channels (`input-push-channel`) | honoured | ignored |
+| Throttling, the budget of high-priority updates | applied | not applied |
+| Release builds | — | untouched: the hook is debug-only, and the pod is linked in Debug only |
 
 ## Troubleshooting
 

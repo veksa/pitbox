@@ -89,6 +89,10 @@ compact text.
 - **The push gateway** — the stand answers APNs (HTTP/2) and FCM (v1 and legacy) requests from the project's
   server and delivers them to the running device; `@veksa/pitbox/push` has `sendToPitbox`.
   See [push.md](push.md).
+- **Live Activities on the iOS simulator** — a stand-in, since the simulator takes no Live Activity push:
+  `push activity start|update|end` and the gateway's Live Activity pushes go to a debug-only hook
+  (`PitboxLiveActivity`) that calls ActivityKit, routed by the push tokens the app reports
+  ([push.md](push.md#live-activities)).
 
 ## Dev server
 
