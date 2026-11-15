@@ -34,6 +34,8 @@ export type PushDeps = {
   tokenFile?: () => string | undefined;
   /** The simulator side of Live Activities (liveactivity.ts); undefined when the simulators are not on this Mac. */
   liveActivity?: () => LiveActivityHost | undefined;
+  /** How long `push respond` waits for the app's notification hook (ms): before a launch, after it, and for a taken command. */
+  hookWait?: {waitMs: number; afterLaunchMs: number; takenMs: number};
 };
 
 /** The device cannot take pushes for this app at all: not installed, no receiver, no FCM client. */
@@ -623,7 +625,7 @@ export class PushCenter {
     if (!host) throw new Error('notification responses need a simulator on this Mac: a remote Mac does not take them');
     const id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
     const base = {device: t.id, app};
-    const {outcome, launched} = await deliverToHook<NotificationResponseOutcome>(host, t.id, app, {dir: notificationDir, notice: notificationNotice(app)}, {id, action, notification: opts.id, title: opts.title, text: opts.text}, {waitMs: 2000, afterLaunchMs: 5000, takenMs: 8000});
+    const {outcome, launched} = await deliverToHook<NotificationResponseOutcome>(host, t.id, app, {dir: notificationDir, notice: notificationNotice(app)}, {id, action, notification: opts.id, title: opts.title, text: opts.text}, this.#deps.hookWait ?? {waitMs: 2000, afterLaunchMs: 5000, takenMs: 8000});
     if (!outcome) return {...base, ok: false, verdict: `${app} took no response: its debug build calls PitboxNotifications.start() at launch (docs/push.md#notification-actions)`};
     if (!outcome.ok) return {...base, ok: false, verdict: outcome.error ?? 'the hook gave no reason', notification: outcome.title, actions: outcome.actions};
     // The system brings the app to the front for the notification's own tap and for an action with the foreground option.

@@ -62,6 +62,8 @@ const center = (host: LiveActivityHost) =>
     appleApp: () => 'com.example.app',
     ui: async () => Promise.reject(new Error('no runner')),
     liveActivity: () => host,
+    // The hook's waits, shortened: the fake answers at once or never.
+    hookWait: {waitMs: 200, afterLaunchMs: 300, takenMs: 300},
   });
 
 describe('notification responses on iOS', () => {
@@ -91,7 +93,7 @@ describe('notification responses on iOS', () => {
     expect(n.verdict).toMatch(/PitboxNotifications\.start\(\)/);
     // Launched once to let the hook drain; the command it never answered is taken back.
     expect(none.calls.filter(c => c === 'launch')).toHaveLength(1);
-  }, 20_000);
+  });
 });
 
 describe('notification actions on Android', () => {
