@@ -19,7 +19,7 @@ const filesUnder = (dir: string): string[] =>
     .map(e => path.relative(dir, path.join(e.parentPath, e.name)));
 
 const COMPONENTS = ['dev.pitbox.connect.PitboxConnectProvider', 'dev.pitbox.connect.PitboxConnectActivity',
-  'dev.pitbox.connect.PitboxPushReceiver'];
+  'dev.pitbox.connect.PitboxPushReceiver', 'dev.pitbox.connect.PitboxWearReceiver'];
 
 describe('android connect library', () => {
   it('declares no component in the manifest every variant gets', () => {
@@ -32,7 +32,7 @@ describe('android connect library', () => {
     const dir = path.join(android, 'src/main/java');
     expect(filesUnder(dir)).toEqual([path.join('dev', 'pitbox', 'connect', 'PitboxPackage.kt')]);
     const pkg = fs.readFileSync(path.join(dir, 'dev/pitbox/connect/PitboxPackage.kt'), 'utf8');
-    expect(pkg).not.toMatch(/PitboxConnect\b|PitboxConnectProvider|PitboxConnectActivity|PitboxPushReceiver/);
+    expect(pkg).not.toMatch(/PitboxConnect\b|PitboxConnectProvider|PitboxConnectActivity|PitboxPushReceiver|PitboxWear|wearable/);
   });
 
   it('keeps no other source set or resources in the main variant', () => {
@@ -46,7 +46,14 @@ describe('android connect library', () => {
     expect(debug).toContain('consumerProguardFiles');
   });
 
-  it('declares the provider, the connect activity and the push receiver in the debug manifest', () => {
+  it('takes play-services-wearable for the debug variant only, and only to compile against', () => {
+    const gradle = read('build.gradle').replace(/\/\/.*$/gm, '');
+    const lines = gradle.split('\n').filter(l => l.includes('play-services-wearable'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.trim()).toMatch(/^debugCompileOnly /);
+  });
+
+  it('declares the provider, the connect activity, the push receiver and the wear receiver in the debug manifest', () => {
     const manifest = withoutComments(read('src/debug/AndroidManifest.xml'));
     for (const name of COMPONENTS) expect(manifest).toContain(`android:name="${name}"`);
     for (const name of COMPONENTS) {

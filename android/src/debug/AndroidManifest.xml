@@ -33,5 +33,13 @@
       android:exported="true"
       android:permission="android.permission.DUMP"
       tools:ignore="ExportedReceiver" />
+
+    <!-- `pitbox device pair watch` between two emulators: pairs the app, forgets it and hands it relayed Data Layer
+         messages (PitboxWearable). Reached the push receiver's way: explicit component, DUMP permission. -->
+    <receiver
+      android:name="dev.pitbox.connect.PitboxWearReceiver"
+      android:exported="true"
+      android:permission="android.permission.DUMP"
+      tools:ignore="ExportedReceiver" />
   </application>
 </manifest>

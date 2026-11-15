@@ -8,3 +8,7 @@
 -keep class com.google.firebase.FirebaseApp { *** getApps(android.content.Context); }
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.tasks.**
+# The Wear OS relay (PitboxWearable, PitboxWearReceiver) is written against Play services' Wearable types; an app
+# without play-services-wearable never reaches it (the receiver checks first), and a minified build must not fail on it.
+-dontwarn com.google.android.gms.wearable.**
+-dontwarn com.google.android.gms.common.api.**

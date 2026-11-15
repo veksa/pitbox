@@ -1,6 +1,7 @@
 // Builds the Android connect library in both variants and checks what an app's build of each would take in:
 // the release AAR declares no component, carries no class but the empty package class and no consumer rules; the
-// debug AAR has the provider, the connect activity and the push receiver. `yarn check-connect`; CI runs it too.
+// debug AAR has the provider, the connect activity, the push receiver and the Wear OS relay (its receiver and
+// PitboxWearable), and the release AAR none of the relay. `yarn check-connect`; CI runs it too.
 // Needs a JDK and the Android SDK, and `unzip`.
 
 import {execFileSync} from 'node:child_process';
@@ -23,7 +24,9 @@ const classes = (file, variant) => {
   return entries(jar).filter(e => e.endsWith('.class'));
 };
 
-const COMPONENTS = ['PitboxConnectProvider', 'PitboxConnectActivity', 'PitboxPushReceiver'];
+const COMPONENTS = ['PitboxConnectProvider', 'PitboxConnectActivity', 'PitboxPushReceiver', 'PitboxWearReceiver'];
+/** The Wear OS relay: what pairs two emulators' Data Layer through pitbox. A release build must carry none of it. */
+const RELAY = /PitboxWear|PitboxNode|PitboxCapability|PitboxMessageEvent/;
 const problems = [];
 
 const release = aar('release');
@@ -33,6 +36,8 @@ if (/<(application|provider|activity|activity-alias|receiver|service|uses-permis
 }
 if (entries(release).includes('proguard.txt')) problems.push('the release AAR carries consumer ProGuard rules');
 const releaseClasses = classes(release, 'release');
+const relayInRelease = releaseClasses.filter(c => RELAY.test(c));
+if (relayInRelease.length || RELAY.test(releaseManifest)) problems.push(`the release AAR carries the Wear OS relay: ${relayInRelease.join(', ') || 'in its manifest'}`);
 if (releaseClasses.join(',') !== 'dev/pitbox/connect/PitboxPackage.class') {
   problems.push(`the release AAR carries classes besides the package class: ${releaseClasses.join(', ')}`);
 }
@@ -42,9 +47,13 @@ const debugManifest = unzip('-p', debug, 'AndroidManifest.xml');
 for (const name of COMPONENTS) {
   if (!debugManifest.includes(`dev.pitbox.connect.${name}`)) problems.push(`the debug AAR manifest lacks ${name}`);
 }
+const debugClasses = classes(debug, 'debug');
+for (const name of ['PitboxWearable', 'PitboxWearReceiver']) {
+  if (!debugClasses.includes(`dev/pitbox/connect/${name}.class`)) problems.push(`the debug AAR lacks ${name}`);
+}
 
 if (problems.length) {
   console.error(`check-connect: ${problems.join('; ')}`);
   process.exit(1);
 }
-console.log(`check-connect: release AAR holds only ${releaseClasses[0]}, no component, no rules; debug AAR has ${COMPONENTS.join(', ')}`);
+console.log(`check-connect: release AAR holds only ${releaseClasses[0]}, no component, no rules, no Wear relay; debug AAR has ${COMPONENTS.join(', ')} and PitboxWearable`);

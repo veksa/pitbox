@@ -34,4 +34,7 @@ android {
 dependencies {
   // Only for the empty package class autolinking expects; the library itself is plain Android.
   compileOnly 'com.facebook.react:react-android'
+  // The Wear OS relay (PitboxWearable) answers in Play services' own types; an app with a Data Layer brings the
+  // library itself. Debug only, like everything that runs.
+  debugCompileOnly 'com.google.android.gms:play-services-wearable:19.0.0'
 }
