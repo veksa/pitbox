@@ -74,6 +74,8 @@ Limits of the simulator:
 - **No permission from outside**: iOS gives notification permission only in the app's own prompt
   (`press Allow`); `push grant` is Android-only.
 - **No `push clear`**: no command removes delivered notifications.
+- **No Notification Service Extension**: `simctl push` hands the payload straight to the system, so a
+  `mutable-content` push shows as sent — no rewritten text, no image from `fcm_options.image`. The verdict notes it.
 
 ### Android emulator
 
@@ -198,6 +200,13 @@ tokens on iOS too. An FCM token routed while both an emulator and a simulator ar
 verdict says which one it took. The token the app registered does not need to be real: an app on an emulator without Play
 services can register any placeholder in debug.
 
+**Placeholder tokens.** A simulator has no APNs token and an emulator without Play services no FCM token, so a debug
+build that wants its server to send it pushes registers a placeholder instead: `pitbox-ios-<id>` or
+`pitbox-android-<id>`, with a random id the app keeps. The gateway sends such a token to a device of that platform,
+never a guess; when the session holds exactly one, the token is bound to it, so it keeps finding that device when
+more come online. An Android placeholder on an APNs request is answered as a dead token. Keep the placeholder to
+debug builds pointed at the local stand: a production server would send it to FCM and get `INVALID_ARGUMENT`.
+
 ### From a server
 
 The helper needs nothing but `fetch`:
@@ -217,7 +226,15 @@ could not be delivered. Or point the existing client at the gateway: an FCM HTTP
 instead of `https://api.push.apple.com`.
 
 firebase-admin itself has no option for another FCM origin; a server that uses it adds a local transport that
-calls `sendToPitbox` with the same message object.
+posts the same message object to `/push` as `{token, fcm: message}` (with `sendToPitbox`, or with `fetch` to keep a
+dev tool out of the server's dependencies). The gateway reads it as firebase-admin would send it: the renames
+firebase-admin makes before the request goes out (`apns.liveActivityToken`, `apns.fcmOptions.imageUrl`,
+`notification.imageUrl`, the aps `contentAvailable`, `mutableContent` and `threadId`, the alert's `locKey` family)
+are made here too, and nothing else — an aps key such as `interruptionLevel` reaches APNs as it is written, so it
+must be written `interruption-level`, and is passed on unchanged here as well.
+
+A Live Activity's `apns-topic` (`com.example.app.push-type.liveactivity`) names the app by the bundle id before the
+suffix.
 
 The [React Native example](../examples/react-native) has the whole loop: `tool notify` runs a backend script that
 sends an FCM v1 request to the gateway; the app shows it and opens the link a tapped push carries.
