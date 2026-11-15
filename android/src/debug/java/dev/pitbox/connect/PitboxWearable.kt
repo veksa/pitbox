@@ -140,6 +140,29 @@ object PitboxWearable {
     return now.size
   }
 
+  /** A relayed message, as the daemon hands it to the receiving side. */
+  internal class Waiting(val source: String, val path: String, val data: ByteArray)
+
+  /** Fetches message `id` from the daemon (the receiver got only its id in the broadcast). */
+  internal fun take(p: Pairing, id: Int): Waiting {
+    val r = request(p, JSONObject().put("op", "take").put("id", id))
+    if (!r.optBoolean("ok")) throw IllegalStateException(r.optString("error"))
+    return Waiting(r.getString("source"), r.getString("path"), Base64.decode(r.getString("data"), Base64.NO_WRAP))
+  }
+
+  /** Tells the daemon what the app did with message `id`, for its log. */
+  internal fun report(p: Pairing, id: Int, result: String) {
+    runCatching { request(p, JSONObject().put("op", "delivered").put("id", id).put("result", result)) }
+  }
+
+  private fun request(p: Pairing, body: JSONObject): JSONObject = Socket().use { s ->
+    s.connect(InetSocketAddress(p.host, p.port), TIMEOUT_MS)
+    s.soTimeout = TIMEOUT_MS
+    s.getOutputStream().write((body.put("token", p.token).toString() + "\n").toByteArray(Charsets.UTF_8))
+    s.getOutputStream().flush()
+    JSONObject(s.getInputStream().bufferedReader(Charsets.UTF_8).readLine() ?: throw IllegalStateException("no answer"))
+  }
+
   // --- The daemon ------------------------------------------------------------------------------------------------
 
   /** One request, one connection: a JSON line out, a JSON line back. Fails the task like Play services would. */
@@ -153,13 +176,7 @@ object PitboxWearable {
     val source = TaskCompletionSource<T>()
     io.execute {
       try {
-        val reply = Socket().use { s ->
-          s.connect(InetSocketAddress(p.host, p.port), TIMEOUT_MS)
-          s.soTimeout = TIMEOUT_MS
-          s.getOutputStream().write((body.put("token", p.token).toString() + "\n").toByteArray(Charsets.UTF_8))
-          s.getOutputStream().flush()
-          JSONObject(s.getInputStream().bufferedReader(Charsets.UTF_8).readLine() ?: throw IllegalStateException("no answer"))
-        }
+        val reply = request(p, body)
         if (!reply.optBoolean("ok")) {
           source.setException(ApiException(Status(reply.optInt("code", TARGET_NODE_NOT_CONNECTED), "pitbox: ${reply.optString("error")}")))
         } else {

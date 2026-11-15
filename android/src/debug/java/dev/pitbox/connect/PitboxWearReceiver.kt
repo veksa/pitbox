@@ -9,7 +9,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.util.Base64
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import java.security.MessageDigest
@@ -22,8 +21,8 @@ import java.security.MessageDigest
  * never by an installed app), present only in the library's debug variant, and checks the build is debuggable.
  *
  * Extras: `op` — `probe` (what the app has: Play services' Wearable classes, its message services, capabilities,
- * INTERNET, signing certificate), `pair` (`host`, `port`, `token`, `node`, `name`), `unpair`, `message` (`source`,
- * `path`, `data` base64, `id`). The answer is the broadcast's result: code 1 and `ok …`, or 2 and `error …`.
+ * INTERNET, signing certificate), `pair` (`host`, `port`, `token`, `node`, `name`), `unpair`, `message` (`id` of a
+ * message waiting in the daemon). The answer is the broadcast's result: code 1 and `ok …`, or 2 and `error …`.
  */
 class PitboxWearReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
@@ -52,29 +51,32 @@ class PitboxWearReceiver : BroadcastReceiver() {
   }
 
   /**
-   * What Play services does with a message for this app: every listener the app added gets it, and so does each
-   * `WearableListenerService` the app declares for `MESSAGE_RECEIVED` whose data filter matches the path — started
-   * in this process even when nothing of the app was running (this broadcast started it).
+   * A message is waiting in the daemon (`id`): fetched over the app's own connection — no message content travels on
+   * a command line —, then handed over the way Play services hands it: every listener the app added gets it, and
+   * so does each `WearableListenerService` the app declares for `MESSAGE_RECEIVED` whose data filter matches the
+   * path, started in this process even when nothing of the app was running. What the app did goes back to the
+   * daemon's log.
    */
   private fun message(context: Context, intent: Intent) {
-    val source = intent.getStringExtra("source") ?: return answer(2, "error bad-message")
-    val path = intent.getStringExtra("path") ?: return answer(2, "error bad-message")
-    val data = try {
-      Base64.decode(intent.getStringExtra("data") ?: "", Base64.DEFAULT)
-    } catch (e: IllegalArgumentException) {
-      return answer(2, "error bad-message: ${e.message}")
-    }
-    if (!PitboxWearable.isPaired(context)) return answer(2, "error not-paired")
-    val event = PitboxMessageEvent(intent.getStringExtra("id")?.toIntOrNull() ?: 0, path, data, source)
-    val heard = PitboxWearable.deliverToListeners(event)
-    val names = messageServices(context, source, path)
+    val id = intent.getStringExtra("id")?.toIntOrNull() ?: return answer(2, "error bad-message")
+    val pairing = PitboxWearable.pairing(context) ?: return answer(2, "error not-paired")
+    val app = context.applicationContext
     val ordered = isOrderedBroadcast
     val pending = goAsync()
-    // Play services calls a listener service off the main thread; the broadcast waits for it (within its 10 s).
     Thread {
-      val served = names.map { name -> runService(context, name, event) }
-      if (ordered) pending.setResult(1, "ok listeners=$heard services=${served.joinToString(",").ifEmpty { "-" }}", null)
-      pending.finish()
+      var result = 1 to "ok accepted"
+      try {
+        val m = PitboxWearable.take(pairing, id)
+        val event = PitboxMessageEvent(id, m.path, m.data, m.source)
+        val heard = PitboxWearable.deliverToListeners(event)
+        val served = messageServices(app, m.source, m.path).map { name -> runService(app, name, event) }
+        PitboxWearable.report(pairing, id, "listeners=$heard services=${served.joinToString(",").ifEmpty { "-" }}")
+      } catch (e: Exception) {
+        result = 2 to "error ${e.javaClass.simpleName}: ${e.message}"
+      } finally {
+        if (ordered) pending.setResult(result.first, result.second, null)
+        pending.finish()
+      }
     }.start()
   }
 

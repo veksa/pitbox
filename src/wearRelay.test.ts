@@ -10,7 +10,7 @@ import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {Engine} from './daemon/engine.ts';
 import type {AndroidDevice} from './drivers/android/driver.ts';
-import {DATA_TOO_LARGE, nodeId, parseProbe, TARGET_NODE_NOT_CONNECTED, WEAR_RECEIVER, WearRelay} from './drivers/android/wearRelay.ts';
+import {DATA_TOO_LARGE, isBase64, nodeId, parseProbe, TARGET_NODE_NOT_CONNECTED, WEAR_RECEIVER, WearRelay} from './drivers/android/wearRelay.ts';
 import {leaseDir, readLease} from './lease/lease.ts';
 
 /** adb as the relay sees it: one app with pitbox's wear receiver per device, unless taken away. */
@@ -21,6 +21,8 @@ class FakeAdb {
   installed = new Set<string>();
   /** serial → answer to `op message`. */
   delivered = new Map<string, string>();
+  /** Devices whose app refuses `op pair`. */
+  failPair = new Set<string>();
 
   shell = async (serial: string, command: string) => {
     this.calls.push({serial, command});
@@ -29,7 +31,8 @@ class FakeAdb {
     if (!command.includes(WEAR_RECEIVER)) return '';
     const probe = this.probes.get(serial);
     if (probe === undefined) return 'Broadcasting: Intent\nBroadcast completed: result=0\n';
-    const data = op === 'probe' ? probe : op === 'pair' ? 'ok paired node=x' : op === 'unpair' ? 'ok unpaired' : (this.delivered.get(serial) ?? 'ok listeners=1 services=PingService');
+    if (op === 'pair' && this.failPair.has(serial)) return 'Broadcast completed: result=2, data="error bad-pair"\n';
+    const data = op === 'probe' ? probe : op === 'pair' ? 'ok paired node=x' : op === 'unpair' ? 'ok unpaired' : (this.delivered.get(serial) ?? 'ok accepted');
     return `Broadcasting: Intent\nBroadcast completed: result=${data.startsWith('ok') ? 1 : 2}, data="${data}"\n`;
   };
 
@@ -74,25 +77,40 @@ describe('wear relay', () => {
     }
   });
 
-  it('routes a send to the paired node only, through a broadcast that wakes the app, and keeps a log', async () => {
+  it('routes a send to the paired node only: the device gets the id alone and fetches the message, then reports', async () => {
     const adb = new FakeAdb();
     adb.probes.set('emulator-5554', PROBE).set('emulator-5556', PROBE);
     const relay = new WearRelay(adb.shell, {listen: false});
     const {pair} = await relay.pair('com.example.app', {serial: 'emulator-5554', name: 'Phone'}, {serial: 'emulator-5556', name: 'Watch'});
     const data = Buffer.from('hi').toString('base64');
-    expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: "/it's", data})).toEqual({ok: true, id: 1});
+    expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: "/it's; reboot", data})).toEqual({ok: true, id: 1});
     const sent = adb.calls.at(-1)!;
     expect(sent.serial).toBe('emulator-5554');
-    expect(sent.command).toContain(`--es source ${pair.watch.node} --es path '/it'\\''s' --es data ${data}`);
-    // Stopped packages included: a message wakes an app that does not run.
-    expect(sent.command).toContain('-f 0x10000020');
-    expect(pair.log).toEqual(["watch→phone /it's 2B: listeners=1 services=PingService"]);
+    // Nothing the app sent is on the command line: only the op and a number.
+    expect(sent.command).toBe(`am broadcast -f 0x10000020 -n com.example.app/${WEAR_RECEIVER} --es op message --es id 1`);
+    // Only the device it is for may fetch it.
+    expect(await relay.handle({token: pair.watch.token, op: 'take', id: 1})).toMatchObject({ok: false});
+    expect(await relay.handle({token: pair.phone.token, op: 'take', id: 1})).toEqual({ok: true, source: pair.watch.node, path: "/it's; reboot", data});
+    expect(await relay.handle({token: pair.phone.token, op: 'delivered', id: 1, result: 'listeners=1 services=PingService'})).toEqual({ok: true});
+    expect(pair.log).toEqual(["watch→phone /it's; reboot 2B: listeners=1 services=PingService"]);
     expect(await relay.handle({token: pair.watch.token, op: 'send', node: 'deadbeef', path: '/x', data})).toMatchObject({ok: false, code: TARGET_NODE_NOT_CONNECTED});
     expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: '/x', data: Buffer.alloc(100 * 1024 + 1).toString('base64')})).toMatchObject({ok: false, code: DATA_TOO_LARGE});
-    // An app that forgot its pairing (cleared) fails the send instead of losing it silently.
-    adb.delivered.set('emulator-5554', 'error not-paired');
-    expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: '/x', data})).toMatchObject({ok: false, code: TARGET_NODE_NOT_CONNECTED});
-    expect(pair.log.at(-1)).toContain('not delivered (not-paired)');
+    // A message at the limit fits: it never travels on a command line.
+    expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: '/x', data: Buffer.alloc(100 * 1024).toString('base64')})).toMatchObject({ok: true});
+  });
+
+  it('refuses data that is not base64 before anything reaches the device shell', async () => {
+    const adb = new FakeAdb();
+    adb.probes.set('emulator-5554', PROBE).set('emulator-5556', PROBE);
+    const relay = new WearRelay(adb.shell, {listen: false});
+    const {pair} = await relay.pair('com.example.app', {serial: 'emulator-5554', name: 'Phone'}, {serial: 'emulator-5556', name: 'Watch'});
+    const before = adb.calls.length;
+    for (const data of ['AA;pm uninstall com.example.app', 'AA==$(reboot)', "AA'", 'A B=', 'AAA']) {
+      expect(await relay.handle({token: pair.watch.token, op: 'send', node: pair.phone.node, path: '/x', data})).toMatchObject({ok: false, code: 13});
+    }
+    expect(adb.calls.length).toBe(before);
+    expect(isBase64('')).toBe(true);
+    expect(isBase64('aGk=')).toBe(true);
   });
 
   it('pairs a side again with its own token, and forgets both on unpair', async () => {
