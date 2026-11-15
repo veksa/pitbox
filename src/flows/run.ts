@@ -150,6 +150,11 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
       await (await host.ui()).scrollUntil(a[0]!, a.slice(2).join(' '));
       return;
     case 'wait': {
+      // `wait 5s`: a plain pause (a bare number stays a text selector).
+      if (a.length === 1 && /^\d+(\.\d+)?s$/.test(a[0]!)) {
+        await new Promise(r => setTimeout(r, Number(a[0]!.slice(0, -1)) * 1000));
+        return;
+      }
       const gone = a[0] === 'gone';
       const rest = gone ? a.slice(1) : a;
       const last = rest[rest.length - 1];

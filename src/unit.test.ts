@@ -487,6 +487,26 @@ describe('screens', () => {
   });
 });
 
+describe('plain wait', () => {
+  it('pauses for seconds with no target or device, and keeps a bare number a text selector', async () => {
+    const {Engine} = await import('./daemon/engine.ts');
+    const {formatResult} = await import('./format.ts');
+    const {parseArgs, toCall} = await import('./cli.ts');
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify({}));
+    const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
+    const r = (await engine.methods.wait({seconds: 0.2})) as {ms: number; paused: boolean};
+    expect(r.paused).toBe(true);
+    expect(r.ms).toBeGreaterThanOrEqual(190);
+    expect(formatResult('wait', r)).toMatch(/^waited 0\.\ds$/);
+    await expect(engine.methods.wait({})).rejects.toThrow(/seconds=<n>/);
+    await expect(engine.methods.wait({seconds: 10_000})).rejects.toThrow(/at most/);
+    expect(toCall(parseArgs(['wait', '5s']))).toMatchObject({method: 'wait', params: {seconds: '5'}});
+    expect(toCall(parseArgs(['wait', '5']))).toMatchObject({method: 'wait', params: {target: '5'}});
+    expect(formatResult('wait', {ms: 40, gone: true})).toBe('gone in 40 ms');
+  });
+});
+
 describe('trace lookup', () => {
   it("finds an action's trace id in the stand's service logs, and says so when nothing logged it", async () => {
     const {Engine} = await import('./daemon/engine.ts');

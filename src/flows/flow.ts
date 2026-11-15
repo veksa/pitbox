@@ -12,7 +12,7 @@
 //   swipe up [ms] | swipe 540,1800,540,600 [ms]
 //   touch down id=seek | touch move 900,1500 | touch up    (a finger held across steps)
 //   scroll down until text="Popular items"
-//   wait text="Home" [seconds] | wait gone id=spinner [seconds]
+//   wait text="Home" [seconds] | wait gone id=spinner [seconds] | wait 5s (a plain pause)
 //   expect text="Welcome" | expect gone id=error | expect focus id=play
 //   expect playing id=player | expect paused id=player   (frames compared on the device; black is not playing)
 //   perf [trace]                 start measuring (frames, JS thread, React commits, heap; trace: the platform's trace)

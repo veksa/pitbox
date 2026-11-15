@@ -140,7 +140,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
     a => (a.via === 'wheel' ? {...a, action: 'wheel'} : a),
   );
   tool('touch', 'A finger held across calls: down <target>, move <target>, up.', {phase: z.enum(['down', 'move', 'up']), target: opt.str(), device}, 'touch');
-  tool('wait', 'Wait for a target (gone: until it disappears; timeout s).', {target, gone: opt.bool(), timeout: opt.num(), device}, 'wait');
+  tool('wait', 'Wait for a target (gone: until it disappears; timeout s), or with no target a plain pause of seconds=n (a countdown, a timer).', {target: target.optional(), gone: opt.bool(), timeout: opt.num(), seconds: opt.num(), device}, 'wait');
   tool(
     'inspect',
     'Checks: media (video playing?), visual <name> (vs baseline; update, masks), focus, focus_map (D-pad audit), perf (reset first; trace=true adds the platform trace), tree (React tree from inside), network (app requests), errors (JS errors, source stacks), console (app console, level=warn|error, grep; warnings point at their source line), screenshot (file path).',
@@ -152,7 +152,7 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // it was delivered; log is a line per push.
   tool(
     'push',
-    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms. iOS Live Activities (a stand-in through the app debug hook): activity event=start|update|end type=<ActivityAttributes> attributes={…} state={…} [stale dismissal relevance alert id token], activities (types, running ones, tokens); a Live Activity payload in send/file/apns/fcm goes the same way. Typical answer: one or two lines.',
+    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms (send: for the notification; log: for a new push to land — a scheduled one or a gateway delivery — answering as soon as it does). iOS Live Activities (a stand-in through the app debug hook): activity event=start|update|end type=<ActivityAttributes> attributes={…} state={…} [stale dismissal relevance alert id token], activities (types, running ones, tokens); a Live Activity payload in send/file/apns/fcm goes the same way. Typical answer: one or two lines.',
     {
       action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind', 'activity', 'activities']).optional(),
       event: z.enum(['start', 'update', 'end']).optional(),

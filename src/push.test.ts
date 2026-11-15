@@ -311,6 +311,25 @@ describe('push command line', () => {
   });
 });
 
+describe('push log wait', () => {
+  it('answers as soon as a push lands after the call, and says when none did', async () => {
+    const center = new PushCenter({target: async () => Promise.reject(new Error('unused')), online: async () => ({android: [], apple: []}), ui: async () => Promise.reject(new Error('unused'))});
+    const record = (device: string) => center.log.push({id: 'p', platform: 'android', device, app: 'com.example.app', sent: 'title', ok: true, verdict: 'notification posted', at: Date.now()} as never);
+    record('old');
+    const since = Date.now();
+    setTimeout(() => record('other'), 50);
+    setTimeout(() => record('dev1'), 150);
+    const r = await center.waitLog({since, waitMs: 5000, device: 'dev1'});
+    expect(r.arrived).toBe(true);
+    expect(r.waitedMs).toBeLessThan(2000);
+    expect(r.log.at(-1)!.device).toBe('dev1');
+    const none = await center.waitLog({since: Date.now(), waitMs: 120});
+    expect(none.arrived).toBe(false);
+    expect(none.waitedMs).toBeGreaterThanOrEqual(100);
+    expect(toCall(parseArgs(['push', 'log', '--wait', '3000']))).toMatchObject({params: {action: 'log', wait: '3000'}});
+  });
+});
+
 /** A push center that records what it was asked and answers like a delivered push, or as `answer` says. */
 const fakeCenter = (route: (kind: string, token?: string) => string | undefined = () => 'dev1', answer?: (r: PushResult) => PushResult) => {
   const sent: {opts: PushOptions; source: string; token?: string}[] = [];

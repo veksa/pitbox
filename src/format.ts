@@ -227,7 +227,10 @@ export const fmtPush = (x: Record<string, unknown>): string => {
       const log = x.log as PushRecord[];
       const now = Date.now();
       const head = x.gateway ? `push gateway :${x.gateway}` : 'push gateway not running';
-      return [head, ...(log.length ? log.map(r => `  ${seconds(now - r.at)} ago  ${r.source ?? 'push'}  ${r.sent} → ${fmtPushLine(r)}`) : ['  no pushes yet'])].join('\n');
+      const waited = x.waited as {ms: number; arrived: boolean; since: number} | undefined;
+      const lines = log.map(r => `  ${waited && r.at > waited.since ? 'new ' : ''}${seconds(now - r.at)} ago  ${r.source ?? 'push'}  ${r.sent} → ${fmtPushLine(r)}`);
+      const wait = waited ? [waited.arrived ? `a new push arrived after ${seconds(waited.ms)}` : `no new push within ${seconds(waited.ms)}`] : [];
+      return [head, ...wait, ...(log.length ? lines : ['  no pushes yet'])].join('\n');
     }
     default: {
       const r = x as unknown as PushResult;
@@ -320,7 +323,7 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'uiShot':
       return `${x.file} (${x.width}×${x.height}, ${x.kb} KB)`;
     case 'wait':
-      return `appeared in ${x.ms} ms`;
+      return x.paused ? `waited ${seconds(x.ms as number)}` : `${x.gone ? 'gone' : 'appeared'} in ${x.ms} ms`;
     case 'goto':
       return `opened ${x.url}`;
     case 'recordStart':

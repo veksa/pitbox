@@ -167,6 +167,18 @@ export class PushCenter {
     return n;
   }
 
+  /**
+   * The log after waiting up to `waitMs` for a push recorded after `since` (a scheduled push or a gateway delivery
+   * landing in the meantime); answers as soon as one lands. `device` narrows what counts as new.
+   */
+  async waitLog(opts: {since: number; waitMs: number; device?: string}): Promise<{log: PushRecord[]; arrived: boolean; waitedMs: number}> {
+    const isNew = (r: PushRecord) => r.at > opts.since && (!opts.device || r.device === opts.device);
+    const start = Date.now();
+    const deadline = start + Math.max(0, opts.waitMs);
+    while (!this.log.some(isNew) && Date.now() < deadline) await sleep(Math.min(200, Math.max(1, deadline - Date.now())));
+    return {log: this.log, arrived: this.log.some(isNew), waitedMs: Date.now() - start};
+  }
+
   #record(r: PushResult, token?: string) {
     this.log.push({...r, at: Date.now(), token});
     if (this.log.length > 50) this.log.shift();

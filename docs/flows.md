@@ -128,6 +128,7 @@ Every action waits for the UI to settle before the next step.
 | `wait <selector> [seconds]` | the target appears (default 10 s) |
 | `press? <selector> [seconds]` | presses the target if it shows within the seconds (default 3), goes on otherwise: a sheet that comes only sometimes (a permission prompt, a one-time tip). iOS's "Save Password?" after a sign-in needs no step: pitbox declines it with Not Now and says so in the press's note. Neither does React Native's warnings toast in a debug build: an app on pitbox's dev server never shows "Open debugger to view warnings" (the warnings are in `inspect what=console`), and any other warnings toast that covers the target (a tab bar) is closed first |
 | `wait gone <selector> [seconds]` | the target disappears |
+| `wait <n>s` | a plain pause of n seconds (a countdown, a timer the app runs); a bare number is a text selector |
 | `expect <selector>` | the target is there now or within 5 s |
 | `expect gone <selector>` | the target is gone now or within 5 s |
 | `expect focus <selector>` | the target has input focus (TV, keyboard) |

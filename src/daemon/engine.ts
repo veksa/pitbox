@@ -68,6 +68,9 @@ const list = (p: Params, k: string): string[] => {
 const machineRelayFile = () => path.join(os.homedir(), '.pitbox', 'relay-avds.json');
 
 /** What an Apple simulator cannot do of the Android-only form factor commands, and why. */
+/** The longest plain pause `wait seconds=…` takes: longer belongs to a flow or a polling loop of the caller. */
+const MAX_PAUSE_S = 600;
+
 /** How long after a launch the first pointer action waits for window animations: an opening one is over by then. */
 const LAUNCH_SETTLE_MS = 3000;
 
@@ -1996,8 +1999,16 @@ export class Engine {
           return {action, ...(await this.#pushes.grant({device, app}))};
         case 'status':
           return {action, ...(await this.#pushes.status({device, app}))};
-        case 'log':
-          return {action, log: this.#pushes.log.slice(-(num(p, 'limit') ?? 10)), gateway: this.#gateway?.running ? this.#gateway.port : undefined};
+        case 'log': {
+          // wait (ms) waits for a push recorded after this call (a scheduled one, or a gateway delivery) instead of
+          // answering with the log as it is now.
+          const waitMs = num(p, 'wait') ?? 0;
+          const gateway = this.#gateway?.running ? this.#gateway.port : undefined;
+          if (!(waitMs > 0)) return {action, log: this.#pushes.log.slice(-(num(p, 'limit') ?? 10)), gateway};
+          const since = Date.now();
+          const r = await this.#pushes.waitLog({since, waitMs, device: device ? (await this.#target(device)).id : undefined});
+          return {action, log: r.log.slice(-(num(p, 'limit') ?? 10)), gateway, waited: {ms: r.waitedMs, arrived: r.arrived, since}};
+        }
         case 'activity':
           return {
             action,
@@ -2660,8 +2671,19 @@ export class Engine {
     scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 25),
 
     wait: async (p: Params) => {
-      const r = await (await this.ui(str(p, 'device'))).wait(req(p, 'target'), {gone: bool(p, 'gone'), timeoutMs: (num(p, 'timeout') ?? 10) * 1000});
-      return {ms: r.ms};
+      // No target: a plain pause of `seconds` (a countdown, a timer in the app), no device needed.
+      const target = str(p, 'target')?.trim();
+      if (!target) {
+        const seconds = num(p, 'seconds') ?? num(p, 'timeout');
+        if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) throw new Error('wait: a target (wait for it to show, gone=true for it to go) or seconds=<n> for a plain pause');
+        if (seconds > MAX_PAUSE_S) throw new Error(`wait: a plain pause is at most ${MAX_PAUSE_S} s`);
+        const start = Date.now();
+        await new Promise(r => setTimeout(r, seconds * 1000));
+        return {ms: Date.now() - start, paused: true};
+      }
+      const gone = bool(p, 'gone');
+      const r = await (await this.ui(str(p, 'device'))).wait(target, {gone, timeoutMs: (num(p, 'timeout') ?? num(p, 'seconds') ?? 10) * 1000});
+      return {ms: r.ms, gone};
     },
 
     focus: async (p: Params) => (await this.ui(str(p, 'device'))).focus(),

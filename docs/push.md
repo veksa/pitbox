@@ -33,7 +33,7 @@ the APNs and FCM requests a server sends, and delivers them to the running devic
 | `push clear` | remove the app's notifications (Android) |
 | `push grant` | grant POST_NOTIFICATIONS (Android) |
 | `push status` | can the app take pushes here: the receiver, the FCM service, Firebase, the permission |
-| `push log [-n 10]` | the last pushes (from `push` and from the gateway) with their verdicts |
+| `push log [-n 10] [wait=ms]` | the last pushes (from `push` and from the gateway) with their verdicts; with `wait`, waits up to that long for a new one (a scheduled push, a delivery the server sends through the gateway) and answers as soon as it lands, marking it `new` |
 | `push bind <token>` | send the gateway's pushes for this device token to this device |
 | `push activity start\|update\|end …` · `push activities` | iOS Live Activities through the app's debug hook ([Live Activities](#live-activities)) |
 

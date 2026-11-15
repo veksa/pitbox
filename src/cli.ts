@@ -59,7 +59,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   car day|night|auto | drive [m/s] | park | rotary cw|ccw [n]    cars (driving blocks apps not made for it)
   xr look yaw[,pitch[,roll]] | move dx,dy,dz | spin yaw,pitch,roll[,ms] | drift dx,dy,dz[,ms] | recenter | env day|night | passthrough 0…1 | options | panel minimize|close|menu|info|spatial-audio|tidy|close-app    XR headsets
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
-  wait [gone] <selector> [--timeout s] · focus · shot [name] [--scale 0.4]
+  wait [gone] <selector> [--timeout s] · wait <n>s (a plain pause) · focus · shot [name] [--scale 0.4]
   focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
   visual <name> [--update] [--mask <selector>]   compare the screen with a baseline (stored on first use)
   media [selector]              is it playing? motion and brightness of a region, compared on the device
@@ -68,7 +68,7 @@ push (no credentials: simctl push on simulators, the app's own FCM service on An
   push title=… body=… [data='{"k":"v"}'] [badge= sound= category= threadId= collapseId= channel= image= tag= priority=high|normal silent=true]
   push file=payload.json | push apns='{"aps":{…}}' | push fcm='{"notification":{…},"data":{…}}'   raw payloads, converted for the other platform
        [delay=s] [repeat=n] [grant=true] [--app <package|bundle id>]   one-line verdict: posted / banner shown / handled in front
-  push tap [title] [--expect app|away|any] · push clear · push grant · push status · push log [-n 10] · push bind <token>
+  push tap [title] [--expect app|away|any] · push clear · push grant · push status · push log [-n 10] [--wait ms] · push bind <token>
   push activity start|update|end type=… attributes='{…}' state='{…}' [stale= dismissal= relevance= alert= id= token=] · push activities   iOS Live Activities through the app's debug hook
 
 flows
@@ -237,6 +237,9 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'scroll':
       return {method: 'scroll', params: {device, direction: rest[0], until: rest.slice(rest[1] === 'until' ? 2 : 1).join(' ')}};
     case 'wait': {
+      // `wait 5s` alone: a plain pause (a bare `5` stays a text selector).
+      const pause = rest.length === 1 && /^\d+(\.\d+)?s$/.test(rest[0]!) ? rest[0]!.slice(0, -1) : undefined;
+      if (pause) return {method: 'wait', params: {device, seconds: pause}};
       // `wait id=x 30` as in a flow: a trailing number is the timeout, not part of the selector.
       const words = rest[0] === 'gone' ? rest.slice(1) : rest;
       const last = words[words.length - 1];
@@ -326,7 +329,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       const app = flags.app ?? flags.pkg;
       if (sub === 'tap') return {method: 'push', params: {action: sub, device, app, title: args.join(' ') || undefined, ...(typeof flags.expect === 'string' && {expect: flags.expect})}};
       if (sub === 'bind') return {method: 'push', params: {action: sub, device, token: args[0]}};
-      if (sub === 'log') return {method: 'push', params: {action: sub, limit: flags.lines}};
+      if (sub === 'log') return {method: 'push', params: {action: sub, device, limit: flags.lines, wait: flags.wait}};
       // push activity start type=DeliveryAttributes attributes='{…}' state='{…}' · push activity update state='{…}' [id=…]
       if (sub === 'activity') {
         const event = args[0] && !args[0].includes('=') ? args[0] : undefined;
