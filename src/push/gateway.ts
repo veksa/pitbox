@@ -66,7 +66,8 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
   const apns = /^\/3\/device\/([^/?]+)/.exec(path);
   if (apns) {
     const token = decodeURIComponent(apns[1]!);
-    const topic = req.headers['apns-topic'];
+    // A Live Activity's topic is the bundle id with `.push-type.liveactivity` after it.
+    const topic = req.headers['apns-topic']?.replace(/\.push-type\.liveactivity$/, '');
     if (topic?.endsWith('.voip') || req.headers['apns-push-type'] === 'voip') {
       return {status: 400, body: {reason: 'BadTopic', pitbox: 'VoIP (PushKit) pushes cannot be delivered to a simulator'}};
     }

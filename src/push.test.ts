@@ -473,6 +473,12 @@ describe('push routing', () => {
     expect(await handlePush(c, {method: 'POST', path: '/3/device/pitbox-android-1', headers: {}, body: '{"aps":{"alert":"hi"}}'}, {})).toMatchObject({status: 400, body: {reason: 'BadDeviceToken'}});
     expect((await handlePush(c, {method: 'POST', path: '/v1/projects/p/messages:send', headers: {}, body: '{"message":{"token":"x","notification":{"title":"T"}}}'}, {})).status).toBe(404);
   });
+
+  it("takes a Live Activity topic's bundle id", async () => {
+    const c = fakeCenter();
+    await handlePush(c, {method: 'POST', path: '/3/device/abc', headers: {'apns-topic': 'com.example.app.push-type.liveactivity'}, body: '{"aps":{"alert":"hi"}}'}, {});
+    expect(c.sent[0]!.opts.app).toBe('com.example.app');
+  });
 });
 
 describe('push input checks', () => {
