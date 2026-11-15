@@ -53,6 +53,22 @@ describe('services', () => {
     await outside.down();
   }, 30_000);
 
+  it('runs a stop command only for what it started or was named, never under a stand it found running', async () => {
+    const port = await freePort();
+    const outside = new ServiceManager(ctx, {x: {start: server(port), health: `tcp:${port}`}});
+    managers.push(outside);
+    await outside.up();
+    const marker = path.join(dir, 'stopped-marker');
+    const stop = `${node} -e "require('fs').writeFileSync(${JSON.stringify(JSON.stringify(marker.replace(/\\/g, '/'))).slice(1, -1)}, 'x')"`;
+    const m = new ServiceManager({...ctx, stateDir: path.join(dir, '.third')}, {x: {start: 'exit 1', stop, health: `tcp:${port}`}});
+    expect((await m.up())[0]?.status).toBe('external');
+    expect((await m.down())[0]?.detail).toMatch(/left running/);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect((await m.down(['x']))[0]?.detail).toBe('ran stop');
+    expect(fs.existsSync(marker)).toBe(true);
+    await outside.down();
+  }, 30_000);
+
   // lsof tells a listener's folder; Windows has no such lookup, and pitbox adopts there as before.
   it.skipIf(process.platform === 'win32')('refuses to adopt a server another project runs on the probed port', async () => {
     const port = await freePort();

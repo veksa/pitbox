@@ -316,7 +316,7 @@ export class ServiceManager {
     return state;
   }
 
-  /** Stops what pitbox started; runs `stop` commands; leaves external processes alone unless they have one. */
+  /** Stops what pitbox started; runs `stop` commands for those and for services named outright; leaves external ones alone. */
   async down(names: string[] = []): Promise<ServiceState[]> {
     const targets = names.length ? stopOrder(this.#services, names) : orderServices(this.#services, this.names()).reverse();
     const results: ServiceState[] = [];
@@ -328,7 +328,9 @@ export class ServiceManager {
         this.#set(name, {status: 'stopped'});
         const gone = await killTreeAndWait(known.pid, 8000, known.startedAt ?? 0);
         detail = gone ? `killed pid ${known.pid}` : `pid ${known.pid} did not exit`;
-      } else if (svc.stop) {
+      } else if (svc.stop && (names.includes(name) || known?.startedAt !== undefined)) {
+        // A stop command only for what pitbox started here (or a service named outright): a full `down` used to
+        // run `docker compose stop` under another session's or project's stand that pitbox had only found running.
         detail = 'ran stop';
       } else {
         const st = (await this.status()).find(s => s.name === name);
