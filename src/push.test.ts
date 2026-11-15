@@ -326,6 +326,7 @@ describe('push log wait', () => {
     const none = await center.waitLog({since: Date.now(), waitMs: 120});
     expect(none.arrived).toBe(false);
     expect(none.waitedMs).toBeGreaterThanOrEqual(100);
+    await expect(center.waitLog({since: Date.now(), waitMs: 3_600_000})).rejects.toThrow(/at most 600000 ms/);
     expect(toCall(parseArgs(['push', 'log', '--wait', '3000']))).toMatchObject({params: {action: 'log', wait: '3000'}});
   });
 });

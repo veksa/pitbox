@@ -136,6 +136,9 @@ const fresh = (before: PostedNotification[], after: PostedNotification[]): Poste
 
 export type RespondResult = {device: string; app: string; ok: boolean; verdict: string; notification?: string; /** The action that was answered (iOS: its identifier; Android: its title). */ answered?: string; actions?: string[]; state?: AppState; screen?: string[]; notes?: string[]};
 
+/** The longest `push log wait=` (ms). */
+export const MAX_LOG_WAIT_MS = 600_000;
+
 export class PushCenter {
   readonly log: PushRecord[] = [];
   /** Device tokens bound to a device by `push bind` or learned from a gateway request with a device. */
@@ -175,6 +178,8 @@ export class PushCenter {
    * landing in the meantime); answers as soon as one lands. `device` narrows what counts as new.
    */
   async waitLog(opts: {since: number; waitMs: number; device?: string}): Promise<{log: PushRecord[]; arrived: boolean; waitedMs: number}> {
+    // As long as a plain `wait` may pause: a longer wait belongs to a polling loop of the caller.
+    if (!(opts.waitMs <= MAX_LOG_WAIT_MS)) throw new Error(`push log: wait is at most ${MAX_LOG_WAIT_MS} ms`);
     const isNew = (r: PushRecord) => r.at > opts.since && (!opts.device || r.device === opts.device);
     const start = Date.now();
     const deadline = start + Math.max(0, opts.waitMs);
