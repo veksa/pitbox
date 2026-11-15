@@ -24,7 +24,7 @@ export type PushDeps = {
   target: (device?: string, opts?: {fromGateway?: boolean}) => Promise<PushTarget>;
   /** Devices the gateway may deliver to, by platform (this session's own: never another session's). */
   online: () => Promise<{android: string[]; apple: string[]}>;
-  androidApp?: () => string | undefined;
+  androidApp?: (device?: string) => string | undefined;
   appleApp?: (device?: string) => string | undefined;
   ui: (device: string) => Promise<DeviceUi>;
   /** The device's UI only when its runner already runs: the gateway must not wait minutes for a runner build. */
@@ -173,7 +173,7 @@ export class PushCenter {
   }
 
   #app(t: PushTarget, given?: string): string {
-    const app = given ?? (t.platform === 'android' ? this.#deps.androidApp?.() : this.#deps.appleApp?.(t.id));
+    const app = given ?? (t.platform === 'android' ? this.#deps.androidApp?.(t.id) : this.#deps.appleApp?.(t.id));
     if (!app) throw new Error(`no app: pass app=<${t.platform === 'android' ? 'package' : 'bundle id'}> or set app.${t.platform} in the config`);
     // The id ends up in adb shell commands (Android) and simctl arguments: nothing but an id passes.
     if (t.platform === 'android') assertPackage(app);

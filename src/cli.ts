@@ -170,7 +170,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       if (rest[0] === 'release') return {method: 'release', params: {device: device ?? rest[1], keep: flags.keep, force: flags.force}};
       if (rest[0] === 'pair' && rest[1] === 'watch') return {method: 'pair', params: {value: 'watch', device, watch: flags.watch ?? (rest.slice(2).join(' ') || undefined)}};
       if (rest[0] === 'unpair') return {method: 'unpair', params: {value: rest[1] ?? 'watch', device}};
-      throw new Error('device lease [--device d] [--purpose text] | device release [--device d] [--keep] | device pair watch [<watch name>] [--device phone] | device unpair watch');
+      throw new Error('device lease [--device d] [--purpose text] | device release [--device d] [--keep] | device pair watch [<watch name|avd>] [--device phone] | device unpair watch');
     }
     case 'install':
       return {method: 'install', params: {...common, apk: rest[0], replace: flags.replace}};

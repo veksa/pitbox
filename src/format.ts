@@ -350,6 +350,14 @@ export const formatResult = (method: string, r: unknown): string => {
       return lines.join('\n');
     }
     case 'pair':
+      if (x.pair && x.serial) {
+        const n = x.nodes as {phone: string; watch: string};
+        return [
+          `${x.already ? 'already paired' : 'paired'} ${x.watch} (${x.serial}) with ${x.phone} · Data Layer stand-in for ${x.app} · nodes phone ${n.phone}, watch ${n.watch}${x.already ? ` · ${x.messages} relayed` : ''} — device=watch names it`,
+          ...((x.last as string[] | undefined) ?? []).map(l => `  ${l}`),
+          ...((x.warnings as string[] | undefined) ?? []).map(w => `warning: ${w}`),
+        ].join('\n');
+      }
       if (x.pair) return `${x.already ? 'already paired' : 'paired'} ${x.watch} (${x.udid}) with ${x.phone} · ${x.state}${x.created ? ' · created for this session' : ''} — device=watch names it${x.note ? `\nnote: ${x.note}` : ''}`;
       if (x.serial) return `connected ${x.serial} over Wi-Fi`;
       if (x.waiting) return `still waiting for a phone to scan the QR (${x.file})`;

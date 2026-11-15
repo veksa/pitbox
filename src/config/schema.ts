@@ -129,9 +129,11 @@ export const configSchema = z.object({
       connect: z.string().optional(),
       /**
        * The watch app: what `open`, `stop`, `install`'s checks, `push` and the like take on an Apple Watch simulator
-       * when no app is named — `{apple: 'com.example.app.watchkitapp'}`. Without it, `app.apple`.
+       * or a Wear OS device when no app is named — `{apple: 'com.example.app.watchkitapp', android:
+       * 'com.example.app'}`. Without it, `app.apple` / `app.android`. A Wear OS app the Data Layer pairs with the
+       * phone has the phone's package, so `android` is needed only for a watch app of its own.
        */
-      watch: z.object({apple: z.string().optional()}).optional(),
+      watch: z.object({apple: z.string().optional(), android: z.string().optional()}).optional(),
     })
     .optional(),
   /** Shell for project commands: `bash` (default; Git Bash on Windows), `sh`, `cmd` or a path. */
@@ -180,6 +182,11 @@ export const configSchema = z.object({
     .object({
       /** Default emulator for `boot`. */
       avd: z.string().optional(),
+      /**
+       * The Wear OS emulator `device action=pair value=watch` pairs with an Android phone: an AVD name or a serial.
+       * Without it, a Wear OS emulator this session holds, else the first Wear OS AVD.
+       */
+      watch: z.string().optional(),
       /** Extra host ports to forward besides the services' `expose`. */
       reverse: z.array(z.number().int().positive()).optional(),
       /**

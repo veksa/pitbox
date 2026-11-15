@@ -44,6 +44,7 @@ import {describeHolder, listLeases, machineLock, refusal, staleReason, type Leas
 import {bootWarning} from '../lease/resources.ts';
 import {describeReaped, reapLeases, stillBootedByPitbox, type Running} from '../lease/reap.ts';
 import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated} from '../lease/created.ts';
+import {WearRelay} from '../drivers/android/wearRelay.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
 
@@ -127,7 +128,7 @@ export class Engine {
             .map(x => x.udid)
         : [],
     }),
-    androidApp: () => this.config.app?.android,
+    androidApp: device => this.#androidApp(device),
     appleApp: device => this.#appleApp(device),
     ui: device => this.ui(device),
     liveUi: device => this.#uis.get(device),
@@ -378,7 +379,7 @@ export class Engine {
         ? t!.s instanceof RemoteApple
           ? new DeviceUi(t!.id, new RemoteAppleRunner(t!.s, t!.id, this.#appleApp(t!.id)), hooks, new RemoteAppleCrashes(t!.s, t!.id, this.#appleApp(t!.id)))
           : new DeviceUi(t!.id, new AppleRunner(t!.s as AppleDriver, t!.id, this.#appleApp(t!.id)), hooks, new AppleCrashWatcher(t!.s as AppleDriver, t!.id, this.#appleApp(t!.id)))
-        : new DeviceUi(t!.id, new AndroidRunner(t!.a, t!.id), hooks, new CrashWatcher(t!.a.adbPath, t!.id, this.config.app?.android));
+        : new DeviceUi(t!.id, new AndroidRunner(t!.a, t!.id), hooks, new CrashWatcher(t!.a.adbPath, t!.id, this.#androidApp(t!.id)));
     this.#uis.set(id, ui);
     return ui;
   }
@@ -639,7 +640,7 @@ export class Engine {
   async #target(device?: string, opts: {observe?: boolean; platform?: 'android' | 'apple'; retried?: boolean} = {}): Promise<{platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices}> {
     if (device && /^web(:|$)/.test(device)) throw new Error(`${device} is a web app: this needs a phone, an emulator or a simulator`);
     if (device && /^mac(:|$)/.test(device)) throw new Error(`${device} is a Mac app: this needs a phone, an emulator or a simulator`);
-    if (device === 'watch' && opts.platform !== 'android') device = this.#sessionWatch();
+    if (device === 'watch') device = this.#sessionWatch(opts.platform);
     const s = opts.platform === 'android' ? undefined : this.apple;
     const a = opts.platform === 'apple' ? undefined : this.android;
     const local = this.#isLocalApple(s);
@@ -656,9 +657,11 @@ export class Engine {
       const android = a ?? this.#needAndroid();
       const serial = await android.resolve(device);
       const d = (await android.devices().catch(() => [])).find(x => x.serial === serial);
+      if (d?.kind === 'wear') this.#wearSerials.add(serial);
       return take({platform: 'android' as const, id: serial, a: android}, d?.avd, d?.instance);
     }
     const online = a ? (await a.devices().catch(() => [])).filter(d => d.state === 'device') : [];
+    for (const d of online) if (d.kind === 'wear') this.#wearSerials.add(d.serial);
     if (s && !local) {
       // A remote Mac's simulators as before; Android devices here are still leased.
       if (booted.length && !online.length) return {platform: 'apple', id: await s.resolve(), s};
@@ -792,7 +795,7 @@ export class Engine {
     // The project's devices, also those another daemon of it left (one stopped as unreachable, one that crashed).
     this.#leases.adopt();
     // The pairs pitbox made with them go first; the watches go back below with everything else.
-    for (const h of this.#leases.held().filter(x => x.platform === 'apple')) await this.#dropPairsOf(h.id, {pairsOnly: true}).catch(() => undefined);
+    for (const h of this.#leases.held()) await this.#dropPairsOf(h.id, {pairsOnly: true}).catch(() => undefined);
     const shutdown = this.config.devices?.shutdownOnRelease === false ? undefined : (h: Held) => this.#shutdownHeld(h);
     // Shut down only a device that still runs the boot pitbox made (an adopted lease's serial may be another
     // emulator's by now, its udid a simulator booted again by hand): judged on the devices running now.
@@ -906,9 +909,26 @@ export class Engine {
     return this.config.app?.apple;
   }
 
+  /** The app a call means on an Android device: the watch app on a Wear OS one (`app.watch.android`), else `app.android`. */
+  #androidApp(serial?: string): string | undefined {
+    if (serial && this.#wearSerials.has(serial)) return this.config.app?.watch?.android ?? this.config.app?.android;
+    return this.config.app?.android;
+  }
+
+  /** Wear OS devices calls resolved (a watch takes `app.watch.android`), learnt from adb's device list. */
+  readonly #wearSerials = new Set<string>();
+
+  /** The Data Layer stand-in between a phone and a watch emulator (drivers/android/wearRelay.ts), made on first pair. */
+  #wear?: WearRelay;
+
+  #wearRelay(): WearRelay {
+    this.#wear ??= new WearRelay((serial, command, timeoutMs) => this.#needAndroid().shell(serial, command, timeoutMs));
+    return this.#wear;
+  }
+
   /** The watch this session paired (`device action=pair value=watch`): what the device selector `watch` names. */
-  #sessionWatch(): string {
-    const watches = this.#leases.held().filter(h => h.platform === 'apple' && h.pairedWith);
+  #sessionWatch(platform?: 'android' | 'apple'): string {
+    const watches = this.#leases.held().filter(h => (!platform || h.platform === platform) && h.pairedWith);
     if (watches.length === 1) return watches[0]!.id;
     if (!watches.length) throw new Error('this session has no paired watch\nhint: device action=pair value=watch pairs one with the phone');
     throw new Error(`this session paired several watches: ${watches.map(w => `${w.name ?? w.id} (${w.id})`).join(', ')}\nhint: pass the watch by udid`);
@@ -1023,6 +1043,66 @@ export class Engine {
     return answer(pairId, w, created ? {created: true} : {});
   }
 
+  /**
+   * The Android phone a watch pair is for: the device named (when it is an Android one), else the one Android phone
+   * this session holds when it holds no iPhone simulator. Undefined means an Apple pair.
+   */
+  async #androidPhone(p: Params): Promise<{serial: string; a: AndroidDriver} | undefined> {
+    const a = this.android;
+    if (!a) return undefined;
+    const device = str(p, 'device');
+    if (device) {
+      const t = await this.#target(device);
+      return t.platform === 'android' ? {serial: t.id, a: t.a} : undefined;
+    }
+    const held = this.#leases.held();
+    if (held.some(h => h.platform === 'apple' && !h.pairedWith)) return undefined;
+    const online = (await a.devices().catch(() => [])).filter(d => d.state === 'device' && d.kind !== 'wear' && held.some(h => h.platform === 'android' && h.id === d.serial && !h.pairedWith));
+    return online.length === 1 ? {serial: online[0]!.serial, a} : undefined;
+  }
+
+  /**
+   * Pairs a Wear OS emulator with this session's Android phone emulator through the Data Layer stand-in
+   * (drivers/android/wearRelay.ts): both leased to the session, the same app on both. The watch: the one named
+   * (`watch=`, else `android.watch`) — booted for the session when it is an AVD that does not run for it —, else a
+   * Wear OS emulator this session holds, else the first Wear OS AVD. Again with the same phone it answers the pair
+   * it has, with the last messages relayed.
+   */
+  async #pairAndroidWatch(p: Params) {
+    const {serial: phone, a} = (await this.#androidPhone(p))!;
+    const devices = await a.devices();
+    const me = devices.find(d => d.serial === phone);
+    if (me?.kind === 'wear') throw new Error(`${me.avd ?? phone} is a Wear OS device: a watch pairs with a phone\nhint: device=<phone serial>`);
+    if (!me?.emulator) throw new Error(`${me?.avd ?? me?.model ?? phone} is not an emulator: the Wear OS relay pairs two emulators (a real phone and watch pair through the Play Store companion app)`);
+    const relay = this.#wearRelay();
+    const brief = (pair: NonNullable<ReturnType<WearRelay['pairOf']>>) => ({watch: pair.watch.name, serial: pair.watch.serial, phone: pair.phone.name, pair: pair.id, app: pair.pkg, nodes: {phone: pair.phone.node, watch: pair.watch.node}});
+    const had = relay.pairOf(phone);
+    if (had && had.phone.serial === phone && devices.some(d => d.serial === had.watch.serial && d.state === 'device')) {
+      return {...brief(had), already: true, messages: had.messages, ...(had.log.length ? {last: had.log.slice(-3)} : {})};
+    }
+    const mineOnline = (d: AndroidDevice) => d.state === 'device' && this.#leases.holds('android', d.serial, d.instance);
+    const named = str(p, 'watch') ?? this.config.android?.watch;
+    let watch = named ? devices.find(d => mineOnline(d) && (d.serial === named || d.avd === named)) : devices.find(d => mineOnline(d) && d.kind === 'wear' && d.serial !== phone);
+    if (!watch) {
+      const avd = named ?? a.avds().find(x => x.kind === 'wear')?.name;
+      if (!avd) throw new Error('no Wear OS emulator to pair\nhint: create a Wear OS AVD (system-images;android-36;android-wear-signed), or set android.watch');
+      if (!a.avds().some(x => x.name === avd)) throw new Error(`no AVD or emulator of this session "${avd}"\nhint: Wear OS AVDs here: ${a.avds().filter(x => x.kind === 'wear').map(x => x.name).join(', ') || 'none'}`);
+      const r = (await this.#bootEmulator(a, avd, {headless: true})) as {serial?: string};
+      watch = (await a.devices()).find(d => d.serial === r.serial);
+      if (!watch) throw new Error(`${avd} did not come up to pair`);
+    }
+    if (watch.serial === phone) throw new Error('the phone and the watch are the same device');
+    if (watch.kind !== 'wear') throw new Error(`${watch.avd ?? watch.serial} is not a Wear OS device`);
+    this.#wearSerials.add(watch.serial);
+    const pkg = str(p, 'pkg') ?? this.config.app?.android;
+    const watchPkg = str(p, 'pkg') ?? this.#androidApp(watch.serial);
+    if (!pkg || !watchPkg) throw new Error('no package: pass pkg or set app.android in the config');
+    if (pkg !== watchPkg) throw new Error(`the phone app ${pkg} and the watch app ${watchPkg} differ: the Data Layer joins an app only with its own package on the other device`);
+    this.#leases.claim('android', watch.serial, {name: watch.avd, instance: watch.instance, pairedWith: phone});
+    const {pair, warnings} = await relay.pair(pkg, {serial: phone, name: me.avd ?? phone}, {serial: watch.serial, name: watch.avd ?? watch.serial});
+    return {...brief(pair), relay: 'stand-in: messages go through pitbox, not Play services', ...(warnings.length ? {warnings} : {})};
+  }
+
   /** Boots a watch for its pair and marks the boot on its lease (only that boot is shut down with the lease). */
   async #bootWatch(s: AppleDriver, udid: string) {
     const r = await s.boot(udid, {headless: true});
@@ -1038,6 +1118,8 @@ export class Engine {
    * pitbox did not make stays.
    */
   async #dropPairsOf(udid: string, opts: {pairsOnly?: boolean} = {}): Promise<string[]> {
+    const wear = this.#wear?.pairOf(udid);
+    if (wear) return this.#dropWearPair(wear.id, udid, opts);
     const s = this.apple;
     if (!this.#isLocalApple(s)) return [];
     const done: string[] = [];
@@ -1053,6 +1135,41 @@ export class Engine {
     }
     for (const h of opts.pairsOnly ? [] : this.#leases.held().filter(x => x.platform === 'apple' && x.pairedWith === udid)) {
       const r = (await this.methods.release({device: h.id}).catch(() => undefined)) as {released?: string} | undefined;
+      if (r?.released) done.push(`released ${r.released}`);
+    }
+    return done;
+  }
+
+  /**
+   * `unpair value=watch` for a Wear OS relay pair: the device named (the phone or the watch) when it is in one, else
+   * the session's paired Wear OS watch when it paired no Apple Watch. Undefined leaves it to the Apple pair.
+   */
+  async #androidUnpair(p: Params): Promise<Record<string, unknown> | undefined> {
+    const named = str(p, 'device');
+    let serial: string | undefined;
+    if (named && named !== 'watch') {
+      const t = await this.#target(named, {observe: true});
+      if (t.platform !== 'android') return undefined;
+      serial = t.id;
+    } else {
+      const held = this.#leases.held();
+      if (!held.some(h => h.platform === 'android' && h.pairedWith) || held.some(h => h.platform === 'apple' && h.pairedWith)) return undefined;
+      serial = this.#sessionWatch('android');
+    }
+    const pair = this.#wear?.pairOf(serial);
+    if (!pair) throw new Error(`${serial} is in no watch pair of this session: unpair gives back only those\nhint: device action=pair value=watch`);
+    const done = await this.#dropWearPair(pair.id, serial, {pairsOnly: true});
+    const released = this.#leases.held().some(h => h.platform === 'android' && h.id === pair.watch.serial) ? ((await this.methods.release({device: pair.watch.serial})) as {released?: string}).released : undefined;
+    return {unpaired: pair.watch.name, done, ...(released ? {released} : {})};
+  }
+
+  /** Undoes a Wear OS relay pair: both apps forget it; given back by its phone, the watch paired for it goes too. */
+  async #dropWearPair(id: string, serial: string, opts: {pairsOnly?: boolean} = {}): Promise<string[]> {
+    const pair = await this.#wear?.unpair(id);
+    if (!pair) return [];
+    const done = [`unpaired ${pair.watch.name}`];
+    if (!opts.pairsOnly && serial === pair.phone.serial && this.#leases.held().some(h => h.platform === 'android' && h.id === pair.watch.serial && h.pairedWith === serial)) {
+      const r = (await this.methods.release({device: pair.watch.serial}).catch(() => undefined)) as {released?: string} | undefined;
       if (r?.released) done.push(`released ${r.released}`);
     }
     return done;
@@ -1234,8 +1351,8 @@ export class Engine {
     return a;
   }
 
-  #pkg(p: Params): string {
-    const pkg = str(p, 'pkg') ?? this.config.app?.android;
+  #pkg(p: Params, serial?: string): string {
+    const pkg = str(p, 'pkg') ?? this.#androidApp(serial);
     if (!pkg) throw new Error('no package: pass pkg or set app.android in the config');
     return pkg;
   }
@@ -1560,6 +1677,8 @@ export class Engine {
     await this.#mock?.stop();
     this.#pushes.cancelScheduled();
     await this.#gateway?.stop();
+    // The apps forget their watch pairing: nothing would relay their messages any more.
+    await this.#wear?.close().catch(() => undefined);
     await this.#dev?.stop();
     for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
     for (const r of this.#macRunners.values()) await r.stop().catch(() => undefined);
@@ -1914,7 +2033,7 @@ export class Engine {
     // Wireless debugging: a QR the phone scans (then `wait`), or the ip:port and code its screen shows.
     pair: async (p: Params) => {
       const value = str(p, 'value')?.trim();
-      if (value === 'watch') return this.#pairWatch(p);
+      if (value === 'watch') return (await this.#androidPhone(p)) ? this.#pairAndroidWatch(p) : this.#pairWatch(p);
       const a = this.#needAndroid();
       if (value && value !== 'wait') {
         const {host, port, code} = parseCodePairing(value);
@@ -1997,7 +2116,7 @@ export class Engine {
         }
         note = h ? `it was held by ${describeHolder(h.lease)}` : 'nobody held it';
       }
-      if (h?.mine && t.platform === 'apple') await this.#dropPairsOf(t.id);
+      if (h?.mine) await this.#dropPairsOf(t.id);
       if (h?.mine && h.lease.booted) {
         // This session's own: given back the way a release gives it (a simulator pitbox created goes too).
         this.#leases.release(t.platform, t.id, {force: true, instance});
@@ -2030,7 +2149,7 @@ export class Engine {
       if (!h) return {released: t.id, note: 'nobody held it'};
       if (!h.mine && !force) throw new Error(`${refusal(h.lease)}\nhint: force=true with the device named releases it anyway`);
       // A pair pitbox made with it goes first; a phone takes the watch paired for it along.
-      const paired = h.mine && t.platform === 'apple' ? await this.#dropPairsOf(t.id) : [];
+      const paired = h.mine ? await this.#dropPairsOf(t.id) : [];
       let down = h.mine && h.lease.booted && !bool(p, 'keep') && this.config.devices?.shutdownOnRelease !== false;
       // Only the boot pitbox made goes down: not a simulator booted again since by hand, nor a lease with no boot mark.
       const boot = down && t.platform === 'apple' ? (await this.#bootMarks())?.get(t.id) : undefined;
@@ -2051,6 +2170,8 @@ export class Engine {
     unpair: async (p: Params) => {
       const value = str(p, 'value')?.trim();
       if (value && value !== 'watch') throw new Error('unpair value=watch (a phone on Wi-Fi is forgotten in its Developer options)');
+      const wear = await this.#androidUnpair(p);
+      if (wear) return wear;
       let watch = str(p, 'device') ? (await this.#target(str(p, 'device'), {observe: true, platform: 'apple'})).id : this.#sessionWatch();
       // Only a watch this session paired goes back; a phone named means its watch, and the phone stays.
       const mine = this.#leases.held().filter(h => h.platform === 'apple');
@@ -2106,7 +2227,10 @@ export class Engine {
       this.#needAndroid();
       const t = await this.#target(str(p, 'device'), {platform: 'android'});
       if (t.platform !== 'android') throw new Error('an .apk installs on an Android device');
-      return {serial: t.id, ...(await t.a.install(t.id, file, {replace: bool(p, 'replace'), pkg: str(p, 'pkg') ?? this.config.app?.android}))};
+      const installed = await t.a.install(t.id, file, {replace: bool(p, 'replace'), pkg: str(p, 'pkg') ?? this.#androidApp(t.id)});
+      // An uninstall before it forgot the watch pairing: the app gets it back.
+      const repaired = await this.#wear?.repair(t.id).catch(() => false);
+      return {serial: t.id, ...installed, ...(repaired ? {paired: 'the watch pairing again'} : {})};
     },
 
     open: async (p: Params) => {
@@ -2185,8 +2309,8 @@ export class Engine {
       const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this
       // dev server, whatever a launcher remembered.
-      const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p);
-      const pkg = str(p, 'pkg') ?? this.config.app?.android;
+      const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p, serial);
+      const pkg = str(p, 'pkg') ?? this.#androidApp(serial);
       // A link that starts the app cold skips the connect link, and a build whose data is new (installed, cleared)
       // has no saved dev server: it would ask the bundler address it was built with. pitbox writes what the connect
       // link would have saved before the link goes (a debug build only; with its own connect link a dev launcher
@@ -2230,7 +2354,7 @@ export class Engine {
         await t.s.stop(t.id, this.#bundleId(p, t.id));
         return {udid: t.id};
       }
-      await t.a.stop(t.id, this.#pkg(p));
+      await t.a.stop(t.id, this.#pkg(p, t.id));
       return {serial: t.id};
     },
 
@@ -2255,8 +2379,10 @@ export class Engine {
         await t.s.clear(t.id, this.#bundleId(p, t.id));
         return {udid: t.id};
       }
-      await t.a.clear(t.id, this.#pkg(p));
-      return {serial: t.id};
+      await t.a.clear(t.id, this.#pkg(p, t.id));
+      // Clearing the app's data forgot the watch pairing with it.
+      const repaired = await this.#wear?.repair(t.id).catch(() => false);
+      return {serial: t.id, ...(repaired ? {paired: 'the watch pairing again'} : {})};
     },
 
     uninstall: async (p: Params) => {
@@ -2266,7 +2392,7 @@ export class Engine {
         await t.s.uninstall(t.id, this.#bundleId(p, t.id));
         return {udid: t.id};
       }
-      await t.a.uninstall(t.id, this.#pkg(p));
+      await t.a.uninstall(t.id, this.#pkg(p, t.id));
       return {serial: t.id};
     },
 
@@ -2282,7 +2408,7 @@ export class Engine {
       const all = bool(p, 'all');
       const opts = {lines: num(p, 'lines') ?? 50, grep: str(p, 'grep'), level: str(p, 'level')};
       if (t.platform === 'apple') return {lines: await t.s.logs(t.id, {...opts, bundleId: all ? undefined : (str(p, 'pkg') ?? this.#appleApp(t.id))})};
-      return {lines: await t.a.logs(t.id, {...opts, pkg: all ? undefined : (str(p, 'pkg') ?? this.config.app?.android)})};
+      return {lines: await t.a.logs(t.id, {...opts, pkg: all ? undefined : (str(p, 'pkg') ?? this.#androidApp(t.id))})};
     },
 
     settings: async (p: Params) => {
@@ -2329,7 +2455,7 @@ export class Engine {
         };
       }
       const {a, id: serial} = t;
-      const pkg = str(p, 'pkg') ?? this.config.app?.android;
+      const pkg = str(p, 'pkg') ?? this.#androidApp(serial);
       const permission = str(p, 'grant') ?? str(p, 'revoke');
       return {
         serial,
