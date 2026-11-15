@@ -6,7 +6,7 @@ import {failed, parseArgs, toCall} from './cli.ts';
 import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
-import {AndroidDriver, CONNECT_PREFS, mergeConnectPrefs} from './drivers/android/driver.ts';
+import {AndroidDriver, CONNECT_PREFS, isUnresolvedLink, mergeConnectPrefs} from './drivers/android/driver.ts';
 import {instrumentCommand} from './drivers/android/runner.ts';
 import {shownPath} from './format.ts';
 import {parseProbe, probePort} from './stand/health.ts';
@@ -646,5 +646,13 @@ describe('android runner start', () => {
     // An unreadable level keeps the option, as before.
     expect(instrumentCommand(Number.NaN)).toContain('--no-hidden-api-checks');
     expect(instrumentCommand(26)).toMatch(/^rm -f \S+; nohup am instrument -w -r -e port \d+ dev\.pitbox\.runner\/\.RunnerInstrumentation > \S+ 2>&1 &$/);
+  });
+});
+
+describe('isUnresolvedLink', () => {
+  it('tells a link no activity takes (a release build without the connect library) from other launch failures', () => {
+    expect(isUnresolvedLink(new Error('launch failed: Error: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW dat=pitbox.com.x://connect/... }'))).toBe(true);
+    expect(isUnresolvedLink(new Error('launch failed: Error: Activity class {com.x/.Main} does not exist'))).toBe(false);
+    expect(isUnresolvedLink('adb: device offline')).toBe(false);
   });
 });

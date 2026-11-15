@@ -10,7 +10,7 @@ import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {DEVICE_PLACEHOLDERS, exposedPorts, type DevicePlaceholder, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
-import {AndroidDriver, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
+import {AndroidDriver, isUnresolvedLink, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
@@ -778,9 +778,23 @@ export class Engine {
     return {deleted: true};
   }
 
+  /** What the created-devices list records about who made a device: this project, and whether it keeps it. */
+  #createdBy(): {owner: string; keep?: true} {
+    return {owner: this.#loaded.root, ...(this.config.devices?.deleteCreated === false ? {keep: true as const} : {})};
+  }
+
+  /**
+   * Whether `devices clean` may delete a created device: this project's own, and one an older pitbox recorded without
+   * a project only when asked (`all`). Another project's never — a shut-down twin it keeps is its next boot.
+   */
+  #mayClean(c: Created, all?: boolean): boolean {
+    return c.owner === undefined ? !!all : c.owner === this.#loaded.root;
+  }
+
   /** Copies no daemon deletes any more (a drop, a forced shutdown, a crash): deleted once nothing runs or holds them. */
-  async #reapCopies(a: AndroidDriver, opts: {all?: boolean} = {}): Promise<string[]> {
-    const left = listCreated().filter(c => c.udid.startsWith('android:') && (opts.all || !c.keep));
+  async #reapCopies(a: AndroidDriver, opts: {clean?: {all?: boolean}} = {}): Promise<string[]> {
+    // A sweep takes the copies their sessions would have deleted; `devices clean` also this project's kept ones.
+    const left = listCreated().filter(c => c.udid.startsWith('android:') && (!c.keep || (opts.clean && this.#mayClean(c, opts.clean.all))));
     if (!left.length) return [];
     return machineLock('android-boot', async () => {
       const deleted: string[] = [];
@@ -887,7 +901,7 @@ export class Engine {
         let n = 2;
         while (taken.has(`${want.name} (pitbox ${n})`)) n++;
         const sim = await s.createLike(want, `${want.name} (pitbox ${n})`);
-        recordCreated(sim.udid, sim.name);
+        recordCreated(sim.udid, sim.name, this.#createdBy());
         this.#leases.claim('apple', sim.udid, {name: sim.name, booted: true, created: true});
         return sim;
       });
@@ -1027,7 +1041,7 @@ export class Engine {
         let n = 2;
         while (taken.has(`${like.name} (pitbox ${n})`)) n++;
         const sim = await s.createLike(like, `${like.name} (pitbox ${n})`);
-        recordCreated(sim.udid, sim.name);
+        recordCreated(sim.udid, sim.name, this.#createdBy());
         this.#leases.claim('apple', sim.udid, {name: sim.name, booted: true, created: true, pairedWith: phone.udid});
         return sim;
       });
@@ -1040,7 +1054,7 @@ export class Engine {
     try {
       if (!pairId) {
         pairId = await s.pair(w.udid, phone.udid);
-        recordCreated(`pair:${pairId}`, `${w.name} ↔ ${phone.name}`, {phone: phone.udid, watch: w.udid});
+        recordCreated(`pair:${pairId}`, `${w.name} ↔ ${phone.name}`, {phone: phone.udid, watch: w.udid, owner: this.#loaded.root});
         madePair = true;
       }
       pairs = await s.pairs();
@@ -1382,7 +1396,7 @@ export class Engine {
     while (a.avdTaken(`${avd}_pitbox_${n}`)) n++;
     const name = `${avd}_pitbox_${n}`;
     const id = `android:${name}`;
-    recordCreated(id, name, {like: avd, ...(this.config.devices?.deleteCreated === false ? {keep: true} : {})});
+    recordCreated(id, name, {like: avd, ...this.#createdBy()});
     try {
       a.createLike(avd, name);
     } catch (e) {
@@ -2278,9 +2292,12 @@ export class Engine {
       return {unpaired: watch, ...(done.length ? {done: done.filter(d => !d.startsWith('released'))} : {}), ...(released ? {released} : {})};
     },
 
-    // Deletes the simulators pitbox created for sessions (`<name> (pitbox N)`) that are shut down and held by nobody.
-    cleanDevices: async () => {
+    // Deletes the simulators this project's sessions created (`<name> (pitbox N)`) that are shut down and held by
+    // nobody. Another project's are never touched; `all` adds those an older pitbox recorded without a project.
+    cleanDevices: async (p: Params) => {
+      const all = bool(p, 'all');
       const deleted: string[] = [];
+      let others = 0;
       const s = this.apple;
       // Under the lock that creates them: a device created a moment ago and not leased yet is not taken for a
       // leftover. Only what pitbox recorded when it created it.
@@ -2293,6 +2310,10 @@ export class Engine {
               forgetCreated(c.udid);
               continue;
             }
+            if (!this.#mayClean(c, all)) {
+              others++;
+              continue;
+            }
             if (x.state !== 'Shutdown' || this.#leases.holderOf('apple', x.udid)) continue;
             await s.delete(x.udid);
             forgetCreated(x.udid);
@@ -2302,9 +2323,9 @@ export class Engine {
       }
       // AVD copies: also those made for sessions that keep what they create; never one younger than the grace, one an
       // emulator runs, one a live lease names, or a folder that is no longer the one pitbox made.
-      if (this.android) deleted.push(...(await this.#reapCopies(this.android, {all: true})));
+      if (this.android) deleted.push(...(await this.#reapCopies(this.android, {clean: {all}})));
       const unpaired = await this.#sweepPairs().catch(() => 0);
-      return {deleted, ...(unpaired ? {unpaired} : {})};
+      return {deleted, ...(unpaired ? {unpaired} : {}), ...(others ? {others} : {})};
     },
 
 
@@ -2402,7 +2423,8 @@ export class Engine {
       const {a, id: serial} = t;
       // Without a target, open the app through its connect link when there is one: it then always talks to this
       // dev server, whatever a launcher remembered.
-      const target = str(p, 'target') ?? this.connectUrl() ?? this.#pkg(p, serial);
+      const connect = str(p, 'target') === undefined ? this.connectUrl() : undefined;
+      let target = str(p, 'target') ?? connect ?? this.#pkg(p, serial);
       const pkg = str(p, 'pkg') ?? this.#androidApp(serial);
       // A link that starts the app cold skips the connect link, and a build whose data is new (installed, cleared)
       // has no saved dev server: it would ask the bundler address it was built with. pitbox writes what the connect
@@ -2417,7 +2439,16 @@ export class Engine {
         }
       }
       const t0 = Date.now();
-      const opened = await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg});
+      let opened: Awaited<ReturnType<typeof a.open>> & {fallback?: string};
+      try {
+        opened = await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg});
+      } catch (error) {
+        // A build without the connect library (a release build) has nothing that takes the connect link: it is not
+        // pointed at a dev server anyway, so it is launched from its launcher activity instead of failing.
+        if (!connect || !isUnresolvedLink(error)) throw error;
+        target = this.#pkg(p, serial);
+        opened = {...(await a.open(serial, target, {relaunch: bool(p, 'relaunch'), pkg})), fallback: 'no connect library in this build: launched'};
+      }
       this.#launchedAt.set(serial, Date.now());
       // A cold start of a dev build goes on after the activity: the bundle loads and starts running.
       const proxy = this.#dev?.proxy;

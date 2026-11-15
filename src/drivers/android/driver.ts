@@ -351,6 +351,9 @@ export const mergeConnectPrefs = (xml: string, hosts: Record<string, string>): s
   return `<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n${lines.join('\n')}\n</map>\n`;
 };
 
+/** A link no activity on the device takes (`am start` says «unable to resolve Intent»): a build without its handler. */
+export const isUnresolvedLink = (error: unknown): boolean => /unable to resolve Intent/i.test(error instanceof Error ? error.message : String(error));
+
 export class AndroidDriver {
   readonly adbPath: string;
   readonly #runningDirs: string[];
