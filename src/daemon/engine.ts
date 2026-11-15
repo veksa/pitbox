@@ -922,7 +922,7 @@ export class Engine {
   #wear?: WearRelay;
 
   #wearRelay(): WearRelay {
-    this.#wear ??= new WearRelay((serial, command, timeoutMs) => this.#needAndroid().shell(serial, command, timeoutMs));
+    this.#wear ??= new WearRelay((serial, command, timeoutMs) => this.#needAndroid().shell(serial, command, timeoutMs), {store: path.join(this.#loaded.stateDir, 'wear-pairs.json')});
     return this.#wear;
   }
 
@@ -1069,6 +1069,7 @@ export class Engine {
    * it has, with the last messages relayed.
    */
   async #pairAndroidWatch(p: Params) {
+    await this.#restoreWear();
     const {serial: phone, a} = (await this.#androidPhone(p))!;
     const devices = await a.devices();
     const me = devices.find(d => d.serial === phone);
@@ -1082,12 +1083,14 @@ export class Engine {
     }
     const mineOnline = (d: AndroidDevice) => d.state === 'device' && this.#leases.holds('android', d.serial, d.instance);
     const named = str(p, 'watch') ?? this.config.android?.watch;
+    let bootedHere = false;
     let watch = named ? devices.find(d => mineOnline(d) && (d.serial === named || d.avd === named)) : devices.find(d => mineOnline(d) && d.kind === 'wear' && d.serial !== phone);
     if (!watch) {
       const avd = named ?? a.avds().find(x => x.kind === 'wear')?.name;
       if (!avd) throw new Error('no Wear OS emulator to pair\nhint: create a Wear OS AVD (system-images;android-36;android-wear-signed), or set android.watch');
       if (!a.avds().some(x => x.name === avd)) throw new Error(`no AVD or emulator of this session "${avd}"\nhint: Wear OS AVDs here: ${a.avds().filter(x => x.kind === 'wear').map(x => x.name).join(', ') || 'none'}`);
-      const r = (await this.#bootEmulator(a, avd, {headless: true})) as {serial?: string};
+      const r = (await this.#bootEmulator(a, avd, {headless: true})) as {serial?: string; already?: boolean};
+      bootedHere = !r.already;
       watch = (await a.devices()).find(d => d.serial === r.serial);
       if (!watch) throw new Error(`${avd} did not come up to pair`);
     }
@@ -1098,8 +1101,17 @@ export class Engine {
     const watchPkg = str(p, 'pkg') ?? this.#androidApp(watch.serial);
     if (!pkg || !watchPkg) throw new Error('no package: pass pkg or set app.android in the config');
     if (pkg !== watchPkg) throw new Error(`the phone app ${pkg} and the watch app ${watchPkg} differ: the Data Layer joins an app only with its own package on the other device`);
+    let made: Awaited<ReturnType<WearRelay['pair']>>;
+    try {
+      made = await relay.pair(pkg, {serial: phone, name: me.avd ?? phone}, {serial: watch.serial, name: watch.avd ?? watch.serial});
+    } catch (e) {
+      // A watch booted for a pair that did not happen goes back down.
+      if (bootedHere) await this.methods.release({device: watch.serial}).catch(() => undefined);
+      throw e;
+    }
+    // The lease names the phone only once the pair exists.
     this.#leases.claim('android', watch.serial, {name: watch.avd, instance: watch.instance, pairedWith: phone});
-    const {pair, warnings} = await relay.pair(pkg, {serial: phone, name: me.avd ?? phone}, {serial: watch.serial, name: watch.avd ?? watch.serial});
+    const {pair, warnings} = made;
     return {...brief(pair), relay: 'stand-in: messages go through pitbox, not Play services', ...(warnings.length ? {warnings} : {})};
   }
 
@@ -1145,6 +1157,7 @@ export class Engine {
    * the session's paired Wear OS watch when it paired no Apple Watch. Undefined leaves it to the Apple pair.
    */
   async #androidUnpair(p: Params): Promise<Record<string, unknown> | undefined> {
+    await this.#restoreWear();
     const named = str(p, 'device');
     let serial: string | undefined;
     if (named && named !== 'watch') {
@@ -1157,7 +1170,18 @@ export class Engine {
       serial = this.#sessionWatch('android');
     }
     const pair = this.#wear?.pairOf(serial);
-    if (!pair) throw new Error(`${serial} is in no watch pair of this session: unpair gives back only those\nhint: device action=pair value=watch`);
+    if (!pair) {
+      // A pairing only the apps still know (its daemon died): they forget it, and the watch paired for it goes back.
+      const watchLease = this.#leases.held().find(h => h.platform === 'android' && h.pairedWith && (h.id === serial || h.pairedWith === serial));
+      const pkg = this.config.app?.android;
+      if (!pkg) throw new Error('no package: set app.android in the config');
+      const sides = watchLease ? [watchLease.pairedWith!, watchLease.id] : [serial];
+      const forgot: string[] = [];
+      for (const s2 of sides) for (const app of new Set([pkg, this.#androidApp(s2)!])) if (await this.#wearRelay().forget(s2, app).catch(() => false)) forgot.push(s2);
+      if (!forgot.length && !watchLease) throw new Error(`${serial} is in no watch pair of this session: unpair gives back only those\nhint: device action=pair value=watch`);
+      const released = watchLease ? ((await this.methods.release({device: watchLease.id})) as {released?: string}).released : undefined;
+      return {unpaired: watchLease?.name ?? serial, done: [`forgot a pairing pitbox no longer relayed on ${forgot.join(', ') || 'no device'}`], ...(released ? {released} : {})};
+    }
     const done = await this.#dropWearPair(pair.id, serial, {pairsOnly: true});
     const released = this.#leases.held().some(h => h.platform === 'android' && h.id === pair.watch.serial) ? ((await this.methods.release({device: pair.watch.serial})) as {released?: string}).released : undefined;
     return {unpaired: pair.watch.name, done, ...(released ? {released} : {})};
@@ -1559,6 +1583,7 @@ export class Engine {
       await this.#reapCopies(this.android).catch(() => undefined);
     }
     // Watch pairs nobody gives back any more: likewise.
+    await this.#restoreWear();
     if (Date.now() - this.#lastPairSweep > 5 * 60_000) {
       this.#lastPairSweep = Date.now();
       await this.#sweepPairs().catch(() => undefined);
@@ -1638,6 +1663,22 @@ export class Engine {
   /** The last sweep of leftover AVD copies; 0: the first beat sweeps. */
   #lastReap = 0;
   #lastPairSweep = 0;
+  #wearRestored?: Promise<void>;
+
+  /**
+   * Wear OS pairs a daemon that died left behind (its store): taken up while both devices are still this session's,
+   * else undone. Once per daemon — at its start, and before any pair or unpair, whichever comes first.
+   */
+  #restoreWear(): Promise<void> {
+    this.#wearRestored ??= (async () => {
+      const a = this.android;
+      if (!a || !fs.existsSync(path.join(this.#loaded.stateDir, 'wear-pairs.json'))) return;
+      const online = new Set((await a.devices().catch(() => [])).filter(d => d.state === 'device').map(d => d.serial));
+      const mine = (serial: string) => online.has(serial) && !!this.#leases.holderOf('android', serial)?.mine;
+      await this.#wearRelay().restore(p => mine(p.phone) && mine(p.watch)).catch(() => undefined);
+    })();
+    return this.#wearRestored;
+  }
 
   startWatching() {
     const tick = async () => {
@@ -1661,6 +1702,8 @@ export class Engine {
     this.#beatTimer.unref();
     // A daemon that starts sweeps at once: the one that took a lease may be the one that died.
     setTimeout(() => void this.#reap().catch(() => undefined), 5000).unref();
+    // And takes up or undoes the Wear OS pairs a daemon that died left (its apps would point at a dead port).
+    setTimeout(() => void this.#restoreWear(), 1000).unref();
   }
 
   /**

@@ -164,8 +164,9 @@ left to each agent's discipline.
   live lease. `simctl pair_activate` that hangs (45 s) is rolled back with a hint to boot a fresh phone. With an
   Android phone emulator the pair is pitbox's Data Layer stand-in ([wear.md](wear.md)): only a Wear OS emulator the
   session holds or boots for it is taken (its lease names the phone the same way), never one another session holds,
-  and the pair lives in the daemon: unpair, a release of either device, `down` and the daemon's exit make both apps
-  forget it.
+  and unpair, a release of either device, `down` and a daemon's orderly exit make both apps forget it. Pairs of a
+  daemon that died are kept in its state directory: the next daemon takes them up while both devices are still the
+  session's, and makes the apps forget the others.
 - **Shared caches.** The Apple runner, the fold helper and the Mac runner are built once per source and Xcode
   version under `~/Library/Caches/pitbox` and shared by every daemon. A version in use is marked
   (`.in-use-<pid>`), a build holds `<version>.lock` (a second daemon building the same version waits and finds it

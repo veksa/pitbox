@@ -21,7 +21,7 @@ in a process that was not running, its answer back.
 | `sendMessage` | relayed by the daemon; fails with 4000 (`TARGET_NODE_NOT_CONNECTED`) for another node or a daemon that is gone, 4003 above 100 KB | Play services |
 | `getCapability` | the paired device when its app declares the capability (`android_wear_capabilities`) | the same |
 | listeners added with `addListener` | called on the main thread | the same |
-| `WearableListenerService` for `MESSAGE_RECEIVED` | started for a message whose path its data filter matches, also when the app does not run | the same |
+| `WearableListenerService` for `MESSAGE_RECEIVED` | bound by the system for a message whose path its data filter matches (created and attached as usual, `onMessageReceived` on its own looper thread), also when the app does not run | the same |
 | data items, channels, RPC (`onRequest`), remote activities | **not relayed** | Play services |
 | a phone or watch app of another package or signing key | another package is refused; another key is a warning | not delivered |
 
@@ -66,8 +66,15 @@ A `WearableListenerService` needs no change. `examples/android/relay` is a compl
 - Again: `already`, the number of messages relayed and the last three, each with what the receiving app did
   (`watch→phone /ping 0B: listeners=0 services=PingService`).
 - `device=watch` names the paired watch; on a Wear OS device a call without a package takes `app.watch.android`.
-- `device action=unpair value=watch`, a release of either device, `down` and the daemon's exit make both apps
-  forget the pairing. An install over the app keeps it; `app clear` or a reinstall through pitbox pairs that side
-  again.
+- `device action=unpair value=watch`, a release of either device, `down` and a daemon's orderly exit make both
+  apps forget the pairing. A daemon that dies cannot: its pairs are kept in `.pitbox/wear-pairs.json`, and the
+  next daemon of the project takes each up while both devices are still the session's (the apps are told where it
+  listens now) or makes the apps forget it; until then the apps see no node and their sends fail with 4000.
+  `unpair` also undoes a pairing only the apps still know. An install over the app keeps the pairing; `app clear`
+  or a reinstall through pitbox pairs that side again.
+- A send is answered once the other app has the message in hand — a cold start included, not what its listeners
+  then do (that goes to the log) —, and fails with 4000 when that app does not take it (not running and cannot be
+  started, not paired, the device gone). The message itself never travels on a command line: the other device
+  gets its number and fetches it from the daemon, so the 100 KB limit is the Data Layer's own.
 
 Typical answer: one line, about 200 characters; again with the log, four lines.

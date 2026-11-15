@@ -7,6 +7,7 @@
 // broadcast`, which also wakes an app that is not running and reaches its WearableListenerService.
 
 import {createHash, randomBytes} from 'node:crypto';
+import fs from 'node:fs';
 import net from 'node:net';
 import {assertPackage, parseBroadcast} from '../../push/android.ts';
 
@@ -64,9 +65,10 @@ export class WearRelay {
 
   /** `host` is where an emulator reaches this machine's loopback (the daemon listens on 127.0.0.1 only). */
   readonly shell: Shell;
-  readonly opts: {host?: string; listen?: boolean};
+  readonly opts: {host?: string; listen?: boolean; store?: string};
 
-  constructor(shell: Shell, opts: {host?: string; listen?: boolean} = {}) {
+  /** `store`: a file the pairs are kept in, so a daemon that died leaves pairs the next one can take up or undo. */
+  constructor(shell: Shell, opts: {host?: string; listen?: boolean; store?: string} = {}) {
     this.shell = shell;
     this.opts = opts;
   }
@@ -217,8 +219,15 @@ export class WearRelay {
     const side = (d: {serial: string; name: string}, caps: string[]): WearSide => ({...d, node: nodeId(d.name, pkg), token: randomBytes(16).toString('hex'), capabilities: caps});
     const pair: WearPair = {id: `wear-${++this.#n}`, pkg, phone: side(phone, pp.capabilities), watch: side(watch, wp.capabilities), messages: 0, log: []};
     await this.#pairSide(pair.phone, pkg, port);
-    await this.#pairSide(pair.watch, pkg, port);
+    try {
+      await this.#pairSide(pair.watch, pkg, port);
+    } catch (e) {
+      // Never half a pair: the phone forgets what it was just told.
+      await this.forget(phone.serial, pkg).catch(() => false);
+      throw e;
+    }
     this.#pairs.set(pair.id, pair);
+    this.#save();
     return {pair, warnings};
   }
 
@@ -236,8 +245,62 @@ export class WearRelay {
     const pair = this.#pairs.get(id);
     if (!pair) return undefined;
     this.#pairs.delete(id);
+    this.#save();
     await Promise.all([pair.phone, pair.watch].map(s => this.#broadcast(s.serial, pair.pkg, '--es op unpair').catch(() => undefined)));
     return pair;
+  }
+
+  /** Makes the app on a device forget a pairing the daemon may not know (one left by a daemon that died). */
+  async forget(serial: string, pkg: string): Promise<boolean> {
+    const r = await this.#broadcast(serial, pkg, '--es op unpair');
+    return r.code === 1 && /unpaired/.test(r.data ?? '');
+  }
+
+  #save() {
+    const file = this.opts.store;
+    if (!file) return;
+    const pairs = this.pairs().map(({log: _log, messages: _messages, ...p}) => p);
+    try {
+      if (pairs.length) fs.writeFileSync(file, JSON.stringify(pairs));
+      else fs.rmSync(file, {force: true});
+    } catch {
+      // a state directory that went away: the pairs live on in memory
+    }
+  }
+
+  /**
+   * The pairs a daemon that died left in the store: those `keep` accepts (both devices still this session's) are
+   * taken up — both apps told where this daemon listens —, the others undone on whichever device still answers.
+   */
+  async restore(keep: (p: {phone: string; watch: string}) => boolean | Promise<boolean>): Promise<{kept: number; forgot: number}> {
+    const file = this.opts.store;
+    let left: Omit<WearPair, 'log' | 'messages'>[] = [];
+    try {
+      left = file ? (JSON.parse(fs.readFileSync(file, 'utf8')) as typeof left) : [];
+    } catch {
+      return {kept: 0, forgot: 0};
+    }
+    let kept = 0;
+    let forgot = 0;
+    for (const p of left) {
+      const pair: WearPair = {...p, id: `wear-${++this.#n}`, messages: 0, log: []};
+      if (await keep({phone: p.phone.serial, watch: p.watch.serial})) {
+        try {
+          const port = await this.#listen();
+          await this.#pairSide(pair.phone, pair.pkg, port);
+          await this.#pairSide(pair.watch, pair.pkg, port);
+          this.#pairs.set(pair.id, pair);
+          kept++;
+          continue;
+        } catch {
+          // fall through: undone
+        }
+      }
+      await Promise.all([p.phone.serial, p.watch.serial].map(s => this.forget(s, p.pkg).catch(() => false)));
+      forgot++;
+    }
+    this.#save();
+    return {kept, forgot};
   }
 
   async close() {

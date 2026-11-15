@@ -148,6 +148,42 @@ describe('wear relay', () => {
     expect(await relay.repair('emulator-5556')).toBe(false);
   });
 
+  it('never leaves half a pair: a watch that refuses makes the phone forget again', async () => {
+    const adb = new FakeAdb();
+    adb.probes.set('emulator-5554', PROBE).set('emulator-5556', PROBE);
+    adb.failPair.add('emulator-5556');
+    const relay = new WearRelay(adb.shell, {listen: false});
+    await expect(relay.pair('com.example.app', {serial: 'emulator-5554', name: 'Phone'}, {serial: 'emulator-5556', name: 'Watch'})).rejects.toThrow(/could not pair/);
+    expect(adb.ops('emulator-5554').slice(-2)).toEqual(['pair', 'unpair']);
+    expect(relay.pairs()).toEqual([]);
+  });
+
+  it('keeps its pairs in a store, so the next daemon takes them up or undoes them', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-wear-'));
+    try {
+      const store = path.join(dir, 'wear-pairs.json');
+      const adb = new FakeAdb();
+      for (const s of ['emulator-5554', 'emulator-5556', 'emulator-5558', 'emulator-5560']) adb.probes.set(s, PROBE);
+      const dead = new WearRelay(adb.shell, {listen: false, store});
+      const a = (await dead.pair('com.example.app', {serial: 'emulator-5554', name: 'P1'}, {serial: 'emulator-5556', name: 'W1'})).pair;
+      await dead.pair('com.example.app', {serial: 'emulator-5558', name: 'P2'}, {serial: 'emulator-5560', name: 'W2'});
+      expect(JSON.parse(fs.readFileSync(store, 'utf8'))).toHaveLength(2);
+      // The daemon died here: no unpair. The next one keeps the first pair (still its devices) and undoes the second.
+      adb.calls = [];
+      const next = new WearRelay(adb.shell, {listen: false, store});
+      expect(await next.restore(p => p.phone === 'emulator-5554')).toEqual({kept: 1, forgot: 1});
+      expect(adb.ops('emulator-5554')).toEqual(['pair']);
+      expect(adb.ops('emulator-5558')).toEqual(['unpair']);
+      expect(adb.ops('emulator-5560')).toEqual(['unpair']);
+      expect(await next.handle({token: a.watch.token, op: 'nodes'})).toMatchObject({ok: true});
+      expect(JSON.parse(fs.readFileSync(store, 'utf8'))).toHaveLength(1);
+      await next.close();
+      expect(fs.existsSync(store)).toBe(false);
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  });
+
   it('says why an app cannot be paired, and what would make a real Data Layer refuse', async () => {
     const adb = new FakeAdb();
     const relay = new WearRelay(adb.shell, {listen: false});
@@ -246,6 +282,35 @@ describe('wear pairs through the daemon', () => {
     await a.methods.lease({device: 'emulator-5554'});
     await expect(a.methods.pair({value: 'watch', watch: 'emulator-5556'})).rejects.toThrow(/no AVD or emulator of this session/);
     expect(android.adb.calls).toEqual([]);
+  });
+
+  it('names the phone on the watch lease only once the pair exists', async () => {
+    const android = new FakeAndroid();
+    android.adb.probes.set('emulator-5554', PROBE).set('emulator-5556', PROBE);
+    android.adb.failPair.add('emulator-5556');
+    const a = await session('alice', android);
+    await a.methods.lease({device: 'emulator-5554'});
+    await a.methods.lease({device: 'emulator-5556'});
+    await expect(a.methods.pair({value: 'watch'})).rejects.toThrow(/could not pair/);
+    expect(readLease('android', 'emulator-5556')?.pairedWith).toBeUndefined();
+    expect(android.adb.ops('emulator-5554').at(-1)).toBe('unpair');
+  });
+
+  it('unpair makes the apps forget a pairing only they still know (its daemon died)', async () => {
+    const android = new FakeAndroid();
+    android.adb.probes.set('emulator-5554', PROBE).set('emulator-5556', PROBE);
+    const a = await session('alice', android);
+    await a.methods.lease({device: 'emulator-5554'});
+    await a.methods.lease({device: 'emulator-5556'});
+    // What a dead daemon's pair leaves: the lease naming the phone, the apps' pairings, no relay.
+    await a.methods.pair({value: 'watch'});
+    const fresh = await Engine.create(a.loaded.file, undefined, {android: android as never, apple: null});
+    engines.push(fresh);
+    android.adb.calls = [];
+    const u = await fresh.methods.unpair({value: 'watch'});
+    expect(u).toMatchObject({unpaired: 'Watch_A', released: 'Watch_A'});
+    expect(android.adb.ops('emulator-5554')).toContain('unpair');
+    expect(android.adb.ops('emulator-5556')).toContain('unpair');
   });
 
   it('refuses a watch app of another package: the Data Layer joins an app only with itself', async () => {
