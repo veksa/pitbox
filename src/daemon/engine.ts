@@ -2051,9 +2051,13 @@ export class Engine {
     unpair: async (p: Params) => {
       const value = str(p, 'value')?.trim();
       if (value && value !== 'watch') throw new Error('unpair value=watch (a phone on Wi-Fi is forgotten in its Developer options)');
-      const watch = str(p, 'device') ? (await this.#target(str(p, 'device'), {observe: true, platform: 'apple'})).id : this.#sessionWatch();
-      // Only a watch this session paired goes back: a pair another session made stays.
-      if (!this.#leases.held().some(h => h.platform === 'apple' && h.id === watch && h.pairedWith)) throw new Error(`${watch} is not a watch this session paired: unpair gives back only those\nhint: device action=unpair value=watch`);
+      let watch = str(p, 'device') ? (await this.#target(str(p, 'device'), {observe: true, platform: 'apple'})).id : this.#sessionWatch();
+      // Only a watch this session paired goes back; a phone named means its watch, and the phone stays.
+      const mine = this.#leases.held().filter(h => h.platform === 'apple');
+      const forPhone = mine.filter(h => h.pairedWith === watch);
+      if (forPhone.length > 1) throw new Error(`this session paired several watches with that phone: ${forPhone.map(w => w.id).join(', ')}\nhint: pass the watch by udid`);
+      if (forPhone.length) watch = forPhone[0]!.id;
+      else if (!mine.some(h => h.id === watch && h.pairedWith)) throw new Error(`${watch} is not a watch this session paired: unpair gives back only those\nhint: device action=unpair value=watch`);
       const done = await this.#dropPairsOf(watch);
       const h = this.#leases.holderOf('apple', watch);
       const released = h?.mine ? ((await this.methods.release({device: watch})) as {released?: string}).released : undefined;

@@ -170,7 +170,7 @@ describe('watch pairs', () => {
     expect(s.unpaired).toEqual([]);
   });
 
-  it("unpairs only a watch this session paired", async () => {
+  it("unpairs only a watch this session paired, and takes a phone named for its watch without releasing the phone", async () => {
     const s = new FakeSimctl([{}, watch('W1'), {udid: 'U3', name: 'iPhone Air'}, watch('W3')]);
     const b = await session('bob', s);
     await b.methods.boot({avd: 'iPhone Air'});
@@ -182,6 +182,12 @@ describe('watch pairs', () => {
     await expect(a.methods.unpair({value: 'watch', device: 'W3'})).rejects.toThrow(/not a watch this session paired/);
     expect(s.pairList.map(p => p.watch.udid).sort()).toEqual(['W1', 'W3']);
     expect(readLease('apple', 'W3')?.pairedWith).toBe('U3');
+    // Alice's phone named: its watch goes, the phone stays booted and leased.
+    expect(await a.methods.unpair({value: 'watch', device: 'U1'})).toMatchObject({unpaired: 'W1'});
+    expect(s.pairList.map(p => p.watch.udid)).toEqual(['W3']);
+    expect(readLease('apple', 'U1')).toBeDefined();
+    expect(s.sims.find(x => x.udid === 'U1')?.state).toBe('Booted');
+    await expect(a.methods.unpair({value: 'watch', device: 'U1'})).rejects.toThrow(/not a watch this session paired/);
   });
 
   it('rolls back a pair that would not activate', async () => {
