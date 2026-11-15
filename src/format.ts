@@ -12,7 +12,7 @@ import type {EvalResult, JsProfile, Logpoint} from './devserver/jsdebug.ts';
 import type {TraceSummary} from './drivers/android/atrace.ts';
 import type {JsError} from './devserver/proxy.ts';
 import type {ActResult, FocusMap} from './ui/device.ts';
-import type {PushRecord, PushResult} from './push/push.ts';
+import type {PushRecord, PushResult, RespondResult} from './push/push.ts';
 import type {FlowResult} from './flows/run.ts';
 import type {UiNode} from './ui/snapshot.ts';
 import {clipLines, seconds} from './util/text.ts';
@@ -227,6 +227,16 @@ export const fmtPush = (x: Record<string, unknown>): string => {
   switch (x.action) {
     case 'tap':
       return [`${x.ok === false ? '✗ ' : ''}tapped "${x.tapped}"${x.front ? ` → ${x.front} in front` : x.state ? ` → app ${x.state}` : ''}`, ...(x.note ? [`note: ${x.note}`] : []), x.act ? fmtAct(x.act as ActResult) : ((x.screen as string[] | undefined) ?? []).join('\n')].join('\n');
+    case 'respond': {
+      const r = x as unknown as RespondResult;
+      return [
+        `${r.ok ? '✓' : '✗'} ${r.verdict}`,
+        ...(r.actions?.length && (!r.ok || !r.answered) ? [`  actions: ${r.actions.join(', ')}`] : []),
+        ...(r.notes ?? []).map(n => `  note: ${n}`),
+        ...(r.state ? [`  app ${r.state}`] : []),
+        ...(r.screen ?? []),
+      ].join('\n');
+    }
     case 'clear':
       return `${x.app}: ${x.cleared} notification${x.cleared === 1 ? '' : 's'} cleared`;
     case 'grant':

@@ -68,7 +68,7 @@ push (no credentials: simctl push on simulators, the app's own FCM service on An
   push title=… body=… [data='{"k":"v"}'] [badge= sound= category= threadId= collapseId= channel= image= tag= priority=high|normal silent=true]
   push file=payload.json | push apns='{"aps":{…}}' | push fcm='{"notification":{…},"data":{…}}'   raw payloads, converted for the other platform
        [delay=s] [repeat=n] [grant=true] [--app <package|bundle id>]   one-line verdict: posted / banner shown / handled in front
-  push tap [title] [--expect app|away|any] · push clear · push grant · push status · push log [-n 10] [--wait ms] · push bind <token>
+  push tap [title] [--expect app|away|any] · push respond <action|open|dismiss> [title=…] [text=…] · push clear · push grant · push status · push log [-n 10] [--wait ms] · push bind <token>
   push activity start|update|end type=… attributes='{…}' state='{…}' [stale= dismissal= relevance= alert= id= token=] · push activities   iOS Live Activities through the app's debug hook
 
 flows
@@ -324,11 +324,13 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'net':
       return {method: 'net', params: {action: rest[0] ?? 'list', match: rest[1], kind: flags.kind, status: flags.status, body: flags.body, ms: flags.ms}};
     case 'push': {
-      const sub = ['tap', 'clear', 'grant', 'status', 'log', 'bind', 'send', 'activity', 'activities'].includes(rest[0] ?? '') ? rest[0]! : 'send';
+      const sub = ['tap', 'respond', 'clear', 'grant', 'status', 'log', 'bind', 'send', 'activity', 'activities'].includes(rest[0] ?? '') ? rest[0]! : 'send';
       const args = sub === 'send' && rest[0] !== 'send' ? rest : rest.slice(1);
       const app = flags.app ?? flags.pkg;
       if (sub === 'tap') return {method: 'push', params: {action: sub, device, app, title: args.join(' ') || undefined, ...(typeof flags.expect === 'string' && {expect: flags.expect})}};
       if (sub === 'bind') return {method: 'push', params: {action: sub, device, token: args[0]}};
+      // push respond <action|open|dismiss> [title=…] [id=…] [text=…]
+      if (sub === 'respond') return {method: 'push', params: {action: sub, device, app, value: args[0] && !args[0].includes('=') ? args[0] : undefined, ...kv(args[0] && !args[0].includes('=') ? args.slice(1) : args)}};
       if (sub === 'log') return {method: 'push', params: {action: sub, device, limit: flags.lines, wait: flags.wait}};
       // push activity start type=DeliveryAttributes attributes='{…}' state='{…}' · push activity update state='{…}' [id=…]
       if (sub === 'activity') {

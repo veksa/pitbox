@@ -153,9 +153,11 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // it was delivered; log is a line per push.
   tool(
     'push',
-    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms (send: for the notification; log: for a new push to land — a scheduled one or a gateway delivery — answering as soon as it does). iOS Live Activities (a stand-in through the app debug hook): activity event=start|update|end type=<ActivityAttributes> attributes={…} state={…} [stale dismissal relevance alert id token], activities (types, running ones, tokens); a Live Activity payload in send/file/apns/fcm goes the same way. Typical answer: one or two lines.',
+    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), respond value=<action identifier or title>|open|dismiss [title=… id=… text=… for a reply] (a notification action: iOS through the PitboxNotifications hook in the app, Android by its button in the shade; an unknown one lists the actions), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms (send: for the notification; log: for a new push to land — a scheduled one or a gateway delivery — answering as soon as it does). iOS Live Activities (a stand-in through the app debug hook): activity event=start|update|end type=<ActivityAttributes> attributes={…} state={…} [stale dismissal relevance alert id token], activities (types, running ones, tokens); a Live Activity payload in send/file/apns/fcm goes the same way. Typical answer: one or two lines.',
     {
-      action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind', 'activity', 'activities']).optional(),
+      action: z.enum(['send', 'tap', 'respond', 'clear', 'grant', 'status', 'log', 'bind', 'activity', 'activities']).optional(),
+      value: opt.str(),
+      text: opt.str(),
       event: z.enum(['start', 'update', 'end']).optional(),
       type: opt.str(),
       attributes: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),

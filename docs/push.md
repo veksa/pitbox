@@ -30,6 +30,7 @@ the APNs and FCM requests a server sends, and delivers them to the running devic
 | `grant=true` | allow notifications first (Android 13+ runtime permission) |
 | `push tap [title]` | tap the latest notification (or the one with that text) and check the app came to the front. Android: only the app's own posted notifications are candidates (`dumpsys notification`, by package); the shade is opened and the row found in System UI's own window by that notification's title and text — not another app's row with the same title, not the app behind the shade — and tapped there; another app showing the same title and text word for word is refused, and a screen the runner could not read is never taken for a notification gone. Without a title, the latest one pitbox delivered that is still posted. iOS: the banner, or the notification in Notification Center. `✗ tapped …` with a note when the app did not come to the front |
 | `push tap [title] --expect away` · `expect=away` | a tap that is meant to leave the app — a notification that opens a web page in the browser, or another app: passes when another app comes to the front (`tapped "Sale" → com.example.browser in front`), fails when the app stays in front or nothing opens (the shade only closes to the home screen). `--expect any` takes either the app or another app; the default is `app` |
+| `push respond <action\|open\|dismiss> [title=…] [id=…] [text=…]` | answer a delivered notification with one of its actions, by identifier or title, `text` for a reply ([Notification actions](#notification-actions)); an action the notification does not have is refused with the list of those it has |
 | `push clear` | remove the app's notifications (Android) |
 | `push grant` | grant POST_NOTIFICATIONS (Android) |
 | `push status` | can the app take pushes here: the receiver, the FCM service, Firebase, the permission |
@@ -243,6 +244,44 @@ suffix.
 
 The [React Native example](../examples/react-native) has the whole loop: `tool notify` runs a backend script that
 sends an FCM v1 request to the gateway; the app shows it and opens the link a tapped push carries.
+
+## Notification actions
+
+`push respond` answers a delivered notification as a person would: its own tap (`open`, the default), a dismissal
+(`dismiss`), or one of its custom actions (Reply, Mark as read, Accept…), with `text=` for a text input action.
+
+```
+push respond Reply title="New message" text="On my way"
+# ✓ answered with REPLY "New message" (text "On my way") — the app's notification delegate got it
+push respond archive
+# ✗ the category MSG has no action "archive"
+#   actions: REPLY "Reply", READ "Mark as read"
+```
+
+**iOS simulator.** The simulator shows a notification's actions only in its expanded form, which a synthesized long
+press does not reliably open (it often shows nothing but Open), and no `simctl` command answers a notification.
+The connect library's debug-only hook does it inside the app instead: it takes the delivered notification from
+`UNUserNotificationCenter`, checks the action against the category the app registered, and calls the app's
+notification delegate — `userNotificationCenter(_:didReceive:withCompletionHandler:)` — with the response the system
+would build (a `UNTextInputNotificationResponse` for a text input action). The app's handler runs as it does on a
+device: React Native's, expo-notifications', Firebase's or its own. The app calls it once at launch:
+
+```swift
+#if DEBUG
+PitboxNotifications.start()   // import PitboxConnect; a no-op in release builds
+#endif
+```
+
+`value` is the action's identifier or its title; `title=` picks the notification by text (else the newest), `id=`
+by its request identifier. For the tap and for an action with the `.foreground` option pitbox brings the app to the
+front, as the system would. `dismiss` reaches the app only when its category has `.customDismissAction`, as on a
+device. The response object has no public initializer, so the hook makes it with UserNotifications' own class
+method: private API, compiled only into debug builds. Without the hook the answer says so.
+
+**Android emulator.** The notification's actions come from `dumpsys notification` (by title); pitbox opens the
+shade, finds the notification's row, expands it when its buttons are hidden, and taps the button — System UI fires
+the action's intent, as for a person's tap. With `text=`, the reply field the action opens gets the text and its
+send button is pressed. `dismiss` swipes the row away. Nothing in the app is needed.
 
 ## Live Activities
 

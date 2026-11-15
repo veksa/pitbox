@@ -11,6 +11,7 @@ import RealityKit
 
 #if os(iOS)
 import PitboxConnect
+import UserNotifications
 #endif
 
 @main
@@ -24,6 +25,9 @@ struct ExampleApp: App {
       PitboxLiveActivity.register(DeliveryAttributes.self)
       PitboxLiveActivity.start()
     }
+    // A message notification with a reply and a mark-as-read action, answered by `push respond`.
+    NotificationResponses.shared.install()
+    PitboxNotifications.start()
     #endif
   }
 
@@ -68,7 +72,40 @@ struct ExampleApp: App {
   }
 }
 
+#if os(iOS)
+/// The app's notification delegate: shows banners in front and keeps the last response it got.
+final class NotificationResponses: NSObject, UNUserNotificationCenterDelegate, ObservableObject {
+  static let shared = NotificationResponses()
+  @Published var last = ""
+
+  func install() {
+    let center = UNUserNotificationCenter.current()
+    center.delegate = self
+    let reply = UNTextInputNotificationAction(identifier: "REPLY", title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Message")
+    let read = UNNotificationAction(identifier: "READ", title: "Mark as read", options: [])
+    center.setNotificationCategories([UNNotificationCategory(identifier: "MESSAGE", actions: [reply, read], intentIdentifiers: [], options: [])])
+  }
+
+  func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+    done([.banner, .list])
+  }
+
+  func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
+    let text = (response as? UNTextInputNotificationResponse)?.userText
+    let line = response.actionIdentifier + (text.map { " \($0)" } ?? "")
+    DispatchQueue.main.async {
+      self.last = line
+      done()
+    }
+  }
+}
+#endif
+
 struct MainView: View {
+  #if os(iOS)
+  @ObservedObject private var responses = NotificationResponses.shared
+  @State private var notifications = ""
+  #endif
   @State private var name = ""
   @State private var password = ""
   @State private var greeting = ""
@@ -103,6 +140,11 @@ struct MainView: View {
           AVCaptureDevice.requestAccess(for: .video) { ok in DispatchQueue.main.async { camera = ok ? "camera allowed" : "camera denied" } }
         }.accessibilityIdentifier("camera")
         Text(camera).accessibilityIdentifier("camera_result")
+        Button("Notifications") {
+          UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { ok, _ in DispatchQueue.main.async { notifications = ok ? "notifications allowed" : "notifications denied" } }
+        }.accessibilityIdentifier("notifications")
+        Text(notifications).accessibilityIdentifier("notifications_result")
+        Text(responses.last).accessibilityIdentifier("notification_response")
         NavigationLink("Settings") { Text("Settings").font(.largeTitle).accessibilityIdentifier("settings_screen").navigationTitle("Settings") }
           .accessibilityIdentifier("settings")
         #endif

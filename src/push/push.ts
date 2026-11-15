@@ -9,8 +9,9 @@ import path from 'node:path';
 import type {AndroidDriver} from '../drivers/android/driver.ts';
 import type {AppleDevices} from '../remote/appleRemote.ts';
 import type {ActResult, DeviceUi} from '../ui/device.ts';
-import {appState, assertPackage, callReceiver, grantNotifications, homePackage, missingReceiver, notifications, notificationsAllowed, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
-import {deliverLiveActivity, isLiveActivity, liveActivityProblem, parseLiveActivity, readLiveActivityState, shortToken, tokenIn, type LiveActivityHost, type LiveActivityPush, type LiveActivityState} from './liveactivity.ts';
+import {appState, assertPackage, callReceiver, grantNotifications, homePackage, missingReceiver, notifications, notificationsAllowed, pickAction, shadeButton, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
+import {deliverLiveActivity, deliverToHook, isLiveActivity, liveActivityProblem, parseLiveActivity, readLiveActivityState, shortToken, tokenIn, type LiveActivityHost, type LiveActivityPush, type LiveActivityState} from './liveactivity.ts';
+import {notificationDir, notificationNotice, type NotificationResponseOutcome} from './respond.ts';
 import {describe, fromFirebaseAdmin, toApns, toFcmExtras, toMessage, type PushInput, type PushMessage} from './payload.ts';
 
 /** What a notification's tap must bring to the front: the app, another app (a web page in the browser), or either. */
@@ -132,6 +133,8 @@ const fresh = (before: PostedNotification[], after: PostedNotification[]): Poste
   const was = new Map(before.map(n => [n.key, n.updated]));
   return after.filter(n => !n.summary && (!was.has(n.key) || was.get(n.key) !== n.updated)).sort((a, b) => b.updated - a.updated)[0];
 };
+
+export type RespondResult = {device: string; app: string; ok: boolean; verdict: string; notification?: string; /** The action that was answered (iOS: its identifier; Android: its title). */ answered?: string; actions?: string[]; state?: AppState; screen?: string[]; notes?: string[]};
 
 export class PushCenter {
   readonly log: PushRecord[] = [];
@@ -524,19 +527,8 @@ export class PushCenter {
    */
   async #tapAndroid(a: AndroidDriver, serial: string, app: string, ui: DeviceUi, given: string | undefined, expect: TapExpect) {
     const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const posted = (await notifications(a, serial)).filter(n => !n.summary);
-    const mine = posted.filter(n => n.pkg === app).sort((x, y) => y.updated - x.updated);
-    if (!mine.length) throw new Error(`${app} has no notification in the shade`);
     // Only the app's own notifications are candidates: the text to find in the shade is theirs, title and text.
-    let target: PostedNotification | undefined;
-    if (given) {
-      const g = norm(given);
-      target = mine.find(n => norm(n.title) === g) ?? mine.find(n => norm(n.title).includes(g) || norm(n.text).includes(g));
-      if (!target) throw new Error(`${app} has no notification showing "${given}" (its notifications: ${mine.slice(0, 5).map(n => JSON.stringify(n.title ?? n.text ?? '')).join(', ')})`);
-    } else {
-      const ours = [...this.log].reverse().filter(r => r.platform === 'android' && r.device === serial && r.app === app && r.shown?.title).map(r => r.shown!.title!);
-      target = ours.map(o => mine.find(n => n.title === o)).find(Boolean) ?? mine[0]!;
-    }
+    const {target, posted} = await this.#androidTarget(a, serial, app, given);
     if (!target.title && !target.text) throw new Error('the notification has no title or text to find it by in the shade');
     const twin = posted.find(n => n.pkg !== app && norm(n.title) === norm(target.title) && norm(n.text) === norm(target.text));
     if (twin) throw new Error(`${twin.pkg} shows a notification with the same title and text: the shade cannot tell which row is ${app}'s\nhint: push clear for the other app, or send this one with a distinct text`);
@@ -608,6 +600,138 @@ export class PushCenter {
     }
     const snap = await ui.snapshot().catch(() => undefined);
     return {device: serial, app, tapped: title, state, ...(expect !== 'app' && away(front) && {front}), screen: snap?.lines.slice(0, 12), note, ok};
+  }
+
+  /**
+   * `push respond`: answers a delivered notification as a person would — its tap (`open`, the default), a dismissal
+   * (`dismiss`), or one of its actions by identifier or title, with `text` for a reply. iOS: through the app's
+   * PitboxNotifications hook, which hands its notification delegate the response the system would (the simulator
+   * shows the actions only in the expanded notification, which a long press does not reliably open). Android: the
+   * action's button in the shade, pressed by System UI as a person's tap would be.
+   */
+  async respond(opts: {device?: string; app?: string; action?: string; title?: string; id?: string; text?: string}): Promise<RespondResult> {
+    const t = await this.#deps.target(opts.device);
+    const app = this.#app(t, opts.app);
+    const action = opts.action?.trim() || 'open';
+    if (t.platform === 'android') return this.#respondAndroid(t.a, t.id, app, opts.title, action, opts.text);
+    const host = this.#deps.liveActivity?.();
+    if (!host) throw new Error('notification responses need a simulator on this Mac: a remote Mac does not take them');
+    const id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+    const base = {device: t.id, app};
+    const {outcome, launched} = await deliverToHook<NotificationResponseOutcome>(host, t.id, app, {dir: notificationDir, notice: notificationNotice(app)}, {id, action, notification: opts.id, title: opts.title, text: opts.text}, {waitMs: 2000, afterLaunchMs: 5000, takenMs: 8000});
+    if (!outcome) return {...base, ok: false, verdict: `${app} took no response: its debug build calls PitboxNotifications.start() at launch (docs/push.md#notification-actions)`};
+    if (!outcome.ok) return {...base, ok: false, verdict: outcome.error ?? 'the hook gave no reason', notification: outcome.title, actions: outcome.actions};
+    // The system brings the app to the front for the notification's own tap and for an action with the foreground option.
+    if (outcome.foreground && !launched) await host.launch(t.id, app).catch(() => undefined);
+    const what = outcome.action === 'com.apple.UNNotificationDefaultActionIdentifier' ? 'opened' : outcome.action === 'com.apple.UNNotificationDismissActionIdentifier' ? 'dismissed' : `answered with ${outcome.action}`;
+    const notes = [
+      ...(outcome.completed === false ? ['the delegate did not call its completion handler within 5 s'] : []),
+      ...(launched && !outcome.foreground ? ['the app was brought to the front to take the response (it was not running or suspended); the system would answer a background action without that'] : []),
+    ];
+    return {...base, ok: true, verdict: `${what} "${outcome.title ?? outcome.notification}"${opts.text !== undefined && outcome.action !== undefined ? ` (text ${JSON.stringify(opts.text)})` : ''} — the app's notification delegate got it`, notification: outcome.title, answered: outcome.action, actions: outcome.actions, notes};
+  }
+
+  /** The app's notification a call means: by text, else the latest pitbox delivered that is still posted, else the app's latest. */
+  async #androidTarget(a: AndroidDriver, serial: string, app: string, given: string | undefined): Promise<{target: PostedNotification; posted: PostedNotification[]}> {
+    const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const posted = (await notifications(a, serial)).filter(n => !n.summary);
+    const mine = posted.filter(n => n.pkg === app).sort((x, y) => y.updated - x.updated);
+    if (!mine.length) throw new Error(`${app} has no notification in the shade`);
+    let target: PostedNotification | undefined;
+    if (given) {
+      const g = norm(given);
+      target = mine.find(n => norm(n.title) === g) ?? mine.find(n => norm(n.title).includes(g) || norm(n.text).includes(g));
+      if (!target) throw new Error(`${app} has no notification showing "${given}" (its notifications: ${mine.slice(0, 5).map(n => JSON.stringify(n.title ?? n.text ?? '')).join(', ')})`);
+    } else {
+      const ours = [...this.log].reverse().filter(r => r.platform === 'android' && r.device === serial && r.app === app && r.shown?.title).map(r => r.shown!.title!);
+      target = ours.map(o => mine.find(n => n.title === o)).find(Boolean) ?? mine[0]!;
+    }
+    return {target, posted};
+  }
+
+  async #respondAndroid(a: AndroidDriver, serial: string, app: string, given: string | undefined, action: string, text: string | undefined): Promise<RespondResult> {
+    const base = {device: serial, app};
+    if (/^(open|default)$/i.test(action)) {
+      const r = await this.#tapAndroid(a, serial, app, await this.#deps.ui(serial), given, 'any');
+      return {...base, ok: r.ok, verdict: r.ok ? `opened "${r.tapped}"` : (r.note ?? 'the tap did not open it'), notification: r.tapped, state: r.state, screen: r.screen};
+    }
+    const {target} = await this.#androidTarget(a, serial, app, given);
+    const title = target.title ?? target.text ?? '';
+    const actions = target.actions ?? [];
+    const dismiss = /^dismiss$/i.test(action);
+    const name = dismiss ? undefined : pickAction(actions, action);
+    if (!dismiss && !name) {
+      return {...base, ok: false, verdict: actions.length ? `"${title}" has no action "${action}"` : `"${title}" has no actions`, notification: title, actions};
+    }
+    const ui = await this.#deps.ui(serial);
+    type Tree = Parameters<typeof shadeRow>[0];
+    const read = () => ui.runner.call<Tree>('tree').catch(() => undefined);
+    const centre = (b: number[]) => ({x: Math.round((b[0]! + b[2]!) / 2), y: Math.round((b[1]! + b[3]!) / 2)});
+    await a.shell(serial, 'cmd statusbar expand-notifications');
+    ui.screenChanged();
+    let tree: Tree | undefined;
+    let found: ReturnType<typeof shadeRow>;
+    for (const deadline = Date.now() + 3000; ; ) {
+      tree = (await read()) ?? tree;
+      found = tree && shadeRow(tree, target);
+      if (found || Date.now() >= deadline) break;
+      await sleep(300);
+    }
+    const collapse = () => a.shell(serial, 'cmd statusbar collapse').catch(() => '');
+    if (!found) {
+      await collapse();
+      return {...base, ok: false, verdict: `no notification "${title}" of ${app} in the shade${tree ? ` (it shows: ${shadeTitles(tree).map(x => JSON.stringify(x)).join(', ')})` : ''}`, notification: title, actions};
+    }
+    if (dismiss) {
+      const [l, top, r, b] = found.row.b;
+      const y = Math.round((top + b) / 2);
+      await ui.runner.call('swipe', {x1: l + Math.round((r - l) * 0.2), y1: y, x2: r - 2, y2: y, duration: 250});
+      await sleep(700);
+      const gone = !(await notifications(a, serial, app)).some(n => n.key === target.key);
+      await collapse();
+      ui.screenChanged();
+      return {...base, ok: gone, verdict: gone ? `dismissed "${title}"` : `swiped "${title}" away, but it is still posted (an ongoing notification cannot be dismissed)`, notification: title, actions};
+    }
+    let button = shadeButton(tree!, found.text, name!);
+    if (!button) {
+      // A collapsed notification hides its buttons: expanded through accessibility, as the expand arrow would.
+      await ui.runner.call('node-action', {window: found.row.w, bounds: found.row.b, action: 0x40000}, 15_000).catch(() => undefined);
+      await sleep(600);
+      tree = (await read()) ?? tree;
+      const again = tree && shadeRow(tree, target);
+      button = tree && shadeButton(tree, (again ?? found).text, name!);
+    }
+    if (!button) {
+      await collapse();
+      return {...base, ok: false, verdict: `"${title}" lists the action "${name}", but the shade shows no button for it`, notification: title, actions};
+    }
+    await ui.runner.call('tap', centre(button.b));
+    const notes: string[] = [];
+    if (text !== undefined) {
+      // A reply action opens an input in the notification: the text goes in, then its send button.
+      let field: Tree['nodes'][number] | undefined;
+      for (const deadline = Date.now() + 3000; !field && Date.now() < deadline; ) {
+        await sleep(300);
+        const now = await read();
+        field = now?.nodes.find(n => now.windows[n.w]?.pkg.startsWith('com.android.systemui') && (n.f ?? '').includes('e'));
+        if (field) tree = now;
+      }
+      if (!field) notes.push(`"${name}" opened no text field: the text was not sent`);
+      else {
+        await ui.runner.call('text', {text, bounds: field.b});
+        await sleep(300);
+        const now = (await read()) ?? tree!;
+        const send = now.nodes.find(n => now.windows[n.w]?.pkg.startsWith('com.android.systemui') && (n.f ?? '').includes('c') && /^send\b/i.test(n.d ?? n.t ?? ''));
+        if (send) await ui.runner.call('tap', centre(send.b));
+        else notes.push('typed the text, but found no send button next to it');
+      }
+    }
+    await sleep(800);
+    await collapse();
+    ui.screenChanged();
+    const {state} = await appState(a, serial, app);
+    const snap = await ui.snapshot().catch(() => undefined);
+    return {...base, ok: !notes.length, verdict: `pressed "${name}" on "${title}"${text !== undefined && !notes.length ? ` and sent ${JSON.stringify(text)}` : ''}`, notification: title, answered: name, actions, state, screen: snap?.lines.slice(0, 12), notes};
   }
 
   /** Removes the app's notifications (Android; iOS has no command for it). */

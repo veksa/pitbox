@@ -2044,6 +2044,8 @@ export class Engine {
           };
         case 'activities':
           return {action, ...(await this.#pushes.activities({device, app}))};
+        case 'respond':
+          return {action, ...(await this.#pushes.respond({device, app, action: str(p, 'value'), title: str(p, 'title'), id: str(p, 'id'), text: str(p, 'text')}))};
         case 'bind': {
           const token = req(p, 'token');
           const t = await this.#target(device);
@@ -2051,7 +2053,7 @@ export class Engine {
           return {action, token, device: t.id};
         }
         default:
-          throw new Error('push action: send | tap | clear | grant | status | log | bind | activity | activities');
+          throw new Error('push action: send | tap | respond | clear | grant | status | log | bind | activity | activities');
       }
     },
 

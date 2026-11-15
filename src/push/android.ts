@@ -16,7 +16,7 @@ export const assertPackage = (pkg: string): string => {
 };
 
 /** A notification the app has posted, as `dumpsys notification --noredact` lists it. */
-export type PostedNotification = {key: string; pkg: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean};
+export type PostedNotification = {key: string; pkg: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean; /** The titles of its action buttons, in order. */ actions?: string[]};
 
 const value = (line: string): string => {
   // `android.title=String (Hello)`, `android.text=SpannableString (Hi)`: the value is inside the parentheses.
@@ -31,6 +31,7 @@ export const parseNotifications = (dump: string, pkg?: string): PostedNotificati
   if (start < 0) return [];
   const out: PostedNotification[] = [];
   let cur: PostedNotification | undefined;
+  let inActions = false;
   for (let i = start + 1; i < lines.length; i++) {
     const line = lines[i]!;
     // The next section of the dump ("  Notification attention state:", "  Snoozed notifications:", …).
@@ -45,6 +46,18 @@ export const parseNotifications = (dump: string, pkg?: string): PostedNotificati
     }
     if (!cur) continue;
     const t = line.trim();
+    // `actions={` then `[0] "Reply" -> PendingIntent{…}` per button, then `}`.
+    if (t === 'actions={') {
+      inActions = true;
+      cur.actions = [];
+      continue;
+    }
+    if (inActions) {
+      const a = /^\[\d+\] "(.*)" -> /.exec(t);
+      if (a) cur.actions!.push(a[1]!);
+      else if (t === '}') inActions = false;
+      continue;
+    }
     if (t.startsWith('android.title=') && cur.title === undefined) cur.title = value(t);
     else if (t.startsWith('android.text=') && cur.text === undefined) cur.text = value(t);
     else if (t.startsWith('mUpdateTimeMs=')) cur.updated = Number(t.slice('mUpdateTimeMs='.length)) || 0;
@@ -170,6 +183,28 @@ export const shadeRow = (tree: ShadeTree, n: {title?: string; text?: string}): {
     return {text: {w: node.w, b: node.b}, row: {w: r.x.w, b: r.x.b}};
   }
   return undefined;
+};
+
+/**
+ * An action button of a notification in the shade: a clickable System UI node labelled `label` (buttons may show it
+ * in capitals), the nearest one at or below the notification's text, so another notification's button of the same
+ * name further down is not taken. Undefined when none shows (the notification is collapsed).
+ */
+export const shadeButton = (tree: ShadeTree, at: Box, label: string): Box | undefined => {
+  const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const want = norm(label);
+  const top = at.b[1];
+  const hits = tree.nodes
+    .filter(n => tree.windows[n.w]?.pkg.startsWith('com.android.systemui') && (n.f ?? '').includes('c') && (norm(n.t) === want || norm(n.d) === want) && n.b[1] >= top)
+    .sort((x, y) => x.b[1] - top - (y.b[1] - top));
+  const n = hits[0];
+  return n ? {w: n.w, b: n.b} : undefined;
+};
+
+/** The action a request names among a notification's buttons: the same title (case aside), else the one that contains it. */
+export const pickAction = (actions: string[], want: string): string | undefined => {
+  const w = want.trim().toLowerCase();
+  return actions.find(a => a.toLowerCase() === w) ?? actions.find(a => a.toLowerCase().includes(w));
 };
 
 /** The titles of the notifications the shade shows, for an error that says what was there instead. */

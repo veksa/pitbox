@@ -164,14 +164,30 @@ export const STALE_ANSWER_MS = 60_000;
  * later. When the hook took it first, the command is running (a start waits up to 3 s for its token): pitbox waits
  * `takenMs` more for the answer.
  */
-export const deliverLiveActivity = async (
+export const deliverLiveActivity = (
   host: LiveActivityHost,
   udid: string,
   bundleId: string,
   cmd: LiveActivityCommand,
   opts: {waitMs?: number; afterLaunchMs?: number; takenMs?: number} = {},
-): Promise<{outcome?: LiveActivityOutcome; launched: boolean}> => {
-  const dir = liveActivityDir(await host.container(udid, bundleId));
+): Promise<{outcome?: LiveActivityOutcome; launched: boolean}> =>
+  deliverToHook<LiveActivityOutcome>(host, udid, bundleId, {dir: liveActivityDir, notice: liveActivityNotification(bundleId), launchFirst: cmd.event === 'start'}, cmd, opts);
+
+/**
+ * The exchange with one of the app's debug hooks (Live Activities, notification responses): the command into the
+ * hook's in/, its Darwin notification, the answer from out/. `launchFirst` brings the app to the front before (an
+ * `Activity.request` needs it); otherwise a command nobody took in `waitMs` (the app suspended or not running)
+ * launches the app, where the hook drains its folder.
+ */
+export const deliverToHook = async <O>(
+  host: LiveActivityHost,
+  udid: string,
+  bundleId: string,
+  where: {dir: (container: string) => string; notice: string; launchFirst?: boolean},
+  cmd: {id: string} & Obj,
+  opts: {waitMs?: number; afterLaunchMs?: number; takenMs?: number} = {},
+): Promise<{outcome?: O; launched: boolean}> => {
+  const dir = where.dir(await host.container(udid, bundleId));
   const inbox = path.join(dir, 'in');
   const outDir = path.join(dir, 'out');
   const inFile = path.join(inbox, `${cmd.id}.json`);
@@ -195,7 +211,7 @@ export const deliverLiveActivity = async (
   const answer = async (ms: number) => {
     for (const end = Date.now() + ms; ; ) {
       try {
-        const o = JSON.parse(fs.readFileSync(outFile, 'utf8')) as LiveActivityOutcome;
+        const o = JSON.parse(fs.readFileSync(outFile, 'utf8')) as O;
         fs.rmSync(outFile, {force: true});
         return o;
       } catch {
@@ -205,16 +221,16 @@ export const deliverLiveActivity = async (
     }
   };
   let launched = false;
-  if (cmd.event === 'start') {
+  if (where.launchFirst) {
     await host.launch(udid, bundleId);
     launched = true;
   }
-  await host.notify(udid, liveActivityNotification(bundleId));
+  await host.notify(udid, where.notice);
   let outcome = await answer(opts.waitMs ?? 2000);
   if (!outcome && !launched && fs.existsSync(inFile)) {
     await host.launch(udid, bundleId);
     launched = true;
-    await host.notify(udid, liveActivityNotification(bundleId)).catch(() => undefined);
+    await host.notify(udid, where.notice).catch(() => undefined);
     outcome = await answer(opts.afterLaunchMs ?? 4000);
   }
   if (!outcome) {
