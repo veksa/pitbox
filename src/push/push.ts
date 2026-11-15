@@ -662,7 +662,7 @@ export class PushCenter {
       const r = await this.#tapAndroid(a, serial, app, await this.#deps.ui(serial), given, 'any');
       return {...base, ok: r.ok, verdict: r.ok ? `opened "${r.tapped}"` : (r.note ?? 'the tap did not open it'), notification: r.tapped, state: r.state, screen: r.screen};
     }
-    const {target} = await this.#androidTarget(a, serial, app, given);
+    const {target, posted} = await this.#androidTarget(a, serial, app, given);
     const title = target.title ?? target.text ?? '';
     const actions = target.actions ?? [];
     const dismiss = /^dismiss$/i.test(action);
@@ -690,6 +690,22 @@ export class PushCenter {
       return {...base, ok: false, verdict: `no notification "${title}" of ${app} in the shade${tree ? ` (it shows: ${shadeTitles(tree).map(x => JSON.stringify(x)).join(', ')})` : ''}`, notification: title, actions};
     }
     if (dismiss) {
+      // A collapsed group is one row for all its notifications, and a swipe on it dismisses them all: the group is
+      // expanded first, so the swipe takes the notification's own row.
+      const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const others = posted.filter(n => n.pkg === app && n.key !== target.key && n.title && norm(n.title) !== norm(target.title)).map(n => norm(n.title));
+      const inside = (b: number[], row: number[]) => b[0]! >= row[0]! && b[1]! >= row[1]! && b[2]! <= row[2]! && b[3]! <= row[3]!;
+      const holdsOthers = (t: Tree, row: {w: number; b: number[]}) => t.nodes.some(n => n.w === row.w && inside(n.b, row.b) && others.includes(norm(n.t)));
+      if (others.length && holdsOthers(tree!, found.row)) {
+        await ui.runner.call('node-action', {window: found.row.w, bounds: found.row.b, action: 0x40000}, 15_000).catch(() => undefined);
+        await sleep(600);
+        tree = (await read()) ?? tree;
+        found = (tree && shadeRow(tree, target)) ?? found;
+        if (holdsOthers(tree!, found.row)) {
+          await collapse();
+          return {...base, ok: false, verdict: `"${title}" shows only inside its group's row, and a swipe there would dismiss the whole group`, notification: title, actions};
+        }
+      }
       const [l, top, r, b] = found.row.b;
       const y = Math.round((top + b) / 2);
       await ui.runner.call('swipe', {x1: l + Math.round((r - l) * 0.2), y1: y, x2: r - 2, y2: y, duration: 250});
@@ -699,14 +715,16 @@ export class PushCenter {
       ui.screenChanged();
       return {...base, ok: gone, verdict: gone ? `dismissed "${title}"` : `swiped "${title}" away, but it is still posted (an ongoing notification cannot be dismissed)`, notification: title, actions};
     }
-    let button = shadeButton(tree!, found.text, name!);
-    if (!button) {
-      // A collapsed notification hides its buttons: expanded through accessibility, as the expand arrow would.
+    // A collapsed notification hides its buttons, and a collapsed group hides them and keeps its notifications from
+    // taking a click: expanded through accessibility as their expand arrows would be — the group, then the
+    // notification in it. Only a button inside the notification's own row counts, never one of a notification below.
+    let button = shadeButton(tree!, found.text, name!, found.row);
+    for (let round = 0; !button && round < 2; round++) {
       await ui.runner.call('node-action', {window: found.row.w, bounds: found.row.b, action: 0x40000}, 15_000).catch(() => undefined);
       await sleep(600);
       tree = (await read()) ?? tree;
-      const again = tree && shadeRow(tree, target);
-      button = tree && shadeButton(tree, (again ?? found).text, name!);
+      found = (tree && shadeRow(tree, target)) ?? found;
+      button = shadeButton(tree!, found.text, name!, found.row);
     }
     if (!button) {
       await collapse();

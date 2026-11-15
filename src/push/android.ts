@@ -16,7 +16,7 @@ export const assertPackage = (pkg: string): string => {
 };
 
 /** A notification the app has posted, as `dumpsys notification --noredact` lists it. */
-export type PostedNotification = {key: string; pkg: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean; /** The titles of its action buttons, in order. */ actions?: string[]};
+export type PostedNotification = {key: string; pkg: string; id: number; tag?: string; channel: string; importance: number; title?: string; text?: string; updated: number; summary: boolean; /** The titles of its action buttons, in order. */ actions?: string[]; /** A messaging notification's messages, oldest first: the shade shows the newest, not `text`. */ messages?: string[]};
 
 const value = (line: string): string => {
   // `android.title=String (Hello)`, `android.text=SpannableString (Hi)`: the value is inside the parentheses.
@@ -58,7 +58,10 @@ export const parseNotifications = (dump: string, pkg?: string): PostedNotificati
       else if (t === '}') inActions = false;
       continue;
     }
-    if (t.startsWith('android.title=') && cur.title === undefined) cur.title = value(t);
+    // `[1] Bundle[{extras=Bundle[{}], sender=…, text=On my way, time=1794771099049}]` under `android.messages=`.
+    const m = /^\[\d+\] Bundle\[\{.*?\btext=(.*), time=\d+/.exec(t);
+    if (m) (cur.messages ??= []).push(m[1]!);
+    else if (t.startsWith('android.title=') && cur.title === undefined) cur.title = value(t);
     else if (t.startsWith('android.text=') && cur.text === undefined) cur.text = value(t);
     else if (t.startsWith('mUpdateTimeMs=')) cur.updated = Number(t.slice('mUpdateTimeMs='.length)) || 0;
   }
@@ -149,10 +152,20 @@ type Box = {w: number; b: [number, number, number, number]};
  * title, else the text). The texts come from the app's own posted notification (dumpsys), so a row of another app
  * that shows only the same title is not taken. Undefined when no row shows them.
  */
-export const shadeRow = (tree: ShadeTree, n: {title?: string; text?: string}): {text: Box; row: Box} | undefined => {
+export const shadeRow = (tree: ShadeTree, n: {title?: string; text?: string; messages?: string[]}): {text: Box; row: Box} | undefined => {
+  // A messaging notification shows its newest message where another shows its text.
+  const texts = [...new Set([n.text, ...[...(n.messages ?? [])].reverse()])];
+  for (const text of texts) {
+    const r = rowShowing(tree, n.title, text);
+    if (r) return r;
+  }
+  return undefined;
+};
+
+const rowShowing = (tree: ShadeTree, rawTitle: string | undefined, rawText: string | undefined): {text: Box; row: Box} | undefined => {
   const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-  const title = norm(n.title);
-  const text = norm(n.text);
+  const title = norm(rawTitle);
+  const text = norm(rawText);
   if (!title && !text) return undefined;
   const inShade = (i: number) => tree.windows[tree.nodes[i]!.w]?.pkg.startsWith('com.android.systemui') ?? false;
   const kids = new Map<number, number[]>();
@@ -187,15 +200,16 @@ export const shadeRow = (tree: ShadeTree, n: {title?: string; text?: string}): {
 
 /**
  * An action button of a notification in the shade: a clickable System UI node labelled `label` (buttons may show it
- * in capitals), the nearest one at or below the notification's text, so another notification's button of the same
- * name further down is not taken. Undefined when none shows (the notification is collapsed).
+ * in capitals), the nearest one at or below the notification's text and, given the notification's row, inside it —
+ * a collapsed notification shows none, and the button below it is another notification's. Undefined when none shows.
  */
-export const shadeButton = (tree: ShadeTree, at: Box, label: string): Box | undefined => {
+export const shadeButton = (tree: ShadeTree, at: Box, label: string, row?: Box): Box | undefined => {
   const norm = (x?: string) => (x ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
   const want = norm(label);
   const top = at.b[1];
+  const inRow = (b: Box['b']) => !row || (b[1] >= row.b[1] && b[3] <= row.b[3]);
   const hits = tree.nodes
-    .filter(n => tree.windows[n.w]?.pkg.startsWith('com.android.systemui') && (n.f ?? '').includes('c') && (norm(n.t) === want || norm(n.d) === want) && n.b[1] >= top)
+    .filter(n => tree.windows[n.w]?.pkg.startsWith('com.android.systemui') && (n.f ?? '').includes('c') && (norm(n.t) === want || norm(n.d) === want) && n.b[1] >= top && inRow(n.b))
     .sort((x, y) => x.b[1] - top - (y.b[1] - top));
   const n = hits[0];
   return n ? {w: n.w, b: n.b} : undefined;

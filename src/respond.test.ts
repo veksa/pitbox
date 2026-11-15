@@ -7,7 +7,7 @@ import path from 'node:path';
 import {afterEach, describe, expect, it} from 'vitest';
 import {parseArgs, toCall} from './cli.ts';
 import {formatResult} from './format.ts';
-import {parseNotifications, pickAction, shadeButton} from './push/android.ts';
+import {parseNotifications, pickAction, shadeButton, shadeRow} from './push/android.ts';
 import type {LiveActivityHost} from './push/liveactivity.ts';
 import {PushCenter} from './push/push.ts';
 import {notificationDir, notificationNotice, type NotificationResponseOutcome} from './push/respond.ts';
@@ -121,6 +121,32 @@ describe('notification actions on Android', () => {
     expect(pickAction(n!.actions!, 'archive')).toBeUndefined();
   });
 
+  it("finds a messaging notification by the newest message the shade shows, not by its first text", () => {
+    const messaging = `  Notification List:
+    NotificationRecord(0x1: pkg=com.example.app user=UserHandle{0} id=2 tag=m importance=4 key=0|com.example.app|2|m|1: Notification(channel=messages flags=AUTO_CANCEL actions=2 vis=PRIVATE))
+          extras={
+                android.title=String (Ann)
+                android.text=String (Lunch?)
+                android.messages=Parcelable[] (2)
+                  [0] Bundle[{extras=Bundle[{}], sender_person=android.app.Person@1, sender=Ann, text=Lunch?, time=1000}]
+                  [1] Bundle[{extras=Bundle[{}], text=On my way, time=2000}]
+          }
+      mUpdateTimeMs=2000
+  Notification attention state:
+`;
+    const [n] = parseNotifications(messaging, 'com.example.app');
+    expect(n).toMatchObject({title: 'Ann', text: 'Lunch?', messages: ['Lunch?', 'On my way']});
+    const shade = {
+      windows: [{pkg: 'com.android.systemui'}],
+      nodes: [
+        {p: -1, w: 0, b: [0, 100, 1080, 400] as [number, number, number, number], f: 'c'},
+        {p: 0, w: 0, b: [40, 120, 400, 170] as [number, number, number, number], t: 'Ann'},
+        {p: 0, w: 0, b: [40, 180, 900, 230] as [number, number, number, number], t: 'On my way'},
+      ],
+    };
+    expect(shadeRow(shade, n!)?.row.b).toEqual([0, 100, 1080, 400]);
+  });
+
   it("finds the button nearest below the notification's text, not another notification's of the same name", () => {
     const tree = {
       windows: [{pkg: 'com.android.systemui'}, {pkg: 'com.example.app'}],
@@ -134,6 +160,77 @@ describe('notification actions on Android', () => {
     };
     expect(shadeButton(tree, {w: 0, b: [40, 400, 1040, 500]}, 'Reply')).toEqual({w: 0, b: [40, 520, 300, 600]});
     expect(shadeButton(tree, {w: 0, b: [40, 400, 1040, 500]}, 'Archive')).toBeUndefined();
+    // Given the notification's row, a button outside it (the next notification's) is not its own.
+    expect(shadeButton(tree, {w: 0, b: [40, 100, 1040, 200]}, 'Reply', {w: 0, b: [0, 80, 1080, 210]})).toBeUndefined();
+    expect(shadeButton(tree, {w: 0, b: [40, 100, 1040, 200]}, 'Reply', {w: 0, b: [0, 80, 1080, 320]})).toEqual({w: 0, b: [40, 220, 300, 300]});
+  });
+
+  /**
+   * The app's two notifications in one group: 0, the group collapsed, only its own row takes a click; 1, the group
+   * open, Bob's notification expanded with its button, Ann's collapsed above it; 2, Ann's expanded too. A swipe on a
+   * row dismisses what it holds.
+   */
+  const groupedShade = () => {
+    type B4 = [number, number, number, number];
+    const rec = (id: number, title: string, text: string, at: number) =>
+      `    NotificationRecord(0x${id}: pkg=com.example.app user=UserHandle{0} id=${id} tag=t${id} importance=4 key=0|com.example.app|${id}|t${id}|1: Notification(channel=messages flags=AUTO_CANCEL actions=2 vis=PRIVATE))\n          extras={\n                android.title=String (${title})\n                android.text=String (${text})\n          }\n          actions={\n            [0] "Mark as read" -> PendingIntent{1: PendingIntentRecord{2 com.example.app broadcastIntent}}\n          }\n      mUpdateTimeMs=${at}\n`;
+    const GROUP: B4 = [0, 100, 1080, 700];
+    const ANN: B4 = [0, 200, 1080, 400];
+    const node = (p: number, b: B4, o: {t?: string; f?: string} = {}) => ({p, w: 0, c: 'View', b, ...o});
+    const trees = [
+      [node(-1, GROUP, {f: 'c'}), node(0, ANN), node(1, [40, 220, 400, 270], {t: 'Ann'}), node(1, [40, 280, 900, 330], {t: 'Lunch?'}), node(0, [0, 400, 1080, 700]), node(4, [40, 420, 400, 470], {t: 'Bob'}), node(4, [40, 480, 900, 530], {t: 'Call me'})],
+      [node(-1, GROUP, {f: 'c'}), node(0, ANN, {f: 'c'}), node(1, [40, 220, 400, 270], {t: 'Ann'}), node(1, [40, 280, 900, 330], {t: 'Lunch?'}), node(0, [0, 400, 1080, 700], {f: 'c'}), node(4, [40, 420, 400, 470], {t: 'Bob'}), node(4, [40, 480, 900, 530], {t: 'Call me'}), node(4, [40, 600, 300, 680], {t: 'Mark as read', f: 'c'})],
+      [node(-1, [0, 100, 1080, 800], {f: 'c'}), node(0, [0, 200, 1080, 500], {f: 'c'}), node(1, [40, 220, 400, 270], {t: 'Ann'}), node(1, [40, 280, 900, 330], {t: 'Lunch?'}), node(1, [40, 420, 300, 490], {t: 'Mark as read', f: 'c'}), node(0, [0, 500, 1080, 800], {f: 'c'}), node(5, [40, 520, 400, 570], {t: 'Bob'}), node(5, [40, 580, 900, 630], {t: 'Call me'}), node(5, [40, 700, 300, 780], {t: 'Mark as read', f: 'c'})],
+    ];
+    const st = {stage: 0, posted: ['Ann', 'Bob'], taps: [] as {x: number; y: number}[]};
+    const a = {
+      shell: async (_serial: string, cmd: string) => {
+        if (cmd.startsWith('dumpsys notification')) return `  Notification List:\n${st.posted.includes('Ann') ? rec(1, 'Ann', 'Lunch?', 2000) : ''}${st.posted.includes('Bob') ? rec(2, 'Bob', 'Call me', 1000) : ''}  Notification attention state:\n`;
+        if (cmd.startsWith('pidof')) return '123\n---\n  topResumedActivity=ActivityRecord{1 u0 com.android.launcher3/.Launcher}\n---\nstopped=false';
+        return '';
+      },
+    };
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tree') return {windows: [{pkg: 'com.android.systemui'}], nodes: trees[st.stage]};
+        if (cmd === 'node-action') {
+          const b = JSON.stringify(args.bounds);
+          if (st.stage === 0 && b === JSON.stringify(GROUP)) st.stage = 1;
+          else if (st.stage === 1 && b === JSON.stringify(ANN)) st.stage = 2;
+        }
+        if (cmd === 'tap') st.taps.push(args as {x: number; y: number});
+        if (cmd === 'swipe') {
+          const y = args.y1 as number;
+          if (st.stage === 0 && y > GROUP[1] && y < GROUP[3]) st.posted = [];
+          else if (y > ANN[1] && y < ANN[3]) st.posted = st.posted.filter(t => t !== 'Ann');
+        }
+        return {};
+      },
+    };
+    const ui = {runner, screenChanged: () => undefined, snapshot: async () => ({lines: []})};
+    const center = new PushCenter({
+      target: async () => ({platform: 'android', id: 'emulator-5554', a}) as never,
+      online: async () => ({android: ['emulator-5554'], apple: []}),
+      androidApp: () => 'com.example.app',
+      ui: async () => ui as never,
+    });
+    return {st, center};
+  };
+
+  it("expands a collapsed group, then the notification in it, and presses that notification's own button", {timeout: 20_000}, async () => {
+    const {st, center} = groupedShade();
+    const r = await center.respond({action: 'mark as read', title: 'Ann'});
+    expect(r).toMatchObject({ok: true, answered: 'Mark as read', notification: 'Ann'});
+    expect(st.stage).toBe(2);
+    // Ann's own button, not Bob's that showed below her collapsed notification.
+    expect(st.taps).toEqual([{x: 170, y: 455}]);
+  });
+
+  it('dismisses one notification of a collapsed group, not the whole group', {timeout: 20_000}, async () => {
+    const {st, center} = groupedShade();
+    const r = await center.respond({action: 'dismiss', title: 'Ann'});
+    expect(r).toMatchObject({ok: true, verdict: 'dismissed "Ann"'});
+    expect(st.posted).toEqual(['Bob']);
   });
 
   it('maps the command line', () => {
