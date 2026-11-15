@@ -162,41 +162,29 @@ describe('a web flow', () => {
       path.join(project, 'flows', 'sign-in.flow'),
       ['open!', 'wait id=email', 'fill id=email "${user}"', 'press id=submit', 'expect text~=Signed in as ${user}', 'goto second', 'expect id=second'].join('\n'),
     );
-    process.env.PITBOX_DEBUG_RUN = '1';
-    const t0 = Date.now();
-    const mark = (l: string) => fs.writeSync(2, `[step] ${Date.now() - t0}ms ${l}\n`);
     const e = await Engine.create(path.join(project, 'pitbox.config.json'));
     try {
-      mark('created');
       const ok = (await e.methods.run({flow: 'sign-in', params: {user: 'bo@example.test'}, device: 'web:demo'})) as {ok: boolean; steps: number};
       expect(ok).toMatchObject({ok: true});
       // A flow that moves to the web app itself, and a fresh browser that lands on the app before any open.
-      mark('ran');
       await e.stopAll();
-      mark('stopped');
       const moved = (await e.methods.run({steps: 'device web:demo\nexpect id=email'})) as {ok: boolean};
       expect(moved).toMatchObject({ok: true});
-      mark('moved');
       const failed = (await e.methods.run({steps: 'open\nexpect id=nowhere', device: 'web:demo'})) as {ok: boolean; failed?: {line: number; screen?: string[]}};
       expect(failed).toMatchObject({ok: false, failed: {line: 2}});
       expect(failed.failed?.screen?.some(l => /#email/.test(l))).toBe(true);
-      mark('failed');
       expect((await e.methods.devices({})) as {web?: unknown[]}).toMatchObject({web: [{name: 'web:demo'}]});
-      mark('devices');
       // Settings on a web app emulate a phone; a phone's settings say what a web app takes instead.
       const set = await e.methods.settings({device: 'web:demo', emulate: 'iPhone 15', dark: 'true'});
       expect(formatResult('settings', set)).toMatch(/393x659 @3x mobile touch · iPhone 15 · dark/);
       await expect(e.methods.settings({device: 'web:demo', fontScale: 1.3})).rejects.toThrow(/fontScale: not for a web app\nhint: a web app takes emulate=/);
-      mark('settings');
       const none = await e.methods.downloads({device: 'web:demo'});
       expect(formatResult('downloads', none)).toBe('no downloads on web:demo yet (they are saved to .pitbox/downloads/demo)');
       expect(formatResult('downloads', {serial: 'web:demo', root: '/p', dir: '/p/.pitbox/downloads/demo', waited: 1200, downloads: [{n: 1, name: 'a.pdf', url: 'http://x/a.pdf', at: 0, state: 'done', size: 2048, type: 'application/pdf', file: '/p/.pitbox/downloads/demo/a.pdf'}]})).toBe(
         'new download after 1.2s:\n✓ a.pdf · 2.0 KB · application/pdf · .pitbox/downloads/demo/a.pdf',
       );
     } finally {
-      mark('finally');
       await e.stopAll();
-      mark('end');
     }
   });
 });
