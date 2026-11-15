@@ -228,6 +228,7 @@ export class PushCenter {
     if (yes(opts.grant)) notes.push('iOS has no way to grant notifications from outside: allow them in the app\'s prompt (press "Allow")');
     if (msg.collapseId) notes.push('simctl push has no apns-collapse-id: the simulator shows each push on its own');
     if (msg.silent) notes.push('a background push may not wake a suspended app on the simulator');
+    if (msg.aps?.['mutable-content'] === 1 || msg.aps?.['mutable-content'] === true) notes.push('the Notification Service Extension does not run for simctl push: the banner shows the payload as sent' + (msg.image ? ', without its image' : ''));
     const base = {id, platform: 'apple' as const, device: udid, app: bundleId, sent: describe(msg), title: msg.title ?? msg.body};
     try {
       await s.push(udid, bundleId, toApns(msg, bundleId, id));
