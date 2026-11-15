@@ -55,6 +55,7 @@ export type RunResult = {code: number | null; stdout: string; stderr: string; ti
 export const run = (file: string, args: string[], opts: {cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; input?: string; encoding?: BufferEncoding | 'buffer'} = {}): Promise<RunResult & {buffer?: Buffer}> =>
   new Promise(resolve => {
     const t0 = performance.now();
+    if (process.env.PITBOX_DEBUG_RUN) fs.writeSync(2, `[run+] ${new Date().toISOString()} ${file} ${args.join(' ')}\n`);
     const child = spawn(file, args, {cwd: opts.cwd, env: opts.env ?? process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']});
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -72,6 +73,7 @@ export const run = (file: string, args: string[], opts: {cwd?: string; env?: Nod
     else child.stdin?.end();
     child.on('close', code => {
       if (timer) clearTimeout(timer);
+      if (process.env.PITBOX_DEBUG_RUN) fs.writeSync(2, `[run-] ${Math.round(performance.now() - t0)}ms code=${code} ${file} ${args.join(' ')}\n`);
       const buffer = Buffer.concat(out);
       resolve({
         code,
