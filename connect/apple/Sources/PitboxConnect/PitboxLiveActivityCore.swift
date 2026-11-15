@@ -23,6 +23,8 @@ enum PitboxLiveActivityCore {
     let alertBody: String?
     let alertSound: String?
     let activityId: String?
+    /// Past it, pitbox no longer waits: the command is answered and not applied.
+    let deadline: Date?
 
     static func parse(_ data: Data) throws -> Command {
       guard let o = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CoreError("the command is not a JSON object") }
@@ -43,8 +45,13 @@ enum PitboxLiveActivityCore {
         alertTitle: alert?["title"] as? String,
         alertBody: alert?["body"] as? String,
         alertSound: alert?["sound"] as? String,
-        activityId: o["activityId"] as? String
+        activityId: o["activityId"] as? String,
+        deadline: date("deadline")
       )
+    }
+
+    func expired(now: Date = Date()) -> Bool {
+      deadline.map { $0 < now } ?? false
     }
   }
 
@@ -152,6 +159,13 @@ enum PitboxLiveActivityCore {
     func pending() -> [URL] {
       let files = (try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil)) ?? []
       return files.filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// Takes a command file by deleting it, as pitbox takes it back when it gives up: only one of the two deletes
+    /// succeeds, so a command pitbox answered as failed is never applied. Nil when pitbox took it first.
+    func claim(_ file: URL) -> Data? {
+      guard let data = try? Data(contentsOf: file), (try? FileManager.default.removeItem(at: file)) != nil else { return nil }
+      return data
     }
 
     func answer(_ id: String, _ outcome: Outcome) throws {

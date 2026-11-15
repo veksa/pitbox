@@ -106,6 +106,40 @@ describe('live activity pushes', () => {
 });
 
 describe('live activity delivery', () => {
+  it('never lets a command pitbox gave up on run later, waits for one the hook took, and clears stale answers', async () => {
+    const container = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-la-'));
+    dirs.push(container);
+    const dir = liveActivityDir(container);
+    const inbox = path.join(dir, 'in');
+    fs.mkdirSync(path.join(dir, 'out'), {recursive: true});
+    const stale = path.join(dir, 'out', 'old.json');
+    fs.writeFileSync(stale, '{}');
+    fs.utimesSync(stale, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    let taken: LiveActivityCommand | undefined;
+    // A slow hook: takes the command at once, answers after the first wait is over.
+    const slow: LiveActivityHost = {
+      container: async () => container,
+      launch: async () => undefined,
+      notify: async () => {
+        for (const f of fs.existsSync(inbox) ? fs.readdirSync(inbox) : []) {
+          taken = JSON.parse(fs.readFileSync(path.join(inbox, f), 'utf8')) as LiveActivityCommand;
+          fs.rmSync(path.join(inbox, f));
+          setTimeout(() => fs.writeFileSync(path.join(dir, 'out', `${taken!.id}.json`), JSON.stringify({ok: true, activityId: 'A1'})), 500);
+        }
+      },
+    };
+    const r = await deliverLiveActivity(slow, 'SIM-1', 'com.example.app', {id: 'm1', event: 'update', activityId: 'A1', state: {}}, {waitMs: 100, afterLaunchMs: 100});
+    expect(r).toEqual({outcome: {ok: true, activityId: 'A1'}, launched: false});
+    expect(taken!.deadline).toBeGreaterThan(Date.now() / 1000);
+    expect(fs.existsSync(stale)).toBe(false);
+    // A hook that never takes it: pitbox takes the command back, so nothing can apply it after the failed answer.
+    const deaf: LiveActivityHost = {container: async () => container, launch: async () => undefined, notify: async () => undefined};
+    const d = await deliverLiveActivity(deaf, 'SIM-1', 'com.example.app', {id: 'm2', event: 'update', activityId: 'A1', state: {}}, {waitMs: 100, afterLaunchMs: 100, takenMs: 100});
+    expect(d).toEqual({outcome: undefined, launched: true});
+    expect(fs.readdirSync(inbox)).toEqual([]);
+  });
+
+
   it('launches the app for a start, and only when it does not answer for an update', async () => {
     const s = fakeSim(state(), {running: false});
     const r = await deliverLiveActivity(s.host, 'SIM-1', 'com.example.app', {id: 'm1', event: 'start', type: 'DeliveryAttributes', state: {}}, {waitMs: 300});

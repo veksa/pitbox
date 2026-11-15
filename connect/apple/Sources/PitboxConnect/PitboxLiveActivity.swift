@@ -251,10 +251,13 @@ actor Worker {
     defer { draining = false }
     reconcile()
     while let file = folder.pending().first {
-      let data = try? Data(contentsOf: file)
-      try? FileManager.default.removeItem(at: file)
-      guard let data, let c = try? Core.Command.parse(data) else { continue }
-      let outcome = await run(c)
+      guard let data = folder.claim(file) else {
+        // pitbox took it back, or it cannot be read: either way it is not ours to run.
+        try? FileManager.default.removeItem(at: file)
+        continue
+      }
+      guard let c = try? Core.Command.parse(data) else { continue }
+      let outcome = c.expired() ? Core.Outcome(ok: false, error: "expired: pitbox no longer waited for it, so it was not applied") : await run(c)
       try? folder.answer(c.id, outcome)
     }
   }

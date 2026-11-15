@@ -101,8 +101,11 @@ export type LiveActivityState = {
   activities: {id: string; type: string; state: string}[];
 };
 
-/** The command the hook takes (in/<id>.json): the push, with the activity it is for resolved by pitbox. */
-export type LiveActivityCommand = LiveActivityPush & {id: string; activityId?: string};
+/**
+ * The command the hook takes (in/<id>.json): the push, with the activity it is for resolved by pitbox. `deadline`
+ * (seconds since 1970): the hook does not apply a command it takes later — a pitbox that died never sees the answer.
+ */
+export type LiveActivityCommand = LiveActivityPush & {id: string; activityId?: string; deadline?: number};
 
 /** The hook's answer (out/<id>.json). */
 export type LiveActivityOutcome = {ok: boolean; activityId?: string; token?: string; synthetic?: boolean; error?: string; note?: string};
@@ -140,27 +143,48 @@ export const tokenIn = (state: LiveActivityState, token: string) => state.tokens
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** An answer older than this in out/ is one nobody waited for any more: removed on the next delivery. */
+export const STALE_ANSWER_MS = 60_000;
+
 /**
  * Hands a command to the hook and waits for its answer. A start is an `Activity.request`, which only an app in front
  * may make: the app is launched (brought to the front) first. An update or an end goes to the running app; when no
  * answer comes in `waitMs` (the app is suspended in the background), the app is brought to the front, where the hook
  * drains its folder. `launched` says whether pitbox had to.
+ *
+ * Giving up is a claim on the command file: pitbox and the hook both take it by deleting it, and only one delete
+ * succeeds. When pitbox's succeeds, the hook never sees the command, so a push answered as failed is never applied
+ * later. When the hook took it first, the command is running (a start waits up to 3 s for its token): pitbox waits
+ * `takenMs` more for the answer.
  */
 export const deliverLiveActivity = async (
   host: LiveActivityHost,
   udid: string,
   bundleId: string,
   cmd: LiveActivityCommand,
-  opts: {waitMs?: number; afterLaunchMs?: number} = {},
+  opts: {waitMs?: number; afterLaunchMs?: number; takenMs?: number} = {},
 ): Promise<{outcome?: LiveActivityOutcome; launched: boolean}> => {
   const dir = liveActivityDir(await host.container(udid, bundleId));
   const inbox = path.join(dir, 'in');
-  const outFile = path.join(dir, 'out', `${cmd.id}.json`);
+  const outDir = path.join(dir, 'out');
+  const inFile = path.join(inbox, `${cmd.id}.json`);
+  const outFile = path.join(outDir, `${cmd.id}.json`);
   fs.mkdirSync(inbox, {recursive: true});
+  // Answers to commands pitbox gave up on, written after it stopped waiting.
+  for (const f of fs.existsSync(outDir) ? fs.readdirSync(outDir) : []) {
+    const file = path.join(outDir, f);
+    try {
+      if (Date.now() - fs.statSync(file).mtimeMs > STALE_ANSWER_MS) fs.rmSync(file, {force: true});
+    } catch {
+      // gone meanwhile
+    }
+  }
+  // A safety net for a pitbox that dies while waiting; the claim below is what normally ends a command.
+  const deadline = Math.ceil((Date.now() + STALE_ANSWER_MS) / 1000);
   // Written aside and renamed in: the hook never reads half a command.
   const tmp = path.join(dir, `.${cmd.id}.json`);
-  fs.writeFileSync(tmp, JSON.stringify(cmd));
-  fs.renameSync(tmp, path.join(inbox, `${cmd.id}.json`));
+  fs.writeFileSync(tmp, JSON.stringify({...cmd, deadline}));
+  fs.renameSync(tmp, inFile);
   const answer = async (ms: number) => {
     for (const end = Date.now() + ms; ; ) {
       try {
@@ -180,13 +204,22 @@ export const deliverLiveActivity = async (
   }
   await host.notify(udid, liveActivityNotification(bundleId));
   let outcome = await answer(opts.waitMs ?? 2000);
-  if (!outcome && !launched) {
+  if (!outcome && !launched && fs.existsSync(inFile)) {
     await host.launch(udid, bundleId);
     launched = true;
     await host.notify(udid, liveActivityNotification(bundleId)).catch(() => undefined);
     outcome = await answer(opts.afterLaunchMs ?? 4000);
   }
-  if (!outcome) fs.rmSync(path.join(inbox, `${cmd.id}.json`), {force: true});
+  if (!outcome) {
+    let claimed = false;
+    try {
+      fs.unlinkSync(inFile);
+      claimed = true;
+    } catch {
+      // The hook took it: it is running.
+    }
+    if (!claimed) outcome = await answer(opts.takenMs ?? 10_000);
+  }
   return {outcome, launched};
 };
 

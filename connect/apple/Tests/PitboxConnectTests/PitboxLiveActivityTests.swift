@@ -19,6 +19,22 @@ final class PitboxLiveActivityTests: XCTestCase {
     XCTAssertThrowsError(try Core.Command.parse(Data(#"{"event":"start"}"#.utf8)))
   }
 
+  func testTakesACommandOnlyOnceAndNotPastItsDeadline() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pitbox-la-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let f = Core.Folder(root: root)
+    try FileManager.default.createDirectory(at: f.inbox, withIntermediateDirectories: true)
+    let file = f.inbox.appendingPathComponent("m1.json")
+    try Data(#"{"id":"m1","event":"end","deadline":1000}"#.utf8).write(to: file)
+    let data = try XCTUnwrap(f.claim(file))
+    // Taken: pitbox's delete fails, as would a second claim.
+    XCTAssertNil(f.claim(file))
+    let c = try Core.Command.parse(data)
+    XCTAssertTrue(c.expired(now: Date(timeIntervalSince1970: 1001)))
+    XCTAssertFalse(c.expired(now: Date(timeIntervalSince1970: 999)))
+    XCTAssertFalse(try Core.Command.parse(Data(#"{"id":"m2","event":"end"}"#.utf8)).expired())
+  }
+
   func testMapsTheDismissalDateToAPolicy() {
     let now = Date(timeIntervalSince1970: 1000)
     XCTAssertEqual(Core.dismissal(nil, now: now), .default)
