@@ -302,6 +302,23 @@ describe('simulators', () => {
     expect(fs.readdirSync(leaseDir()).filter(f => f.endsWith('.json'))).toEqual([]);
   });
 
+  it('waits for the boot mark of a simulator whose launchd_sim shows a moment after the boot, and shuts it down on release', async () => {
+    const apple = new FakeApple([{}]);
+    const boot = apple.boot;
+    apple.boot = async (sel: string) => {
+      const r = await boot(sel);
+      const mark = apple.marks.get(r.udid)!;
+      apple.marks.delete(r.udid);
+      setTimeout(() => apple.marks.set(r.udid, mark), 600);
+      return r;
+    };
+    const a = await session('alice', {apple});
+    await a.methods.boot({avd: 'iPhone 17'});
+    expect(readLease('apple', 'U1')?.boot).toMatch(/^launchd_sim:/);
+    expect(await a.methods.release({device: 'U1'})).not.toHaveProperty('note');
+    expect(apple.sims[0]!.state).toBe('Shutdown');
+  });
+
   it('leaves running, on a release, a simulator whose lease has no boot mark (an older pitbox) or that was booted again', async () => {
     const apple = new FakeApple([{}, {name: 'iPad', deviceType: 'iPad'}]);
     const a = await session('alice', {apple});

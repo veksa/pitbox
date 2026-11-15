@@ -900,10 +900,7 @@ export class Engine {
       const r = await s.boot(pick.udid, opts);
       // The boot pitbox made, on the lease: only while the simulator still runs it may a release or the reaper shut
       // it down (not one booted again later by hand or by Xcode on the same udid).
-      if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) {
-        const mark = (await this.#bootMarks())?.get(pick.udid);
-        if (mark) this.#leases.markBoot('apple', pick.udid, mark);
-      }
+      if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) await this.#markAppleBoot(pick.udid);
       return {
         ...r,
         platform: 'apple',
@@ -1139,9 +1136,21 @@ export class Engine {
   /** Boots a watch for its pair and marks the boot on its lease (only that boot is shut down with the lease). */
   async #bootWatch(s: AppleDriver, udid: string) {
     const r = await s.boot(udid, {headless: true});
-    if (!r.already) {
-      const mark = (await this.#bootMarks())?.get(udid);
-      if (mark) this.#leases.markBoot('apple', udid, mark);
+    if (!r.already) await this.#markAppleBoot(udid);
+  }
+
+  /**
+   * Puts the boot pitbox just made on the simulator's lease. Its launchd_sim can show in the process list a moment
+   * after `simctl` reports the boot: read again for a few seconds, or the lease would carry no mark and its release
+   * would leave the simulator running as one pitbox did not boot.
+   */
+  async #markAppleBoot(udid: string) {
+    for (let i = 0; i < 20; i++) {
+      const marks = await this.#bootMarks();
+      if (!marks) return;
+      const mark = marks.get(udid);
+      if (mark) return this.#leases.markBoot('apple', udid, mark);
+      await new Promise(r => setTimeout(r, 250));
     }
   }
 
