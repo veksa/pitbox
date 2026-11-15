@@ -29,10 +29,17 @@ export const listPages = async (port: number, timeoutMs = 3000): Promise<CdpPage
 };
 
 /** A page for `device` (a substring of its device name or title), or the newest one. */
+// `adb devices -l` spells a model with underscores for its spaces (`Android_XR_SDK_built_for_arm64`), the page
+// with the spaces the device reports (`Android XR SDK built for arm64`): the two are compared without either.
+const normalName = (name: string) => name.toLowerCase().replace(/[\s_]+/g, ' ').trim();
+
+/** Whether a page is the named device's: its name or title holds the name. */
+export const pageMatches = (page: CdpPage, device: string): boolean =>
+  normalName(`${page.deviceName ?? ''} ${page.title}`).includes(normalName(device));
+
 export const pickPage = (pages: CdpPage[], device?: string): CdpPage | undefined => {
   if (!device) return pages[pages.length - 1];
-  const d = device.toLowerCase();
-  const named = pages.filter(p => `${p.deviceName ?? ''} ${p.title}`.toLowerCase().includes(d));
+  const named = pages.filter(p => pageMatches(p, device));
   // A device serial (emulator-5554) is not in the page's name. With every page on one device (one app, or a
   // relaunch whose old runtime is still listed) the newest is the one; across devices there is no guessing.
   if (named.length) return named[named.length - 1];

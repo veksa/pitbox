@@ -10,7 +10,7 @@
 
 import path from 'node:path';
 import type {CdpEvent, CdpPage} from './cdp.ts';
-import {CdpSession, listPages, pickPage} from './cdp.ts';
+import {CdpSession, listPages, pageMatches, pickPage} from './cdp.ts';
 import type {DevProxy} from './proxy.ts';
 import {bundlePosition, indexMap, sourceOf, type BundlePos, type MapIndex, type RawSourceMap} from './sourcemap.ts';
 import {isHostFn, summarizeProfile, type CpuProfile, type ProfiledFn} from './jsprofile.ts';
@@ -199,7 +199,7 @@ export class JsDebugger {
     const cur = this.#session;
     // The open session serves a named device only when it is that device's page: by its name, or as the page
     // the device's name picks out of the list now (a serial is in no page's name; with one device it is that one).
-    if (cur && !cur.closed && (!device || `${cur.page.deviceName ?? ''} ${cur.page.title}`.toLowerCase().includes(device.toLowerCase()))) return cur;
+    if (cur && !cur.closed && (!device || pageMatches(cur.page, device))) return cur;
     // An app that was just opened lists its runtime a few seconds later, once its JS has started.
     let pages = await listPages(this.#port);
     if (cur && !cur.closed && pickPage(pages, device)?.id === cur.page.id) return cur;

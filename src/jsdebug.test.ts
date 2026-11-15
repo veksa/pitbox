@@ -125,6 +125,13 @@ describe('logpoint inputs', () => {
     // A relaunch: the old runtime of the same device is still listed next to the new one.
     expect(pickPage([page('old', 'Pixel 9 - API 36'), page('new', 'Pixel 9 - API 36')], 'emulator-5554')?.id).toBe('new');
   });
+
+  it('matches the model adb spells with underscores to the page that spells it with spaces', () => {
+    const page = (id: string, deviceName: string): CdpPage => ({id, title: `app (${deviceName})`, deviceName, webSocketDebuggerUrl: `ws://x/${id}`});
+    const two = [page('xr', 'Android XR SDK built for arm64'), page('phone', 'sdk_gphone64_arm64')];
+    expect(pickPage(two, 'Android_XR_SDK_built_for_arm64')?.id).toBe('xr');
+    expect(pickPage(two, 'sdk gphone64 arm64')?.id).toBe('phone');
+  });
 });
 
 // A sampled call tree: a library function calls the app's `render`; a host function runs on its own; the rest
