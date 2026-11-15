@@ -104,7 +104,8 @@ try {
   check('the watch sees the phone and its capability', /nodes: .+\(capable 1\)/.test(await until('watch', 'relay_nodes', /capable/)));
   const before = pidOf(phone.serial);
   must(['press', 'id=relay_ping', '--device', 'watch']);
-  check('the phone answers a ping from not running', /pong 1 from /.test(await until('watch', 'relay_status', /pong/)) && !before && !!pidOf(phone.serial));
+  const pong = await until('watch', 'relay_status', /pong/);
+  check('the phone answers a ping from not running', /pong 1 from /.test(pong) && !before && !!pidOf(phone.serial), `${pong.trim()} · pid before ${before || 'none'}`);
 
   step('phone → watch, the watch app not running');
   must(['stop-app', '--device', 'watch']);

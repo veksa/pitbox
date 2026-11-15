@@ -1,10 +1,8 @@
 package dev.pitbox.connect
 
 import android.Manifest
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -54,9 +52,9 @@ class PitboxWearReceiver : BroadcastReceiver() {
    * A message is waiting in the daemon (`id`): fetched over the app's own connection — no message content travels on
    * a command line —, then handed over the way Play services hands it: every listener the app added gets it, and
    * so does each `WearableListenerService` the app declares for `MESSAGE_RECEIVED` whose data filter matches the
-   * path, started in this process even when nothing of the app was running. The broadcast is finished as soon as
-   * the message is in hand, so neither the receiver's time limit nor the listeners delay the sender. What the app
-   * did goes back to the daemon's log.
+   * path, brought up by the system (bound, as Play services binds it) even when nothing of the app was running. The
+   * broadcast is finished as soon as the work is under way: a bound service keeps the process alive, so neither the
+   * receiver's time limit nor a cold start delays the sender. What the app did goes back to the daemon's log.
    */
   private fun message(context: Context, intent: Intent) {
     val id = intent.getStringExtra("id")?.toIntOrNull() ?: return answer(2, "error bad-message")
@@ -65,19 +63,30 @@ class PitboxWearReceiver : BroadcastReceiver() {
     val ordered = isOrderedBroadcast
     val pending = goAsync()
     Thread {
-      val m = try {
-        PitboxWearable.take(pairing, id)
+      var result = 1 to "ok accepted"
+      try {
+        val m = PitboxWearable.take(pairing, id)
+        val event = PitboxMessageEvent(id, m.path, m.data, m.source)
+        val heard = PitboxWearable.deliverToListeners(event)
+        val names = messageServices(app, m.source, m.path)
+        if (names.isEmpty()) {
+          PitboxWearable.report(pairing, id, "listeners=$heard services=-")
+        } else {
+          val served = java.util.concurrent.ConcurrentLinkedQueue<String>()
+          val left = java.util.concurrent.atomic.AtomicInteger(names.size)
+          for (name in names) {
+            bindService(app, name, event) { result ->
+              served += result
+              if (left.decrementAndGet() == 0) PitboxWearable.report(pairing, id, "listeners=$heard services=${served.joinToString(",")}")
+            }
+          }
+        }
       } catch (e: Exception) {
-        if (ordered) pending.setResult(2, "error ${e.javaClass.simpleName}: ${e.message}", null)
+        result = 2 to "error ${e.javaClass.simpleName}: ${e.message}"
+      } finally {
+        if (ordered) pending.setResult(result.first, result.second, null)
         pending.finish()
-        return@Thread
       }
-      if (ordered) pending.setResult(1, "ok accepted", null)
-      pending.finish()
-      val event = PitboxMessageEvent(id, m.path, m.data, m.source)
-      val heard = PitboxWearable.deliverToListeners(event)
-      val served = messageServices(app, m.source, m.path).map { name -> runService(app, name, event) }
-      PitboxWearable.report(pairing, id, "listeners=$heard services=${served.joinToString(",").ifEmpty { "-" }}")
     }.start()
   }
 
@@ -118,26 +127,65 @@ class PitboxWearReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Runs one listener service for one message the way the system would bring it up for Play services' bind: a
-     * new instance on the app's context, `onCreate`, `onMessageReceived`, `onDestroy`. Answers its short name, with
-     * the failure when it threw.
+     * Runs one listener service for one message: bound by the system with Play services' own action, so it is
+     * created, attached and started on the main thread like any service (`getApplication()`, a `Handler()`, injection
+     * all work), then given the message on its own looper thread, as WearableListenerService does, and unbound.
+     * The service instance comes from the binder its `onBind` returns in this process, found by its field type.
+     * `done` gets the service's short name, with the failure when it threw.
      */
-    fun runService(context: Context, name: String, event: MessageEvent): String {
+    fun bindService(context: Context, name: String, event: MessageEvent, done: (String) -> Unit) {
       val short = name.substringAfterLast('.')
-      return try {
-        val service = Class.forName(name).getDeclaredConstructor().newInstance() as Service
-        ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java).apply { isAccessible = true }.invoke(service, context.applicationContext)
-        service.onCreate()
-        try {
-          (service as WearableListenerService).onMessageReceived(event)
-        } finally {
-          runCatching { service.onDestroy() }
+      val main = android.os.Handler(android.os.Looper.getMainLooper())
+      val connection = object : android.content.ServiceConnection {
+        private var finished = false
+
+        private fun finish(result: String) {
+          if (finished) return
+          finished = true
+          main.post { runCatching { context.unbindService(this) } }
+          done(result)
         }
-        short
-      } catch (e: Throwable) {
-        val cause = (e as? java.lang.reflect.InvocationTargetException)?.targetException ?: e
-        "$short(failed: ${cause.javaClass.simpleName} ${cause.message})"
+
+        override fun onServiceConnected(component: android.content.ComponentName, binder: android.os.IBinder?) {
+          val service = binder?.let { listenerOf(it) } ?: return finish("$short(failed: no WearableListenerService behind its binder)")
+          android.os.Handler(service.looper).post {
+            val result = try {
+              service.onMessageReceived(event)
+              short
+            } catch (e: Throwable) {
+              "$short(failed: ${e.javaClass.simpleName} ${e.message})"
+            }
+            finish(result)
+          }
+        }
+
+        override fun onServiceDisconnected(component: android.content.ComponentName) = finish("$short(failed: disconnected)")
+        override fun onNullBinding(component: android.content.ComponentName) = finish("$short(failed: no binder for ${BIND_LISTENER})")
       }
+      val intent = Intent(BIND_LISTENER).setComponent(android.content.ComponentName(context.packageName, name))
+      val bound = try {
+        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+      } catch (e: Exception) {
+        false
+      }
+      if (!bound) done("$short(failed: could not bind)")
+    }
+
+    private const val BIND_LISTENER = "com.google.android.gms.wearable.BIND_LISTENER"
+
+    /** The WearableListenerService a binder from its `onBind` belongs to (a field of that type, whatever its name). */
+    fun listenerOf(binder: Any): WearableListenerService? {
+      var c: Class<*>? = binder.javaClass
+      while (c != null && c != Any::class.java) {
+        for (f in c.declaredFields) {
+          if (WearableListenerService::class.java.isAssignableFrom(f.type)) {
+            f.isAccessible = true
+            return f.get(binder) as? WearableListenerService
+          }
+        }
+        c = c.superclass
+      }
+      return null
     }
 
     /** The capabilities the app declares for the Data Layer (`res/values/wear.xml`, `android_wear_capabilities`). */

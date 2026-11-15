@@ -63,6 +63,17 @@ describe('android connect library', () => {
   });
 });
 
+describe('wear relay', () => {
+  // A listener service built by hand has no Application and runs onCreate off the main thread: a Handler() or an
+  // injected service breaks there and only there. The system must bring it up (examples/android/relay checks both).
+  it('has the system bring a listener service up, never builds one by reflection', () => {
+    const receiver = read('src/debug/java/dev/pitbox/connect/PitboxWearReceiver.kt');
+    expect(receiver).toContain('context.bindService(intent, connection, Context.BIND_AUTO_CREATE)');
+    expect(receiver).toContain('com.google.android.gms.wearable.BIND_LISTENER');
+    expect(receiver).not.toMatch(/attachBaseContext|newInstance\(\) as Service|\.onCreate\(\)/);
+  });
+});
+
 describe('react native autolinking', () => {
   it('links the android library and nothing on iOS', async () => {
     const config = (await import(pathToFileURL(path.join(root, 'react-native.config.js')).href)).default;
