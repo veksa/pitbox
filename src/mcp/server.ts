@@ -46,7 +46,8 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
     bool: () => z.boolean().optional(),
     list: () => z.array(z.string()).optional(),
   };
-  const params = z.record(z.string(), z.string()).optional();
+  // Route and flow parameters end up in a URL or a flow's text: a number or a boolean is taken as its string.
+  const params = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().describe('name → value; numbers and booleans are fine');
   const target = z.string().describe('@ref, id=…, text=… (text~= contains), label=…, words, or x,y');
 
   // Stand

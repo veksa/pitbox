@@ -370,6 +370,19 @@ describe('mcp tools', () => {
     expect(tools.length).toBeLessThanOrEqual(30);
   });
 
+  it('take numbers and booleans as route and flow parameters, as their strings', async () => {
+    const {registerTools} = await import('./mcp/server.ts');
+    const schemas = new Map<string, Record<string, {safeParse: (v: unknown) => {success: boolean}}>>();
+    registerTools({registerTool: (name, def) => schemas.set(name, def.inputSchema as never)}, {} as never, async () => ({call: async () => undefined}));
+    for (const name of ['goto', 'run']) {
+      const params = schemas.get(name)!.params!;
+      expect(params.safeParse({id: 42, draft: true, name: 'x'}).success, name).toBe(true);
+      expect(params.safeParse({id: {nested: 1}}).success, name).toBe(false);
+    }
+    const {fillRoute} = await import('./flows/flow.ts');
+    expect(fillRoute('item', 'myapp://item/{id}?d={draft}', Object.fromEntries(Object.entries({id: 42, draft: false}).map(([k, v]) => [k, String(v)])))).toBe('myapp://item/42?d=false');
+  });
+
   it('tell the agent once what the client noted about the daemon (one of another version kept as it is)', async () => {
     const {registerTools} = await import('./mcp/server.ts');
     type Handler = (a: Record<string, unknown>) => Promise<{content: {text: string}[]}>;
