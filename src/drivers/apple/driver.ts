@@ -433,6 +433,24 @@ export class AppleDriver {
     await this.#ok(['uninstall', udid, bundleId], 'uninstall', 60_000);
   }
 
+  /** The app's data container on this Mac (its Documents, Library, tmp); throws when the app is not installed. */
+  dataContainer(udid: string, bundleId: string): Promise<string> {
+    return this.#container(udid, bundleId);
+  }
+
+  /** The installed .app on this Mac; undefined when the app is not installed. */
+  async appBundle(udid: string, bundleId: string): Promise<string | undefined> {
+    const r = await this.simctl(['get_app_container', udid, bundleId, 'app']);
+    const dir = r.stdout.trim();
+    return r.code === 0 && dir && fs.existsSync(dir) ? dir : undefined;
+  }
+
+  /** Posts a Darwin notification inside the simulator (`notifyutil -p`): what an app's observer of that name hears. */
+  async notify(udid: string, name: string): Promise<void> {
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new AppleError(`not a notification name: ${JSON.stringify(name)}`);
+    await this.#ok(['spawn', udid, 'notifyutil', '-p', name], 'notifyutil');
+  }
+
   /**
    * Delivers an APNs payload to an app on a simulator, as Apple's push service would (`simctl push`): the app
    * must have asked for notification permission; the payload names its app in `Simulator Target Bundle`.
