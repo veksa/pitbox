@@ -510,7 +510,8 @@ describe('plain wait', () => {
     const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
     const r = (await engine.methods.wait({seconds: 0.2})) as {ms: number; paused: boolean};
     expect(r.paused).toBe(true);
-    expect(r.ms).toBeGreaterThanOrEqual(190);
+    // Date.now on Windows moves in steps of about 16 ms: a 200 ms pause can read as 185.
+    expect(r.ms).toBeGreaterThanOrEqual(180);
     expect(formatResult('wait', r)).toMatch(/^waited 0\.\ds$/);
     await expect(engine.methods.wait({})).rejects.toThrow(/seconds=<n>/);
     await expect(engine.methods.wait({seconds: 10_000})).rejects.toThrow(/at most/);
