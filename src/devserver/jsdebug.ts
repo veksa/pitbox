@@ -400,12 +400,13 @@ export class JsDebugger {
     await this.#enableDebugger(s);
     await this.#value(s, `${HELPER}, 0`).catch(() => undefined);
     for (const lp of this.#logpoints.values()) {
-      if (restarted) lp.restarts = (lp.restarts ?? 0) + 1;
       try {
         await this.#place(s, lp);
       } catch (e) {
         lp.error = (e as Error).message;
       }
+      // Counted once the attempt is over, so a restart and its placement time are read together.
+      if (restarted) lp.restarts = (lp.restarts ?? 0) + 1;
     }
   }
 

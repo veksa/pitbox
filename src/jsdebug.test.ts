@@ -363,7 +363,8 @@ describe('the app runtime', () => {
       ({logpoints} = await js.hits());
     }
     // The old bundle's breakpoint went with the old bundle.
-    for (const k of [...fake.breakpoints.keys()].slice(0, -1)) fake.breakpoints.delete(k);
+    expect(fake.breakpoints.size).toBe(2);
+    fake.breakpoints.delete([...fake.breakpoints.keys()][0]!);
     expect(logpoints[0]!.restarts).toBe(1);
     expect(logpoints[0]!.placedAt!).toBeGreaterThanOrEqual(before);
     expect(formatResult('jsHits', {logpoints})).toMatch(/the app restarted 1× since it was set; placed again \d+\.\ds ago — a line that ran at start-up before that is not seen/);
