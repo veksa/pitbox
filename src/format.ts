@@ -348,6 +348,7 @@ export const formatResult = (method: string, r: unknown): string => {
       return lines.join('\n');
     }
     case 'pair':
+      if (x.pair) return `${x.already ? 'already paired' : 'paired'} ${x.watch} (${x.udid}) with ${x.phone} · ${x.state}${x.created ? ' · created for this session' : ''} — device=watch names it${x.note ? `\nnote: ${x.note}` : ''}`;
       if (x.serial) return `connected ${x.serial} over Wi-Fi`;
       if (x.waiting) return `still waiting for a phone to scan the QR (${x.file})`;
       return [
@@ -518,11 +519,13 @@ export const formatResult = (method: string, r: unknown): string => {
     case 'shutdown':
       return (x.gone ? `${x.serial ?? x.udid} shut down in ${seconds(x.ms as number)}` : `${x.serial ?? x.udid} still listed after ${seconds(x.ms as number)}`) + (x.note ? `\nnote: ${x.note}` : '');
     case 'cleanDevices':
-      return (x.deleted as string[]).length ? `deleted ${(x.deleted as string[]).join(', ')}` : 'no simulators pitbox created are left over';
+      return [(x.deleted as string[]).length ? `deleted ${(x.deleted as string[]).join(', ')}` : 'no simulators pitbox created are left over', x.unpaired ? `unpaired ${x.unpaired} watch pair(s) pitbox made` : ''].filter(Boolean).join('\n');
+    case 'unpair':
+      return `unpaired ${x.released ?? x.unpaired}${(x.done as string[] | undefined)?.length ? '' : ' (the pair was not made by pitbox: it stays)'}${x.released ? ', given back' : ''}`;
     case 'lease':
       return `${x.leased} (${x.id}) is held by "${x.label}"${x.booted ? ', booted by it' : ''}`;
     case 'release':
-      return `released ${x.released}${x.gone !== undefined ? (x.gone ? `, shut down in ${seconds(x.ms as number)}` : ', still listed after shutdown') : ''}${x.note ? `\nnote: ${x.note}` : ''}`;
+      return `released ${x.released}${(x.paired as string[] | undefined)?.length ? ` (${(x.paired as string[]).join(', ')})` : ''}${x.gone !== undefined ? (x.gone ? `, shut down in ${seconds(x.ms as number)}` : ', still listed after shutdown') : ''}${x.note ? `\nnote: ${x.note}` : ''}`;
     case 'apps':
       return (x.packages as string[]).join('\n') || 'no third-party packages';
     case 'downloads': {

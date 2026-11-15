@@ -127,6 +127,11 @@ export const configSchema = z.object({
        * (`pitbox.<android id>://connect?devserver=host:port`), handled by the connect library in debug builds.
        */
       connect: z.string().optional(),
+      /**
+       * The watch app: what `open`, `stop`, `install`'s checks, `push` and the like take on an Apple Watch simulator
+       * when no app is named — `{apple: 'com.example.app.watchkitapp'}`. Without it, `app.apple`.
+       */
+      watch: z.object({apple: z.string().optional()}).optional(),
     })
     .optional(),
   /** Shell for project commands: `bash` (default; Git Bash on Windows), `sh`, `cmd` or a path. */
@@ -189,6 +194,11 @@ export const configSchema = z.object({
     .object({
       /** Default simulator for `boot`: a name (`iPhone 17`) or a udid. */
       simulator: z.string().optional(),
+      /**
+       * The watch `device action=pair value=watch` pairs with the phone: a simulator name (`Apple Watch Series 11
+       * (46mm)`) or a udid. Without it, any free watch simulator.
+       */
+      watch: z.string().optional(),
       /**
        * A Mac that serves its simulators (`pitbox serve-devices` there): `http://mac.example.test:7700`. The
        * token goes in PITBOX_REMOTE_TOKEN (or `token`, kept out of version control).
