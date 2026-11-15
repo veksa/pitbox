@@ -130,6 +130,21 @@ export const pickSimulator = (sims: Simulator[], selector: string): Simulator | 
   return named.sort((a, b) => Number(b.state === 'Booted') - Number(a.state === 'Booted') || newerFirst(a, b))[0];
 };
 
+/** A watch paired with a phone (`simctl list pairs`). A phone may have several watches; one pair is active. */
+export type WatchPair = {id: string; watch: {udid: string; name: string; state: string}; phone: {udid: string; name: string; state: string}; active: boolean; connected: boolean};
+
+/** `simctl list pairs -j` → its pairs. */
+export const parsePairs = (json: string): WatchPair[] => {
+  const pairs = (JSON.parse(json) as {pairs?: Record<string, {watch?: Record<string, string>; phone?: Record<string, string>; state?: string}>}).pairs ?? {};
+  return Object.entries(pairs)
+    .filter(([, p]) => p.watch?.udid && p.phone?.udid)
+    .map(([id, p]) => {
+      const state = p.state ?? '';
+      const side = (d: Record<string, string>) => ({udid: d.udid!, name: d.name ?? '', state: d.state ?? ''});
+      return {id, watch: side(p.watch!), phone: side(p.phone!), active: /\(active\b/.test(state), connected: /\bconnected\)/.test(state) && !/disconnected/.test(state)};
+    });
+};
+
 export const isAppleBundle = (file: string) => /\.(app|ipa)\/?$/i.test(file);
 
 /** How long `simctl list` may take before it is asked again. */
@@ -269,6 +284,31 @@ export class AppleDriver {
     const sim = (await this.simulators()).find(s => s.udid === udid);
     if (!sim) throw new AppleError(`simctl created ${udid} but does not list it`);
     return sim;
+  }
+
+  /** The watch pairs on this Mac, whoever made them. */
+  async pairs(): Promise<WatchPair[]> {
+    return parsePairs(await this.#ok(['list', 'pairs', '-j'], 'list pairs'));
+  }
+
+  /** Pairs a watch with a phone; answers the new pair's id. A pair made on a phone with no pair is active at once. */
+  async pair(watch: string, phone: string): Promise<string> {
+    const id = (await this.#ok(['pair', watch, phone], 'pair')).trim();
+    if (!/^[0-9A-F-]{36}$/i.test(id)) throw new AppleError(`simctl pair answered no pair id: ${id.slice(0, 120)}`);
+    return id;
+  }
+
+  /** Makes the pair its phone's active one (the phone's other watches stay paired, inactive). */
+  async activatePair(id: string, timeoutMs = 45_000): Promise<void> {
+    const r = await this.simctl(['pair_activate', id], {timeoutMs});
+    if (r.timedOut) throw new AppleError(`simctl pair_activate did not answer in ${Math.round(timeoutMs / 1000)}s`, 'CoreSimulator could not switch the phone to this watch: boot a fresh phone for the pair (`device boot`) and pair again');
+    if (r.code !== 0) throw new AppleError(`pair_activate failed: ${(r.stderr || r.stdout).trim().split('\n').pop()}`);
+  }
+
+  /** Removes a pair; a pair already gone is no error. */
+  async unpair(id: string): Promise<void> {
+    const r = await this.simctl(['unpair', id]);
+    if (r.code !== 0 && !/Invalid device pair/i.test(r.stderr)) throw new AppleError(`unpair failed: ${r.stderr.trim()}`);
   }
 
   /** Deletes a simulator (one pitbox created for a session); it must be shut down. */
