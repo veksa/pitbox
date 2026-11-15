@@ -50,7 +50,10 @@ compact text.
 - **Watch pairing** — an Apple Watch simulator paired with the session's iPhone simulator in one call (`device
   action=pair value=watch`), both leased; then `device=watch` drives the watch and its app (`app.watch.apple`).
   A watch in another session's pair is never taken; one is cloned when none is free, and what pitbox paired or
-  created goes when the session gives the devices back ([parallel.md](parallel.md#watch-pairs)).
+  created goes when the session gives the devices back ([parallel.md](parallel.md#watch-pairs)). The same call
+  with an Android phone emulator pairs a Wear OS emulator through a stand-in for the Data Layer — no Play Store
+  companion, no Google account: messages both ways, capabilities, the app's `WearableListenerService` woken from
+  not running ([wear.md](wear.md)).
 
 ## UI automation
 

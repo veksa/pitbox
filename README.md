@@ -76,6 +76,7 @@ export default defineConfig({
 | [Config](docs/config.md) | every field of `pitbox.config.ts` |
 | [Flows](docs/flows.md) | the flow language: steps, selectors, recording |
 | [Push notifications](docs/push.md) | `push` on simulators and emulators, the stand's push gateway, recipes |
+| [Wear OS pairing](docs/wear.md) | a phone and a Wear OS emulator paired through pitbox's Data Layer stand-in |
 | [Using pitbox from an agent](docs/agents.md) | how an agent gets the most out of the tools |
 | [Working in parallel](docs/parallel.md) | device leases: several sessions on one machine, each on its own device |
 | [Benchmarks](bench/README.md) | what pitbox measures and how |

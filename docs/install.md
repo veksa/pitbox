@@ -44,7 +44,8 @@ does yet, and adds `.pitbox/` to `.gitignore`. `--dry-run` only says what it wou
 Small debug-only libraries that point an app at pitbox's dev server and named hosts from a
 `pitbox.<bundle id>://connect` link. Simulators and emulators opened by pitbox need none of them; they matter on
 physical devices and in native apps that read named hosts. The Android library also carries the receiver that
-`push` delivers through (an Android app needs it for [push notifications](push.md); iOS needs nothing).
+`push` delivers through (an Android app needs it for [push notifications](push.md); iOS needs nothing) and the
+Wear OS Data Layer stand-in two paired emulators talk through ([wear.md](wear.md)).
 
 **React Native** — comes with the npm package. Android is autolinked; everything the library does lives in its
 debug variant, and its release variant carries only the empty package class autolinking needs (no components, no

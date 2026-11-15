@@ -43,7 +43,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   `rotate` turns the device (an error when the app stays as it was), and iPad takes `press kind=right|hover`,
   `swipe via=wheel` and `key keys=["meta+k"]`; the watch takes `swipe via=rotary`. A watch app that talks to its
   iPhone app needs the two paired: `device action=pair value=watch` pairs a watch with your phone (both leased to
-  you), `device=watch` then drives it with `app.watch.apple`, and `device action=unpair value=watch` gives it back. A foldable iPhone poses
+  you), `device=watch` then drives it with `app.watch.apple`, and `device action=unpair value=watch` gives it back.
+  With an Android phone emulator the same call pairs a Wear OS emulator through pitbox's Data Layer stand-in
+  ([wear.md](wear.md)); its answer, asked again, shows the last messages relayed and what each app did with them. A foldable iPhone poses
   as in Xcode's device window: `device action=posture value=closed|half|open|<degrees> [fast|medium|slow]`
   swings the hinge and the app moves between the screens, `value=swap` changes the lit screen at once (motion
   then waits about ten seconds), `rotate` turns the whole phone, 180 upside down. `device action=info` names the

@@ -161,7 +161,11 @@ left to each agent's discipline.
   daemon's exit undo only what pitbox made: the pair it created (while it still joins the same two simulators),
   the watch it booted (shut down) or created (deleted). A pair the phone already had with a free watch stays. A
   pair left by a session that died is unpaired by the next beat or `devices clean` once neither simulator has a
-  live lease. `simctl pair_activate` that hangs (45 s) is rolled back with a hint to boot a fresh phone.
+  live lease. `simctl pair_activate` that hangs (45 s) is rolled back with a hint to boot a fresh phone. With an
+  Android phone emulator the pair is pitbox's Data Layer stand-in ([wear.md](wear.md)): only a Wear OS emulator the
+  session holds or boots for it is taken (its lease names the phone the same way), never one another session holds,
+  and the pair lives in the daemon: unpair, a release of either device, `down` and the daemon's exit make both apps
+  forget it.
 - **Shared caches.** The Apple runner, the fold helper and the Mac runner are built once per source and Xcode
   version under `~/Library/Caches/pitbox` and shared by every daemon. A version in use is marked
   (`.in-use-<pid>`), a build holds `<version>.lock` (a second daemon building the same version waits and finds it
@@ -178,7 +182,7 @@ left to each agent's discipline.
 | `device action=lease value=<purpose>` · `pitbox device lease [--device d] [--purpose text]` | hold a device now (it is taken on first use anyway) |
 | `device action=release [keep=true]` · `pitbox device release [--keep]` | give it back; one pitbox booted shuts down unless `keep` |
 | `device action=shutdown [force=true]` · `pitbox shutdown [--force]` | only your device; `force` (with the device named) names whose it was |
-| `device action=pair value=watch [watch=<name\|udid>]` · `pitbox device pair watch [<watch>]` | pair an Apple Watch simulator with your iPhone simulator; `device=watch` then names it |
+| `device action=pair value=watch [watch=<name\|udid>]` · `pitbox device pair watch [<watch>]` | pair an Apple Watch simulator with your iPhone simulator, or a Wear OS emulator with your Android phone emulator (`watch=<avd\|serial>`); `device=watch` then names it |
 | `device action=unpair value=watch` · `pitbox device unpair watch` | undo the pair pitbox made and give the watch back |
 | `pitbox lease acquire <device> --as "<label>" [--ttl 30m] [--purpose text] [--pid n] [--wait 5m]` | a lease from a shell, no daemon: for scripts that drive a device with `simctl` or `adb` themselves; exits 1 naming the holder |
 | `pitbox lease release <device> --as "<label>" [--force]` · `pitbox lease list` | give it back · every lease, live and stale, after ending the ones nobody released (see *Leases nobody released are ended*) |

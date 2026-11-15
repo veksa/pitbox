@@ -23,7 +23,7 @@ export default defineConfig({
 | `android` | Android package; the default for `open`, `stop`, `clear`, logs, perf |
 | `apple` | Apple bundle id; the default for the same commands on a simulator, and the app the Apple runner reads |
 | `scheme` | the app's URL scheme |
-| `watch` | `{apple: 'com.example.app.watchkitapp'}`: the app the same commands take on an Apple Watch simulator (a paired watch: `device=watch`); without it, `apple` |
+| `watch` | `{apple: 'com.example.app.watchkitapp', android: 'com.example.app'}`: the app the same commands take on an Apple Watch simulator or a Wear OS device (a paired watch: `device=watch`); without it, `apple` / `android`. A Wear OS app paired over the Data Layer has the phone's package, so `android` is for a watch app of its own |
 | `connect` | link that points the app at the dev server, used by `qr` and by `open` without a target. Placeholders: `{devserver}` (URL-encoded `http://host:port`), `{host}`, `{port}`. Default: pitbox's connect link `pitbox.<android>://connect?devserver={host}:{port}`, handled by the connect library in debug builds. With a dev launcher, its own link: `myapp://expo-development-client/?url={devserver}` |
 
 ## shell
@@ -116,6 +116,7 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 | Field | Meaning |
 |---|---|
 | `avd` | default emulator for `boot` |
+| `watch` | the Wear OS emulator `device action=pair value=watch` pairs with an Android phone: an AVD name or a serial; without it, a Wear OS emulator the session holds, else the first Wear OS AVD ([wear.md](wear.md)) |
 | `reverse` | extra host ports to forward besides the services' `expose` (React DevTools, for example) |
 | `forward` | how exposed ports reach devices: `reverse` (adb reverse), `relay` (pitbox's runner listens on the device and pipes to the emulator host alias 10.0.2.2), `auto` (default: adb reverse, switching an emulator to the relay when its forwards stop carrying data; remembered per AVD) |
 
