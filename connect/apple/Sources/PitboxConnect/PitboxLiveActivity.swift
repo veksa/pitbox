@@ -21,7 +21,7 @@ import ActivityKit
 #endif
 
 /// A Live Activity push token the hook made up (the system gives none to an app without aps-environment).
-public struct PitboxLiveActivityToken {
+public struct PitboxLiveActivityToken: Sendable {
   /// `start` (a push-to-start token of `type`) or `activity` (the token of the activity `activityId`).
   public let kind: String
   public let type: String
@@ -30,12 +30,32 @@ public struct PitboxLiveActivityToken {
   public let token: String
 }
 
+/// True for the first `claim()` only, from any thread: `start()` is idempotent without a mutable static.
+final class OnceFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var done = false
+  func claim() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+}
+
+/// Holds `onSyntheticToken` behind a lock: a mutable static is refused by Swift 6's strict concurrency in the
+/// targets that import this module, and a stored `let` of a Sendable type is not.
+final class SyntheticTokenHandler: @unchecked Sendable {
+  static let shared = SyntheticTokenHandler()
+  private let lock = NSLock()
+  private var handler: ((PitboxLiveActivityToken) -> Void)?
+  func get() -> ((PitboxLiveActivityToken) -> Void)? { lock.lock(); defer { lock.unlock() }; return handler }
+  func set(_ h: ((PitboxLiveActivityToken) -> Void)?) { lock.lock(); handler = h; lock.unlock() }
+}
+
 #if DEBUG && canImport(ActivityKit) && os(iOS)
 import UIKit
 
 public enum PitboxLiveActivity {
   /// Called on the main queue with each token the hook makes up.
-  public static var onSyntheticToken: ((PitboxLiveActivityToken) -> Void)?
+  public static var onSyntheticToken: ((PitboxLiveActivityToken) -> Void)? {
+    get { SyntheticTokenHandler.shared.get() }
+    set { SyntheticTokenHandler.shared.set(newValue) }
+  }
 
   /// Registers a type pitbox may start, update and end, by `name` (default: the type's own name, which is what a
   /// push's `attributes-type` gives).
@@ -48,8 +68,7 @@ public enum PitboxLiveActivity {
   /// Starts taking pitbox's pushes: on its Darwin notification and whenever the app becomes active. Idempotent.
   public static func start() {
     guard #available(iOS 16.2, *) else { return }
-    guard !started else { return }
-    started = true
+    guard startOnce.claim() else { return }
     let bundle = Bundle.main.bundleIdentifier ?? "app"
     CFNotificationCenterAddObserver(
       CFNotificationCenterGetDarwinNotifyCenter(), nil,
@@ -66,7 +85,7 @@ public enum PitboxLiveActivity {
     }
   }
 
-  private static var started = false
+  private static let startOnce = OnceFlag()
 
   static func announce(_ t: PitboxLiveActivityToken) {
     DispatchQueue.main.async { onSyntheticToken?(t) }
@@ -284,7 +303,10 @@ actor Worker {
 #else
 
 public enum PitboxLiveActivity {
-  public static var onSyntheticToken: ((PitboxLiveActivityToken) -> Void)?
+  public static var onSyntheticToken: ((PitboxLiveActivityToken) -> Void)? {
+    get { SyntheticTokenHandler.shared.get() }
+    set { SyntheticTokenHandler.shared.set(newValue) }
+  }
 
   #if canImport(ActivityKit) && os(iOS)
   @available(iOS 16.2, *)
