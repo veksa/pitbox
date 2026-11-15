@@ -69,6 +69,7 @@ push (no credentials: simctl push on simulators, the app's own FCM service on An
   push file=payload.json | push apns='{"aps":{…}}' | push fcm='{"notification":{…},"data":{…}}'   raw payloads, converted for the other platform
        [delay=s] [repeat=n] [grant=true] [--app <package|bundle id>]   one-line verdict: posted / banner shown / handled in front
   push tap [title] [--expect app|away|any] · push clear · push grant · push status · push log [-n 10] · push bind <token>
+  push activity start|update|end type=… attributes='{…}' state='{…}' [stale= dismissal= relevance= alert= id= token=] · push activities   iOS Live Activities through the app's debug hook
 
 flows
   run <flow> [param=value…] [--from line] | run --steps "press id=a"   run a flow in the daemon, get one verdict
@@ -320,12 +321,17 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'net':
       return {method: 'net', params: {action: rest[0] ?? 'list', match: rest[1], kind: flags.kind, status: flags.status, body: flags.body, ms: flags.ms}};
     case 'push': {
-      const sub = ['tap', 'clear', 'grant', 'status', 'log', 'bind', 'send'].includes(rest[0] ?? '') ? rest[0]! : 'send';
+      const sub = ['tap', 'clear', 'grant', 'status', 'log', 'bind', 'send', 'activity', 'activities'].includes(rest[0] ?? '') ? rest[0]! : 'send';
       const args = sub === 'send' && rest[0] !== 'send' ? rest : rest.slice(1);
       const app = flags.app ?? flags.pkg;
       if (sub === 'tap') return {method: 'push', params: {action: sub, device, app, title: args.join(' ') || undefined, ...(typeof flags.expect === 'string' && {expect: flags.expect})}};
       if (sub === 'bind') return {method: 'push', params: {action: sub, device, token: args[0]}};
       if (sub === 'log') return {method: 'push', params: {action: sub, limit: flags.lines}};
+      // push activity start type=DeliveryAttributes attributes='{…}' state='{…}' · push activity update state='{…}' [id=…]
+      if (sub === 'activity') {
+        const event = args[0] && !args[0].includes('=') ? args[0] : undefined;
+        return {method: 'push', params: {action: sub, device, app, ...(event ? {event} : {}), ...kv(event ? args.slice(1) : args)}};
+      }
       if (sub !== 'send') return {method: 'push', params: {action: sub, device, app}};
       const fields = kv(args);
       // A payload file is read by the daemon, which runs in the project's root: make the path absolute here.

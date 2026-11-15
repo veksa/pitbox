@@ -79,6 +79,21 @@ const APPLE_HAS_NO = {
   window: 'window is for Android: Apple simulators have no desktop windows',
 } as const;
 
+/**
+ * Whether an installed simulator app carries the aps-environment entitlement. A simulator build keeps its
+ * entitlements as a plist in the executable (the `__entitlements` section), not in a signature codesign reads.
+ */
+export const hasApsEnvironment = async (app: string): Promise<boolean | undefined> => {
+  const r = await run('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(app, 'Info.plist')], {timeoutMs: 10_000});
+  const exe = r.code === 0 ? r.stdout.trim() : '';
+  if (!exe || exe.includes('/')) return undefined;
+  try {
+    return fs.readFileSync(path.join(app, exe)).includes('aps-environment');
+  } catch {
+    return undefined;
+  }
+};
+
 /** Who listens on the bundler's port (util/net.ts `portListeners`); tests stand in for it. */
 export const bundlerProbe = {listeners: portListeners};
 
@@ -117,6 +132,19 @@ export class Engine {
     ui: device => this.ui(device),
     liveUi: device => this.#uis.get(device),
     tokenFile: () => path.join(this.#loaded.stateDir, 'push-tokens.json'),
+    liveActivity: () => {
+      const s = this.apple;
+      if (!this.#isLocalApple(s)) return undefined;
+      return {
+        container: (udid, bundleId) => s.dataContainer(udid, bundleId),
+        notify: (udid, name) => s.notify(udid, name),
+        launch: async (udid, bundleId) => void (await s.open(udid, bundleId)),
+        apsEnvironment: async (udid, bundleId) => {
+          const app = await s.appBundle(udid, bundleId);
+          return app ? hasApsEnvironment(app) : undefined;
+        },
+      };
+    },
   });
   #android?: AndroidDriver | null;
   #apple?: AppleDevices | null;
@@ -1808,6 +1836,13 @@ export class Engine {
           return {action, ...(await this.#pushes.status({device, app}))};
         case 'log':
           return {action, log: this.#pushes.log.slice(-(num(p, 'limit') ?? 10)), gateway: this.#gateway?.running ? this.#gateway.port : undefined};
+        case 'activity':
+          return {
+            action,
+            ...(await this.#pushes.activity({device, app, event: str(p, 'event'), type: str(p, 'type'), attributes: p.attributes, state: p.state, stale: p.stale, dismissal: p.dismissal, relevance: p.relevance, alert: p.alert, id: str(p, 'id'), token: str(p, 'token'), timestamp: p.timestamp})),
+          };
+        case 'activities':
+          return {action, ...(await this.#pushes.activities({device, app}))};
         case 'bind': {
           const token = req(p, 'token');
           const t = await this.#target(device);
@@ -1815,7 +1850,7 @@ export class Engine {
           return {action, token, device: t.id};
         }
         default:
-          throw new Error('push action: send | tap | clear | grant | status | log | bind');
+          throw new Error('push action: send | tap | clear | grant | status | log | bind | activity | activities');
       }
     },
 

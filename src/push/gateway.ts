@@ -16,12 +16,13 @@ import http from 'node:http';
 import http2 from 'node:http2';
 import net from 'node:net';
 import {assertPortFree} from '../util/net.ts';
+import {isLiveActivity} from './liveactivity.ts';
 import {PushUnregistered, type PushCenter, type PushOptions, type PushResult} from './push.ts';
 
 export type GatewayRequest = {method: string; path: string; headers: Record<string, string | undefined>; body: string};
 export type GatewayAnswer = {status: number; headers?: Record<string, string>; body?: unknown};
 
-type Center = Pick<PushCenter, 'send' | 'route' | 'bind'>;
+type Center = Pick<PushCenter, 'send' | 'route' | 'bind'> & Partial<Pick<PushCenter, 'routeActivity'>>;
 
 const json = (body: string): Record<string, unknown> => {
   if (!body.trim()) return {};
@@ -78,6 +79,19 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     } catch {
       return {status: 400, body: {reason: 'PayloadEmpty'}};
     }
+    // A Live Activity push: its token names an activity (or a type's push-to-start), found in the app's hook state.
+    if (isLiveActivity(payload, req.headers) && center.routeActivity) {
+      const la = await center.routeActivity(token, topic ?? apps.apple);
+      if (la.dead === 'unregistered') return {status: 410, body: {reason: 'Unregistered', timestamp: Date.now(), pitbox: 'no simulator of this session has an activity or push-to-start token like it'}};
+      if (la.dead === 'nohook') return {status: 500, body: {reason: 'InternalServerError', pitbox: 'the app has no Live Activity hook (PitboxLiveActivity in its debug build): pitbox cannot tell which activity the token is'}};
+      if (!la.device) return {status: 503, body: {reason: 'ServiceUnavailable', pitbox: 'no simulator of this session booted'}};
+      const s = await deliver(center, {device: la.device, app: topic ?? apps.apple, apns: payload, apnsHeaders: apnsHeaders(req.headers), liveActivityToken: token, fromGateway: true}, 'gateway apns', token);
+      if ('error' in s) return {status: 500, body: {reason: 'InternalServerError', pitbox: s.error}};
+      const r = s.result;
+      if (r.reason === 'unregistered') return {status: 410, headers: verdictHeader(r), body: {reason: 'Unregistered', timestamp: Date.now(), pitbox: r.verdict}};
+      if (r.reason === 'nohook') return {status: 500, headers: verdictHeader(r), body: {reason: 'InternalServerError', pitbox: r.verdict}};
+      return {status: 200, headers: {'apns-id': r.id, ...verdictHeader(r)}};
+    }
     const routed = await center.route('apns', token);
     if (routed.dead) return {status: 400, body: {reason: 'BadDeviceToken', pitbox: routed.dead}};
     if (!routed.device) return {status: 503, body: {reason: 'ServiceUnavailable', pitbox: 'no simulator of this session booted (devices held by other sessions or nobody are not delivered to)'}};
@@ -123,7 +137,7 @@ export const handlePush = async (center: Center, req: GatewayRequest, apps: {and
     const s = sent[0]!;
     const verdict = 'error' in s ? s.error : s.result.verdict;
     if (dead(s)) return {status: 404, headers: {'x-pitbox-verdict': plain(verdict)}, body: {error: {code: 404, message: verdict, status: 'NOT_FOUND', details: [{'@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode: 'UNREGISTERED'}]}}};
-    if ('error' in s) return {status: 500, body: {error: {code: 500, message: s.error, status: 'INTERNAL'}}};
+    if ('error' in s || s.result.reason === 'nohook') return {status: 500, headers: {'x-pitbox-verdict': plain(verdict)}, body: {error: {code: 500, message: verdict, status: 'INTERNAL'}}};
     return {status: 200, headers: verdictHeader(s.result), body: {name: `projects/${v1![1]}/messages/${s.result.id}`}};
   }
 

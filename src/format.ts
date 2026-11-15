@@ -221,6 +221,8 @@ export const fmtPush = (x: Record<string, unknown>): string => {
       return [`${x.app} on ${x.device}`, ...(x.lines as string[]).map(l => `  ${l}`)].join('\n');
     case 'bind':
       return `token ${String(x.token).slice(0, 12)}… → ${x.device}`;
+    case 'activities':
+      return [`${x.app} on ${x.device}`, ...(x.lines as string[]).map(l => `  ${l}`)].join('\n');
     case 'log': {
       const log = x.log as PushRecord[];
       const now = Date.now();

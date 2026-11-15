@@ -152,9 +152,18 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // it was delivered; log is a line per push.
   tool(
     'push',
-    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms.',
+    'Push notification, no credentials: send title/body/data (or file, apns, fcm raw payload) → one-line verdict from the system UI; tap (latest notification; expect=away when its tap opens another app, such as a page in the browser), clear, grant (Android notification permission), status (can the app take pushes), log, bind token=… (stand gateway). delay s, repeat n, wait ms. iOS Live Activities (a stand-in through the app debug hook): activity event=start|update|end type=<ActivityAttributes> attributes={…} state={…} [stale dismissal relevance alert id token], activities (types, running ones, tokens); a Live Activity payload in send/file/apns/fcm goes the same way. Typical answer: one or two lines.',
     {
-      action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind']).optional(),
+      action: z.enum(['send', 'tap', 'clear', 'grant', 'status', 'log', 'bind', 'activity', 'activities']).optional(),
+      event: z.enum(['start', 'update', 'end']).optional(),
+      type: opt.str(),
+      attributes: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+      state: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+      stale: z.union([z.string(), z.number()]).optional(),
+      dismissal: z.union([z.string(), z.number()]).optional(),
+      relevance: opt.num(),
+      alert: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+      id: opt.str(),
       title: opt.str(),
       subtitle: opt.str(),
       body: opt.str(),

@@ -10,7 +10,8 @@ import type {AndroidDriver} from '../drivers/android/driver.ts';
 import type {AppleDevices} from '../remote/appleRemote.ts';
 import type {ActResult, DeviceUi} from '../ui/device.ts';
 import {appState, assertPackage, callReceiver, grantNotifications, homePackage, missingReceiver, notifications, notificationsAllowed, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
-import {describe, toApns, toFcmExtras, toMessage, type PushInput, type PushMessage} from './payload.ts';
+import {deliverLiveActivity, isLiveActivity, liveActivityProblem, parseLiveActivity, readLiveActivityState, shortToken, tokenIn, type LiveActivityHost, type LiveActivityPush, type LiveActivityState} from './liveactivity.ts';
+import {describe, fromFirebaseAdmin, toApns, toFcmExtras, toMessage, type PushInput, type PushMessage} from './payload.ts';
 
 /** What a notification's tap must bring to the front: the app, another app (a web page in the browser), or either. */
 export const TAP_EXPECT = ['app', 'away', 'any'] as const;
@@ -30,6 +31,8 @@ export type PushDeps = {
   liveUi?: (device: string) => DeviceUi | undefined;
   /** Where token bindings are kept across daemon restarts (read on first use: the config may load later). */
   tokenFile?: () => string | undefined;
+  /** The simulator side of Live Activities (liveactivity.ts); undefined when the simulators are not on this Mac. */
+  liveActivity?: () => LiveActivityHost | undefined;
 };
 
 /** The device cannot take pushes for this app at all: not installed, no receiver, no FCM client. */
@@ -51,6 +54,10 @@ export type PushOptions = PushInput & {
   fromGateway?: boolean;
   /** How the gateway chose the device, when the choice was a guess. */
   routeNote?: string;
+  /** A Live Activity push: the token that names its activity (or, for a start, its type) — APNs' device token, FCM's `live_activity_token`. */
+  liveActivityToken?: string;
+  /** A Live Activity push: the activity it is for, by its id (`push activity id=…`). */
+  activityId?: string;
 };
 
 export type PushResult = {
@@ -68,8 +75,11 @@ export type PushResult = {
   /** The notification the system shows for it, when it shows one. */
   shown?: {title?: string; text?: string; channel?: string; importance?: number};
   ok: boolean;
-  /** `unregistered`: the device cannot take pushes for the app at all (the gateway answers as for a dead token). */
-  reason?: 'unregistered';
+  /**
+   * `unregistered`: the device cannot take pushes for the app at all, or no activity has the Live Activity token (the
+   * gateway answers as for a dead token); `nohook`: the app has no Live Activity hook to take one.
+   */
+  reason?: 'unregistered' | 'nohook';
   verdict: string;
   notes?: string[];
   count?: number;
@@ -81,6 +91,34 @@ export type PushResult = {
 export type PushRecord = PushResult & {at: number; token?: string};
 
 const yes = (v: unknown) => v === true || v === 'true' || v === '1';
+
+const obj = (v: unknown): Record<string, unknown> | undefined => {
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) return v as Record<string, unknown>;
+  if (typeof v !== 'string' || !v.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** A Live Activity push in a send's input (an APNs payload with its headers, or an FCM message's apns block), if it is one. */
+export const liveActivityOf = (opts: PushOptions): {push: LiveActivityPush; token?: string} | undefined => {
+  const apns = obj(opts.apns);
+  if (apns) return isLiveActivity(apns, opts.apnsHeaders) ? {push: parseLiveActivity(apns), token: opts.liveActivityToken} : undefined;
+  const raw = obj(opts.fcm);
+  if (!raw) return undefined;
+  const m = fromFirebaseAdmin(obj(raw.message) ?? raw);
+  const block = obj(m.apns);
+  const payload = obj(block?.payload);
+  const headers = (obj(block?.headers) ?? {}) as Record<string, string>;
+  const token = typeof block?.live_activity_token === 'string' ? block.live_activity_token : undefined;
+  if (!payload || (!token && !isLiveActivity(payload, headers))) return undefined;
+  return {push: parseLiveActivity(payload), token: token ?? opts.liveActivityToken};
+};
+
+const pastTense = {start: 'started', update: 'updated', end: 'ended'} as Record<string, string>;
 
 /** The platform a placeholder token names (`pitbox-ios-<id>`, `pitbox-android-<id>`), if it is one. */
 export const placeholderPlatform = (token: string): 'apple' | 'android' | undefined => {
@@ -149,6 +187,15 @@ export class PushCenter {
 
   /** Sends one push (or schedules it); `source` tells the log where it came from. */
   async send(opts: PushOptions, source = 'push', token?: string): Promise<PushResult> {
+    const la = liveActivityOf(opts);
+    if (la) {
+      const t = await this.#deps.target(opts.device, {fromGateway: opts.fromGateway});
+      const r = await this.#activity(t, this.#app(t, opts.app), la, opts);
+      const notes = [...(r.notes ?? []), ...(opts.routeNote ? [opts.routeNote] : [])];
+      const result = {...r, notes: notes.length ? notes : undefined, source};
+      this.#record(result, token);
+      return result;
+    }
     const msg = toMessage(opts);
     const t = await this.#deps.target(opts.device, {fromGateway: opts.fromGateway});
     const app = this.#app(t, opts.app);
@@ -253,6 +300,135 @@ export class PushCenter {
       verdict: inFront ? "delivered; no banner — the app is in front and its notification handler shows none" : 'delivered; no banner seen — notifications may be off for the app, or its banners turned off',
       notes,
     };
+  }
+
+  /**
+   * A Live Activity push on a simulator, through the app's hook (liveactivity.ts): the activity resolved from the token
+   * (or the id, or the only one of its type that runs), checked as the system checks the payload, and handed over.
+   */
+  async #activity(t: PushTarget, app: string, la: {push: LiveActivityPush; token?: string}, opts: PushOptions): Promise<PushResult> {
+    const {push, token} = la;
+    // Sorts by time: the hook takes waiting commands in name order.
+    const id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+    const sent = `Live Activity ${push.event ?? '?'}${push.type ? ` ${push.type}` : ''}`;
+    const base = {id, platform: t.platform, device: t.id, app, sent};
+    const fail = (verdict: string, reason?: PushResult['reason']): PushResult => ({...base, ok: false, verdict, ...(reason ? {reason} : {})});
+    if (t.platform === 'android') return fail('not delivered: Live Activities are iOS-only (an Android app shows a live update as an ongoing notification of its own)');
+    const host = this.#deps.liveActivity?.();
+    if (!host) throw new Error('Live Activities need a simulator on this Mac: a remote Mac does not take them');
+    const state = await readLiveActivityState(host, t.id, app);
+    if (!state) return fail(`not delivered: ${app} has no Live Activity hook — its debug build registers its attribute types with PitboxLiveActivity (docs/push.md#live-activities)`, 'nohook');
+    const problem = liveActivityProblem(push);
+    if (problem) return fail(`dropped, as the system would: ${problem}`);
+    let activityId = opts.activityId;
+    let type = push.type;
+    if (token) {
+      const hit = tokenIn(state, token);
+      if (!hit) return fail(`not delivered: no activity or push-to-start token of ${app} on this simulator has the token ${shortToken(token)}`, 'unregistered');
+      if (push.event === 'start' && hit.kind !== 'start') return fail("dropped: a start sent to an activity's token — the system starts activities only from a push-to-start token");
+      if (push.event !== 'start' && hit.kind === 'start') return fail(`dropped: an ${push.event} sent to the push-to-start token of ${hit.type} — the system ignores it; send it to the activity's own token`);
+      if (push.event === 'start' && push.type && hit.type !== push.type) return fail(`dropped: the token is the push-to-start token of ${hit.type}, the push starts ${push.type}`);
+      activityId = hit.activityId ?? activityId;
+      type ??= hit.type;
+    }
+    if (push.event === 'start' && !state.types.includes(type!)) return fail(`not delivered: ${type} is not registered with the hook (registered: ${state.types.join(', ') || 'none'})`);
+    if (push.event !== 'start' && !activityId) {
+      const running = state.activities.filter(a => a.state === 'active' && (!type || a.type === type));
+      if (running.length !== 1) throw new Error(running.length ? `${running.length} activities run: name one with id=<activity id> (push activities lists them)` : `no activity of ${app} runs on this simulator${type ? ` of type ${type}` : ''}`);
+      activityId = running[0]!.id;
+      type ??= running[0]!.type;
+    }
+    if (activityId && !type) type = state.activities.find(a => a.id === activityId)?.type;
+    const {outcome, launched} = await deliverLiveActivity(host, t.id, app, {...push, type, id, activityId}, {waitMs: push.event === 'start' ? 8000 : 2000});
+    // "(stand-in)" in the verdict says what this is; a note only for what a real push would not have done.
+    const notes: string[] = [];
+    if (launched) notes.push(`the app was brought to the front ${push.event === 'start' ? 'for Activity.request' : '(it was suspended)'}, which a real push does not need — \`key home\` shows the activity in the Island`);
+    if (push.event === 'start' && push.alert) notes.push("a start's alert is not shown by the stand-in");
+    if (!outcome) return {...fail(`not delivered: the hook did not answer — is PitboxLiveActivity.start() called at launch?`), notes};
+    if (!outcome.ok) return {...fail(/^dropped/.test(outcome.error ?? '') ? outcome.error! : `the hook could not ${push.event} it: ${outcome.error ?? 'no reason given'}`), notes};
+    const which = `${type ?? ''} ${(outcome.activityId ?? activityId ?? '').slice(0, 8)}`.trim();
+    const tok = outcome.token ? ` · token ${shortToken(outcome.token)}${outcome.synthetic ? ' (synthetic)' : ''}` : '';
+    if (outcome.note) notes.push(outcome.note);
+    return {...base, ok: true, verdict: `Live Activity ${pastTense[push.event!]} (stand-in) · ${which}${tok}`, notes};
+  }
+
+  /** `push activity`: a Live Activity push from fields, with no payload to write. */
+  async activity(opts: {device?: string; app?: string; event?: string; type?: string; attributes?: unknown; state?: unknown; stale?: unknown; dismissal?: unknown; relevance?: unknown; alert?: unknown; id?: string; token?: string; timestamp?: unknown}): Promise<PushResult> {
+    const json = (v: unknown, what: string) => {
+      if (v === undefined) return undefined;
+      const o = obj(v);
+      if (!o) throw new Error(`${what} is not a JSON object`);
+      return o;
+    };
+    const date = (v: unknown, what: string) => {
+      if (v === undefined || v === '') return undefined;
+      const n = Number(v);
+      if (Number.isFinite(n)) return n < 1e5 ? Math.floor(Date.now() / 1000) + n : n;
+      const t = Date.parse(String(v));
+      if (Number.isNaN(t)) throw new Error(`${what}: seconds from now, epoch seconds or an ISO date`);
+      return Math.floor(t / 1000);
+    };
+    const alert = typeof opts.alert === 'string' && !opts.alert.trim().startsWith('{') ? {title: opts.alert} : (json(opts.alert, 'alert') as LiveActivityPush['alert']);
+    const push: LiveActivityPush = {
+      event: opts.event,
+      timestamp: opts.timestamp === undefined ? Math.floor(Date.now() / 1000) : Number(opts.timestamp),
+      type: opts.type,
+      attributes: json(opts.attributes, 'attributes'),
+      state: json(opts.state, 'state'),
+      staleDate: date(opts.stale, 'stale'),
+      dismissalDate: date(opts.dismissal, 'dismissal'),
+      relevanceScore: opts.relevance === undefined ? undefined : Number(opts.relevance),
+      alert,
+    };
+    if (push.event === 'start' && !push.attributes) push.attributes = {};
+    const t = await this.#deps.target(opts.device);
+    const r = await this.#activity(t, this.#app(t, opts.app), {push, token: opts.token}, {activityId: opts.id});
+    const result = {...r, source: 'push activity'};
+    this.#record(result, opts.token);
+    return result;
+  }
+
+  /** `push activities`: what the app's hook reports — its types, its activities, the tokens the system gave. */
+  async activities(opts: {device?: string; app?: string}): Promise<{device: string; app: string; state?: LiveActivityState; lines: string[]}> {
+    const t = await this.#deps.target(opts.device, {fromGateway: false});
+    const app = this.#app(t, opts.app);
+    if (t.platform === 'android') throw new Error('Live Activities are iOS-only');
+    const host = this.#deps.liveActivity?.();
+    if (!host) throw new Error('Live Activities need a simulator on this Mac');
+    const state = await readLiveActivityState(host, t.id, app);
+    if (!state) return {device: t.id, app, lines: [`${app} has no Live Activity hook (PitboxLiveActivity in its debug build)`]};
+    const start = state.tokens.filter(x => x.kind === 'start');
+    const lines = [
+      `types: ${state.types.join(', ') || 'none registered'}`,
+      ...start.map(x => `push-to-start ${x.type}: ${shortToken(x.token)}${x.synthetic ? ' (synthetic)' : ''}`),
+      ...state.activities.map(a => {
+        const tok = state.tokens.find(x => x.kind === 'activity' && x.activityId === a.id);
+        return `${a.type} ${a.id.slice(0, 8)} · ${a.state}${tok ? ` · token ${shortToken(tok.token)}${tok.synthetic ? ' (synthetic)' : ''}` : ''}`;
+      }),
+    ];
+    if (!state.activities.length) lines.push('no activities');
+    return {device: t.id, app, state, lines};
+  }
+
+  /**
+   * Which simulator a Live Activity token is on: a bound token's, else the held simulator whose app reports it.
+   * `dead`: no held simulator has it (`unregistered`), or none has an app with the hook to tell (`nohook`).
+   */
+  async routeActivity(token: string, bundleId?: string): Promise<{device?: string; dead?: 'unregistered' | 'nohook'; note?: string}> {
+    const online = (await this.#deps.online()).apple;
+    if (this.tokens.has(token) && online.includes(this.tokens.get(token)!)) return {device: this.tokens.get(token)};
+    if (!online.length) return {};
+    const host = this.#deps.liveActivity?.();
+    const app = bundleId ?? this.#deps.appleApp?.();
+    if (!host || !app) return {dead: 'nohook'};
+    let hooked = false;
+    for (const udid of online) {
+      const st = await readLiveActivityState(host, udid, app);
+      if (!st) continue;
+      hooked = true;
+      if (tokenIn(st, token)) return {device: udid};
+    }
+    return {dead: hooked ? 'unregistered' : 'nohook'};
   }
 
   /**
@@ -444,7 +620,22 @@ export class PushCenter {
   async status(opts: {device?: string; app?: string}): Promise<{device: string; app: string; platform: string; lines: string[]}> {
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
-    if (t.platform === 'apple') return {device: t.id, app, platform: 'apple', lines: ['simctl push: ready (no app code needed; the app must have asked for notification permission)']};
+    if (t.platform === 'apple') {
+      const lines = ['simctl push: ready (no app code needed; the app must have asked for notification permission)'];
+      const host = this.#deps.liveActivity?.();
+      if (host) {
+        const aps = await host.apsEnvironment?.(t.id, app).catch(() => undefined);
+        if (aps !== undefined) lines.push(aps ? 'aps-environment: ✓ (the system gives real push tokens, Live Activity ones too)' : '✗ no aps-environment entitlement: no push tokens; the Live Activity hook makes up synthetic ones');
+        const st = await readLiveActivityState(host, t.id, app);
+        if (!st) lines.push('Live Activities: no hook (PitboxLiveActivity in the debug build takes them)');
+        else {
+          const real = st.tokens.filter(x => !x.synthetic).length;
+          const made = st.tokens.length - real;
+          lines.push(`Live Activities: hook ✓ · ${st.types.join(', ') || 'no types registered'} · ${st.activities.filter(a => a.state === 'active').length} running · tokens ${real} real${made ? `, ${made} synthetic` : ''}`);
+        }
+      }
+      return {device: t.id, app, platform: 'apple', lines};
+    }
     const r = await callReceiver(t.a, t.id, app, 'probe');
     if (!r.data) throw new Error(await missingReceiver(t.a, t.id, app));
     const allowed = await notificationsAllowed(t.a, t.id, app);
