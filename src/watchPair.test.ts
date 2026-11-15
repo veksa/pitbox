@@ -170,6 +170,20 @@ describe('watch pairs', () => {
     expect(s.unpaired).toEqual([]);
   });
 
+  it("unpairs only a watch this session paired", async () => {
+    const s = new FakeSimctl([{}, watch('W1'), {udid: 'U3', name: 'iPhone Air'}, watch('W3')]);
+    const b = await session('bob', s);
+    await b.methods.boot({avd: 'iPhone Air'});
+    await b.methods.pair({value: 'watch', watch: 'W3'});
+    const a = await session('alice', s);
+    await a.methods.boot({avd: 'iPhone 17'});
+    await a.methods.pair({value: 'watch', watch: 'W1'});
+    // Bob's pair, made by pitbox, is not Alice's to undo.
+    await expect(a.methods.unpair({value: 'watch', device: 'W3'})).rejects.toThrow(/not a watch this session paired/);
+    expect(s.pairList.map(p => p.watch.udid).sort()).toEqual(['W1', 'W3']);
+    expect(readLease('apple', 'W3')?.pairedWith).toBe('U3');
+  });
+
   it('rolls back a pair that would not activate', async () => {
     const s = new FakeSimctl([{}, watch('W1'), watch('W2')]);
     s.pairedElsewhere('W2', 'U1');

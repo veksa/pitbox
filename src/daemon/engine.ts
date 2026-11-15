@@ -2052,6 +2052,8 @@ export class Engine {
       const value = str(p, 'value')?.trim();
       if (value && value !== 'watch') throw new Error('unpair value=watch (a phone on Wi-Fi is forgotten in its Developer options)');
       const watch = str(p, 'device') ? (await this.#target(str(p, 'device'), {observe: true, platform: 'apple'})).id : this.#sessionWatch();
+      // Only a watch this session paired goes back: a pair another session made stays.
+      if (!this.#leases.held().some(h => h.platform === 'apple' && h.id === watch && h.pairedWith)) throw new Error(`${watch} is not a watch this session paired: unpair gives back only those\nhint: device action=unpair value=watch`);
       const done = await this.#dropPairsOf(watch);
       const h = this.#leases.holderOf('apple', watch);
       const released = h?.mine ? ((await this.methods.release({device: watch})) as {released?: string}).released : undefined;
