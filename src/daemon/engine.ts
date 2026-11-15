@@ -68,6 +68,24 @@ const list = (p: Params, k: string): string[] => {
 const machineRelayFile = () => path.join(os.homedir(), '.pitbox', 'relay-avds.json');
 
 /** What an Apple simulator cannot do of the Android-only form factor commands, and why. */
+/**
+ * Logpoint expressions: a list, one expression, or a list sent as JSON text (`'["a","b"]'`) — the last would
+ * otherwise log an array of two strings, never the values.
+ */
+export const jsExprs = (v: unknown): string[] => {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v !== 'string') return [];
+  if (/^\s*\[/.test(v)) {
+    try {
+      const list = JSON.parse(v) as unknown;
+      if (Array.isArray(list) && list.every(x => typeof x === 'string')) return list;
+    } catch {
+      // an array expression of the app's own, not JSON
+    }
+  }
+  return [v];
+};
+
 /** The longest plain pause `wait seconds=…` takes: longer belongs to a flow or a polling loop of the caller. */
 const MAX_PAUSE_S = 600;
 
@@ -1946,7 +1964,7 @@ export class Engine {
 
     jsLog: async (p: Params) => {
       if (!this.#dev) throw new Error('no devserver in the config');
-      const exprs = Array.isArray(p.exprs) ? p.exprs.map(String) : typeof p.exprs === 'string' ? [p.exprs] : [];
+      const exprs = jsExprs(p.exprs);
       return this.#dev.js.log(req(p, 'at'), exprs, await this.#jsDevice(str(p, 'device')));
     },
 

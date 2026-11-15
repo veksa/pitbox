@@ -151,6 +151,10 @@ Many explorations at once, each finding proven before it is reported:
   `js action=hits` — what the line saw each time it ran, without editing code or a rebuild; one failing
   expression does not hide the others. `js action=clear` when done. The first logpoint reloads an app that runs
   bytecode (the runtime needs source to read locals), so set it before reaching the screen you care about.
+  A logpoint lives in the running JS runtime: after a reload or a cold start (a notification tap that starts the
+  app, a crash) pitbox places it again in the new runtime, on the device it was set for, but code that ran during
+  start-up before that is not seen — `js action=hits` says so, and with 0 hits it says whether the line simply has
+  not run. To catch start-up code, start the app first and reach the line by navigating.
 - Screenshots last: `inspect what=screenshot` (downscaled) only when text and checks are not enough.
 
 ## Web apps

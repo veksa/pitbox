@@ -99,6 +99,15 @@ describe('source maps', () => {
 });
 
 describe('logpoint inputs', () => {
+  it('takes expressions as a list, one string, or a list sent as JSON text', async () => {
+    const {jsExprs} = await import('./daemon/engine.ts');
+    expect(jsExprs(['a', 'b.c'])).toEqual(['a', 'b.c']);
+    expect(jsExprs('a.b')).toEqual(['a.b']);
+    expect(jsExprs('["id","get(id)"]')).toEqual(['id', 'get(id)']);
+    expect(jsExprs('[a, b]')).toEqual(['[a, b]']);
+    expect(jsExprs(undefined)).toEqual([]);
+  });
+
   it('parses file:line, a drive letter included', () => {
     expect(parseAt('src/App.tsx:42')).toEqual({file: 'src/App.tsx', line: 42});
     expect(parseAt('C:\\app\\App.tsx:7')).toEqual({file: 'C:\\app\\App.tsx', line: 7});
@@ -329,6 +338,28 @@ describe('the app runtime', () => {
     expect(logpoints[0]!.hits.at(-1)!.v).toBe('"Cy"  ! ReferenceError: missing is not defined  1');
     // Not counted as a stop at someone else's breakpoint.
     expect(paused ?? 0).toBe(0);
+  });
+
+  it('tells a logpoint that has not run from one placed again after the app restarted', async () => {
+    const {formatResult} = await import('./format.ts');
+    let {logpoints} = await js.hits();
+    expect(logpoints[0]).toMatchObject({attached: true, restarts: 0, placedAt: expect.any(Number)});
+    const fresh = formatResult('jsHits', {logpoints: [{...logpoints[0]!, count: 0, hits: []}]});
+    expect(fresh).toMatch(/0 hits means the line has not run/);
+    // A reload parses a new main bundle: the breakpoint is set again and the restart counted.
+    const before = logpoints[0]!.placedAt!;
+    await new Promise(r => setTimeout(r, 5));
+    fake.reparse();
+    for (const end = Date.now() + 2000; (logpoints[0]!.restarts ?? 0) === 0 && Date.now() < end; ) {
+      await new Promise(r => setTimeout(r, 50));
+      ({logpoints} = await js.hits());
+    }
+    expect(logpoints[0]!.restarts).toBe(1);
+    // The old bundle's breakpoint went with the old bundle.
+    for (const k of [...fake.breakpoints.keys()].slice(0, -1)) fake.breakpoints.delete(k);
+    expect(logpoints[0]!.placedAt!).toBeGreaterThan(before);
+    expect(formatResult('jsHits', {logpoints})).toMatch(/the app restarted 1× since it was set; placed again \d+\.\ds ago — a line that ran at start-up before that is not seen/);
+    expect(formatResult('jsHits', {logpoints: [{...logpoints[0]!, attached: false}]})).toMatch(/not attached: the app is not running/);
   });
 
   it('removes the breakpoints and goes back to bytecode with no logpoints left', async () => {

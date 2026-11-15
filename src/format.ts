@@ -192,6 +192,20 @@ const fmtJsProfile = (p?: JsProfile): string[] => {
   ];
 };
 
+/**
+ * Why a logpoint may have no hits, told apart: not placed (the error), the debugger not attached now (the app is
+ * not running or its JS has not started), or placed again after the app restarted — a line that ran during the
+ * start-up before that is not seen. With none of these, 0 hits means the line did not run.
+ */
+const logpointState = (lp: Logpoint, now: number): string[] => {
+  if (lp.error) return [];
+  const out: string[] = [];
+  if (lp.attached === false) out.push('  not attached: the app is not running or its JS has not started — the logpoint is placed again when it comes back');
+  if (lp.restarts) out.push(`  the app restarted ${lp.restarts}× since it was set; placed again ${lp.placedAt ? `${seconds(now - lp.placedAt)} ago` : 'not yet'} — a line that ran at start-up before that is not seen`);
+  else if (!lp.count && lp.attached !== false && lp.placedAt) out.push(`  placed ${seconds(now - lp.placedAt)} ago and attached since: 0 hits means the line has not run`);
+  return out;
+};
+
 const fmtLogpoint = (lp: Logpoint) =>
   `${lp.source ?? lp.file}:${lp.codeLine ?? lp.line}${lp.codeLine && lp.codeLine !== lp.line ? ` (no code at line ${lp.line})` : ''}${lp.exprs.length ? ` · ${lp.exprs.join(', ')}` : ''}`;
 
@@ -433,6 +447,7 @@ export const formatResult = (method: string, r: unknown): string => {
       const now = Date.now();
       const out = lps.flatMap(lp => [
         `${lp.id} at ${fmtLogpoint(lp)} · ${lp.count} hit${lp.count === 1 ? '' : 's'}${lp.error ? ` · ! ${lp.error}` : ''}`,
+        ...logpointState(lp, now),
         ...lp.hits.map(h => `  ${seconds(now - h.at)} ago  ${h.v || '(hit)'}`),
       ]);
       if (x.paused) out.push(`(the app stopped at ${x.paused} other breakpoint(s) or debugger statement(s); pitbox let it go on)`);

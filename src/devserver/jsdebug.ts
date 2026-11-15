@@ -101,6 +101,12 @@ export type Logpoint = {
   error?: string;
   count: number;
   hits: Hit[];
+  /** When the breakpoint was last set in the running app (again after each reload or restart). */
+  placedAt?: number;
+  /** How many times the app's runtime was replaced (a reload, a cold start) since the logpoint was set. */
+  restarts?: number;
+  /** Whether the debugger is attached to the app now: hits are collected only while it is. */
+  attached?: boolean;
 };
 
 export type JsProfile = {
@@ -184,6 +190,10 @@ export class JsDebugger {
   #timer?: NodeJS.Timeout;
   #replacing?: NodeJS.Timeout;
   #paused = 0;
+  /** The device the logpoints were set on: a reattach after the app restarted goes back to it, not to any app. */
+  #device?: string;
+  /** Set when the session to the app closed while logpoints existed: the next attach is to a new runtime. */
+  #lost = false;
 
   /** Origins the debugger connection presents, in order (see `CdpSession.open`). */
   readonly #origins?: string[];
@@ -222,7 +232,9 @@ export class JsDebugger {
     this.#scripts.clear();
     s.on(e => this.#event(s, e));
     s.onClose(() => {
-      if (this.#session === s) this.#session = undefined;
+      if (this.#session !== s) return;
+      this.#session = undefined;
+      if (this.#logpoints.size) this.#lost = true;
     });
     return s;
   }
@@ -234,7 +246,7 @@ export class JsDebugger {
       if (!isBundle(url)) return;
       this.#scripts.set(String(e.params.scriptId), {url, at: Date.now()});
       // A reload parses a new main bundle in the same session: the breakpoints of the old one are gone.
-      if (isMain(url) && this.#logpoints.size) this.#replaceSoon();
+      if (isMain(url) && this.#logpoints.size) this.#replaceSoon(true);
     } else if (e.method === 'Runtime.executionContextsCleared') {
       this.#scripts.clear();
     } else if (e.method === 'Debugger.paused') {
@@ -263,9 +275,9 @@ export class JsDebugger {
     return r.startsWith('..') ? p : r.replace(/\\/g, '/');
   }
 
-  #replaceSoon() {
+  #replaceSoon(restarted = false) {
     clearTimeout(this.#replacing);
-    this.#replacing = setTimeout(() => void this.#placeAll().catch(() => undefined), 300);
+    this.#replacing = setTimeout(() => void this.#placeAll(restarted).catch(() => undefined), 300);
   }
 
   async #value<T>(s: CdpSession, expression: string, timeoutMs = 10_000): Promise<T> {
@@ -359,17 +371,19 @@ export class JsDebugger {
       // The runtime may move the breakpoint to the next statement it can stop at.
       lp.at = r.actualLocation ? {line: r.actualLocation.lineNumber, column: r.actualLocation.columnNumber ?? 0} : hit.at;
       lp.error = undefined;
+      lp.placedAt = Date.now();
       return;
     }
     throw lastError ?? new Error(`${lp.file} is not in the running bundle`);
   }
 
-  async #placeAll() {
+  async #placeAll(restarted = false) {
     const s = this.#session;
     if (!s || s.closed) return;
     await this.#enableDebugger(s);
     await this.#value(s, `${HELPER}, 0`).catch(() => undefined);
     for (const lp of this.#logpoints.values()) {
+      if (restarted) lp.restarts = (lp.restarts ?? 0) + 1;
       try {
         await this.#place(s, lp);
       } catch (e) {
@@ -384,11 +398,14 @@ export class JsDebugger {
     let s = this.#session;
     if (!s || s.closed) {
       try {
-        s = await this.#open();
+        // Back to the device the logpoints are for: with several apps debuggable, any other one would do nothing.
+        s = await this.#open(this.#device, 0);
       } catch {
         return;
       }
-      await this.#placeAll().catch(() => undefined);
+      const restarted = this.#lost;
+      this.#lost = false;
+      await this.#placeAll(restarted).catch(() => undefined);
     }
     const hits = await this.#value<{id: string; at: number; v: string}[]>(s, 'globalThis.__pitboxJs ? globalThis.__pitboxJs.drain() : []', 5000).catch(() => []);
     for (const h of hits ?? []) {
@@ -402,7 +419,9 @@ export class JsDebugger {
 
   #startTimer() {
     if (this.#timer) return;
-    this.#timer = setInterval(() => void this.#tick().catch(() => undefined), 2000);
+    // Hits live in the app until drained: a runtime that dies (a cold start by a notification, a crash) takes the
+    // undrained ones with it, so the drain runs often.
+    this.#timer = setInterval(() => void this.#tick().catch(() => undefined), 1000);
     this.#timer.unref();
   }
 
@@ -446,7 +465,7 @@ export class JsDebugger {
     const s = await this.#open(device);
     await this.#enableDebugger(s);
     await this.#value(s, `${HELPER}, 0`);
-    const lp: Placed = {id: `lp${++this.#seq}`, file, line, exprs, count: 0, hits: [], bps: []};
+    const lp: Placed = {id: `lp${++this.#seq}`, file, line, exprs, count: 0, hits: [], bps: [], restarts: 0};
     try {
       await this.#place(s, lp);
     } catch (e) {
@@ -454,12 +473,13 @@ export class JsDebugger {
       throw e;
     }
     this.#logpoints.set(lp.id, lp);
+    this.#device = device;
     this.#startTimer();
     return {logpoint: this.#public(lp), reloaded};
   }
 
   #public({bps: _bps, ...lp}: Placed): Logpoint {
-    return {...lp, hits: [...lp.hits]};
+    return {...lp, hits: [...lp.hits], attached: !!this.#session && !this.#session.closed};
   }
 
   /** Logpoints with their hits so far (the newest `limit` each). */
@@ -486,6 +506,8 @@ export class JsDebugger {
       this.#timer = undefined;
       if (s && !s.closed && this.#debuggerOn) await s.send('Debugger.disable').catch(() => undefined);
       this.#debuggerOn = false;
+      this.#device = undefined;
+      this.#lost = false;
       bytecodeBack = this.#proxy.debugSource && !!this.#proxy.opts.bytecode;
       this.#proxy.debugSource = false;
     }
