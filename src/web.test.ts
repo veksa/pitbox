@@ -162,7 +162,9 @@ describe('a web flow', () => {
       path.join(project, 'flows', 'sign-in.flow'),
       ['open!', 'wait id=email', 'fill id=email "${user}"', 'press id=submit', 'expect text~=Signed in as ${user}', 'goto second', 'expect id=second'].join('\n'),
     );
-    const e = await Engine.create(path.join(project, 'pitbox.config.json'));
+    // No Android SDK and no simulators: a web flow needs neither, and on a fresh Mac the first `simctl list` alone can
+    // take a minute while CoreSimulator starts, which is not what this test is about.
+    const e = await Engine.create(path.join(project, 'pitbox.config.json'), undefined, {android: null, apple: null});
     try {
       const ok = (await e.methods.run({flow: 'sign-in', params: {user: 'bo@example.test'}, device: 'web:demo'})) as {ok: boolean; steps: number};
       expect(ok).toMatchObject({ok: true});
@@ -173,7 +175,7 @@ describe('a web flow', () => {
       const failed = (await e.methods.run({steps: 'open\nexpect id=nowhere', device: 'web:demo'})) as {ok: boolean; failed?: {line: number; screen?: string[]}};
       expect(failed).toMatchObject({ok: false, failed: {line: 2}});
       expect(failed.failed?.screen?.some(l => /#email/.test(l))).toBe(true);
-      expect((await e.methods.devices({})) as {web?: unknown[]}).toMatchObject({web: [{name: 'web:demo'}]});
+      expect((await e.methods.devices({})) as {web?: unknown[]}).toEqual({devices: [], avds: [], web: [{name: 'web:demo', url: `http://127.0.0.1:${port}/`}]});
       // Settings on a web app emulate a phone; a phone's settings say what a web app takes instead.
       const set = await e.methods.settings({device: 'web:demo', emulate: 'iPhone 15', dark: 'true'});
       expect(formatResult('settings', set)).toMatch(/393x659 @3x mobile touch · iPhone 15 · dark/);
