@@ -125,6 +125,8 @@ if (examples.includes('android')) {
   const pitbox = pitboxIn(nativeDir);
   const must = mustIn(nativeDir);
   step('android example: build, stand');
+  // The relay module takes the connect library as the AAR its standalone build makes.
+  exec(gradlew(path.join(root, 'runners', 'android')), ['-p', path.join(root, 'android', 'standalone'), ':connect:assembleDebug', '-q'], root);
   exec(gradlew(nativeDir), ['assembleDebug', '-q'], nativeDir);
   // A daemon left from an older build would answer with the older code.
   must(['daemon', 'restart']);

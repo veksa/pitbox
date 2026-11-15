@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- What the other side finds with getCapability. -->
+    <string-array name="android_wear_capabilities">
+        <item>pitbox_relay</item>
+    </string-array>
+</resources>
