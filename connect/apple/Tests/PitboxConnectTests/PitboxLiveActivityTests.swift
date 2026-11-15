@@ -59,6 +59,20 @@ final class PitboxLiveActivityTests: XCTestCase {
     XCTAssertEqual(s.activities, [.init(id: "A1", type: "DeliveryAttributes", state: "ended")])
   }
 
+  func testDropsActivitiesActivityKitNoLongerReports() {
+    var s = Core.State(types: ["DeliveryAttributes", "Other"])
+    s.record(.init(token: "s1", kind: "start", type: "DeliveryAttributes"))
+    s.record(.init(token: "t1", kind: "activity", type: "DeliveryAttributes", activityId: "GHOST"))
+    s.record(.init(token: "t2", kind: "activity", type: "DeliveryAttributes", activityId: "A2"))
+    s.record(.init(token: "t3", kind: "activity", type: "Other", activityId: "O1"))
+    s.set(activity: "GHOST", type: "DeliveryAttributes", state: "active")
+    s.set(activity: "A2", type: "DeliveryAttributes", state: "active")
+    s.set(activity: "O1", type: "Other", state: "active")
+    s.reconcile(type: "DeliveryAttributes", live: [(id: "A2", state: "stale"), (id: "A3", state: "active")])
+    XCTAssertEqual(s.tokens.map(\.token), ["s1", "t2", "t3"])
+    XCTAssertEqual(s.activities, [.init(id: "A2", type: "DeliveryAttributes", state: "stale"), .init(id: "O1", type: "Other", state: "active"), .init(id: "A3", type: "DeliveryAttributes", state: "active")])
+  }
+
   func testMakesTheSameSyntheticTokenForTheSameActivity() {
     let a = Core.syntheticToken("udid", "com.example.app", "DeliveryAttributes", "activity", "A1")
     XCTAssertEqual(a.count, 64)

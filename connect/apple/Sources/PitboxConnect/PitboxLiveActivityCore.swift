@@ -97,6 +97,17 @@ enum PitboxLiveActivityCore {
       let done = activities.filter { $0.state == "dismissed" }
       if done.count > 10 { activities.removeAll { a in done.prefix(done.count - 10).contains(where: { $0.id == a.id }) } }
     }
+
+    /// Keeps of `type` only the activities ActivityKit still reports (`live`: id and state). A ghost — an activity of
+    /// an earlier launch that the system dropped while the app was not running — goes with its token, which then
+    /// routes nowhere (410) instead of to an activity that no longer exists.
+    mutating func reconcile(type: String, live: [(id: String, state: String)]) {
+      let liveIds = Set(live.map(\.id))
+      let gone = Set(activities.filter { $0.type == type && !liveIds.contains($0.id) }.map(\.id))
+      activities.removeAll { gone.contains($0.id) }
+      tokens.removeAll { t in t.activityId.map { gone.contains($0) } ?? false }
+      for l in live { set(activity: l.id, type: type, state: l.state) }
+    }
   }
 
   /// How an end is dismissed, from its `dismissal-date` (APNs): none → the system's default, in the past → at once,

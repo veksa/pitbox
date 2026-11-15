@@ -82,6 +82,8 @@ protocol AnyTypeHandler {
   func update(_ c: PitboxLiveActivityCore.Command) async throws -> PitboxLiveActivityCore.Outcome
   func end(_ c: PitboxLiveActivityCore.Command) async throws -> PitboxLiveActivityCore.Outcome
   func owns(_ activityId: String) -> Bool
+  /// The activities of the type ActivityKit reports now, with their state.
+  func live() -> [(id: String, state: String)]
 }
 
 @available(iOS 16.2, *)
@@ -90,6 +92,8 @@ struct TypeHandler<A: ActivityAttributes>: AnyTypeHandler {
   let name: String
 
   func owns(_ activityId: String) -> Bool { Activity<A>.activities.contains { $0.id == activityId } }
+
+  func live() -> [(id: String, state: String)] { Activity<A>.activities.map { (id: $0.id, state: Self.describe($0.activityState)) } }
 
   private func content(_ c: Core.Command) throws -> ActivityContent<A.ContentState>? {
     guard let data = c.state else { return nil }
@@ -199,8 +203,16 @@ actor Worker {
     guard handlers[h.name] == nil else { return }
     handlers[h.name] = h
     state.types = handlers.keys.sorted()
+    state.reconcile(type: h.name, live: h.live())
     save()
     h.observe(self)
+  }
+
+  /// Drops what ActivityKit no longer reports (ghosts of earlier launches), on each drain: at launch and activation.
+  private func reconcile() {
+    let before = state
+    for h in handlers.values { state.reconcile(type: h.name, live: h.live()) }
+    if state != before { save() }
   }
 
   func record(_ t: Core.State.Token) {
@@ -237,6 +249,7 @@ actor Worker {
     guard !draining else { return }
     draining = true
     defer { draining = false }
+    reconcile()
     while let file = folder.pending().first {
       let data = try? Data(contentsOf: file)
       try? FileManager.default.removeItem(at: file)
