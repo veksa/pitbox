@@ -11,7 +11,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {DeviceLeases, sessionLabel, UNLEASED} from './lease/devices.ts';
 import {leaseCommand} from './lease/cli.ts';
 import {forgetCreated, isCreated, recordCreated} from './lease/created.ts';
-import {acquire, DEAD_GRACE_MS, heartbeat, leaseDir, listLeases, lockInternals, parseDuration, parseElapsed, probe, readLease, refusal, release, staleReason, withLock, type Holder, type Lease} from './lease/lease.ts';
+import {acquire, DEAD_GRACE_MS, heartbeat, leaseDir, listLeases, lockInternals, parseDuration, parseElapsed, parseStartDate, probe, processStart, readLease, refusal, release, staleReason, withLock, type Holder, type Lease} from './lease/lease.ts';
 import {availableFromMeminfo, availableFromVmStat, bootWarning} from './lease/resources.ts';
 
 const realProbe = {...probe};
@@ -84,6 +84,27 @@ describe('leases', () => {
     expect(parseElapsed('03:01:02')).toBe(10_862);
     expect(parseElapsed('2-03:01:02')).toBe(183_662);
     expect(parseElapsed('')).toBeUndefined();
+  });
+
+  it('reads start dates as ps prints them', () => {
+    expect(parseStartDate('Mon Nov 16 01:27:52 2026\n')).toBe(Math.floor(new Date(2026, 10, 16, 1, 27, 52).getTime() / 1000));
+    expect(parseStartDate('Fri Nov  6 09:05:01 2026')).toBe(Math.floor(new Date(2026, 10, 6, 9, 5, 1).getTime() / 1000));
+    expect(parseStartDate('01:02')).toBeUndefined();
+    expect(parseStartDate('')).toBeUndefined();
+  });
+
+  it('reads the same start for a running process however late it is read', () => {
+    if (process.platform === 'win32') return;
+    vi.useFakeTimers({toFake: ['Date']});
+    try {
+      const first = processStart(process.pid);
+      expect(first).toBeTypeOf('number');
+      // Past the per-pid cache, with the clock well ahead of what ps measures from: still the same start.
+      vi.setSystemTime(Date.now() + 60_000);
+      expect(processStart(process.pid)).toBe(first);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reads the same start for a process whatever the reader\'s time zone and language', async () => {

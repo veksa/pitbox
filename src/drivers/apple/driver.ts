@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {parseElapsed} from '../../lease/lease.ts';
+import {parseStartDate} from '../../lease/lease.ts';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
@@ -97,18 +97,20 @@ export const parseSimulators = (json: string): Simulator[] => {
 };
 
 /**
- * `ps -ax -o pid=,etime=,command=` → the boot each running simulator is in, by udid: its launchd_sim process
- * (`launchd_sim:<pid>@<start, epoch s>`). A simulator runs one launchd_sim from boot to shutdown, with its device
- * folder (`…/Devices/<udid>/…`) on the command line; booted again — by pitbox, by hand, by Xcode — it runs another.
+ * `ps -ax -o pid=,lstart=,command=` (under `LC_ALL=C`) → the boot each running simulator is in, by udid: its
+ * launchd_sim process (`launchd_sim:<pid>@<start, epoch s>`). A simulator runs one launchd_sim from boot to shutdown,
+ * with its device folder (`…/Devices/<udid>/…`) on the command line; booted again — by pitbox, by hand, by Xcode — it
+ * runs another. The start is the one the system recorded, not now minus the elapsed time: a mark read on a loaded
+ * machine (ps slow to answer, the reader slow to look at the clock) is then the same as one read later on an idle one.
  */
-export const parseSimulatorBoots = (ps: string, nowSec = Math.round(Date.now() / 1000)): Map<string, string> => {
+export const parseSimulatorBoots = (ps: string): Map<string, string> => {
   const out = new Map<string, string>();
   for (const line of ps.split('\n')) {
-    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    const m = /^\s*(\d+)\s+([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
     if (!m || !/(^|\/)launchd_sim(\s|$)/.test(m[3]!)) continue;
     const udid = /\/Devices\/([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\//.exec(m[3]!)?.[1];
-    const elapsed = parseElapsed(m[2]!);
-    if (udid && elapsed !== undefined) out.set(udid.toUpperCase(), `launchd_sim:${m[1]}@${nowSec - elapsed}`);
+    const start = parseStartDate(m[2]!);
+    if (udid && start !== undefined) out.set(udid.toUpperCase(), `launchd_sim:${m[1]}@${start}`);
   }
   return out;
 };
@@ -210,7 +212,7 @@ export class AppleDriver {
    */
   async bootMarks(): Promise<Map<string, string>> {
     if (process.platform !== 'darwin') return new Map();
-    const r = await run('ps', ['-ax', '-o', 'pid=,etime=,command='], {timeoutMs: 10_000, env: {...process.env, LC_ALL: 'C'}});
+    const r = await run('ps', ['-ax', '-o', 'pid=,lstart=,command='], {timeoutMs: 10_000, env: {...process.env, LC_ALL: 'C'}});
     return r.code === 0 ? parseSimulatorBoots(r.stdout) : new Map();
   }
 

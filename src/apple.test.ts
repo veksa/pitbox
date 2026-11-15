@@ -359,18 +359,32 @@ describe('simctl list', () => {
 });
 
 describe('simulator boots', () => {
+  const ps = [
+    '  501 Mon Nov 16 01:27:52 2026     /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/bin/launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/A62D3DC8-F1DA-47C5-99A8-825D1B6489A2/data/var/run/launchd_bootstrap.plist',
+    '  502 Fri Nov  6 09:05:01 2026     /Applications/Xcode.app/x/RuntimeRoot/sbin/launchd_sim /tmp/My Sets/Devices/01c4869d-b553-4509-9b71-08dde320b398/data/var/run/launchd_bootstrap.plist',
+    '  503 Mon Nov 16 01:27:50 2026     /usr/bin/vim /Users/me/Library/Developer/CoreSimulator/Devices/17D22098-D9F5-484B-84B9-DE405362765D/device.plist',
+    '  504 Mon Nov 16 01:27:50 2026     launchd_sim_helper /Users/me/Library/Developer/CoreSimulator/Devices/1207AB9B-E44F-4942-84A9-20CF61963AE1/data',
+  ].join('\n');
+  const at = (y: number, mo: number, d: number, h: number, mi: number, s: number) => Math.floor(new Date(y, mo, d, h, mi, s).getTime() / 1000);
+
   it("reads each running simulator's boot from its launchd_sim process, and nothing else", () => {
-    const ps = [
-      '  501    01:02:03 /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/bin/launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/A62D3DC8-F1DA-47C5-99A8-825D1B6489A2/data/var/run/launchd_bootstrap.plist',
-      '  502 2-00:00:10 /Applications/Xcode.app/x/RuntimeRoot/sbin/launchd_sim /tmp/My Sets/Devices/01c4869d-b553-4509-9b71-08dde320b398/data/var/run/launchd_bootstrap.plist',
-      '  503       00:05 /usr/bin/vim /Users/me/Library/Developer/CoreSimulator/Devices/17D22098-D9F5-484B-84B9-DE405362765D/device.plist',
-      '  504       00:05 launchd_sim_helper /Users/me/Library/Developer/CoreSimulator/Devices/1207AB9B-E44F-4942-84A9-20CF61963AE1/data',
-    ].join('\n');
-    expect(parseSimulatorBoots(ps, 1_700_000_000)).toEqual(
+    expect(parseSimulatorBoots(ps)).toEqual(
       new Map([
-        ['A62D3DC8-F1DA-47C5-99A8-825D1B6489A2', `launchd_sim:501@${1_700_000_000 - 3723}`],
-        ['01C4869D-B553-4509-9B71-08DDE320B398', `launchd_sim:502@${1_700_000_000 - 172_810}`],
+        ['A62D3DC8-F1DA-47C5-99A8-825D1B6489A2', `launchd_sim:501@${at(2026, 10, 16, 1, 27, 52)}`],
+        ['01C4869D-B553-4509-9B71-08DDE320B398', `launchd_sim:502@${at(2026, 10, 6, 9, 5, 1)}`],
       ]),
     );
+  });
+
+  it('reads the same boot however late the process list is read, as on a machine too loaded to answer at once', () => {
+    vi.useFakeTimers({toFake: ['Date']});
+    try {
+      const early = parseSimulatorBoots(ps);
+      // A boot mark read while the machine is busy, and the check on release a minute later on an idle one.
+      vi.setSystemTime(Date.now() + 65_000);
+      expect(parseSimulatorBoots(ps)).toEqual(early);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

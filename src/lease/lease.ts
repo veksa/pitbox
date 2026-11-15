@@ -84,20 +84,39 @@ export const parseElapsed = (out: string): number | undefined => {
   return Number(m[1] ?? 0) * 86_400 + Number(m[2] ?? 0) * 3600 + Number(m[3]) * 60 + Number(m[4]);
 };
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 /**
- * When a process started, in epoch seconds: now minus its elapsed time (`ps -o etime=`, the same in every time zone
- * and locale, unlike a printed start date). Undefined when the system cannot tell (Windows, the process is gone).
- * Kept for a few seconds per pid: lease checks ask often, and a running process's start does not move.
+ * `ps -o lstart=` under `LC_ALL=C` (`Mon Nov 16 01:27:52 2026`, local time) → epoch seconds; undefined for anything
+ * else. ps prints it in the zone of its environment, which is the reader's own, so the result is the same instant
+ * whatever zone the reader runs in.
+ */
+export const parseStartDate = (out: string): number | undefined => {
+  const m = /^\s*[A-Z][a-z]{2}\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})\s+(\d{4})\s*$/.exec(out);
+  const month = m ? MONTHS.indexOf(m[1]!) : -1;
+  if (!m || month < 0) return undefined;
+  return Math.floor(new Date(Number(m[6]), month, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])).getTime() / 1000);
+};
+
+/**
+ * When a process started, in epoch seconds: its start as the system recorded it (`ps -o lstart=`), so two readings
+ * agree however late either is made — on a loaded machine the moment ps measures from and the moment the reader
+ * looks at the clock can lie seconds apart, which `now - etime` turned into a different start. Where lstart cannot be
+ * read, now minus the elapsed time (`ps -o etime=`). Undefined when the system cannot tell (Windows, the process is
+ * gone). Kept for a few seconds per pid: lease checks ask often, and a running process's start does not move.
  */
 export const processStart = (pid: number): number | undefined => {
   const hit = startCache.get(pid);
   if (hit && Date.now() - hit.at < 10_000) return hit.start;
   let start: number | undefined;
   if (process.platform !== 'win32') {
+    const ps = (field: string) => execFileSync('ps', ['-o', `${field}=`, '-p', String(pid)], {encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], env: {...process.env, LC_ALL: 'C'}});
     try {
-      const out = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], {encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], env: {...process.env, LC_ALL: 'C'}});
-      const elapsed = parseElapsed(out);
-      start = elapsed === undefined ? undefined : Math.round(Date.now() / 1000) - elapsed;
+      start = parseStartDate(ps('lstart'));
+      if (start === undefined) {
+        const elapsed = parseElapsed(ps('etime'));
+        start = elapsed === undefined ? undefined : Math.round(Date.now() / 1000) - elapsed;
+      }
     } catch {
       start = undefined;
     }
