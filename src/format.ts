@@ -239,6 +239,32 @@ export const fmtPush = (x: Record<string, unknown>): string => {
   }
 };
 
+type NetEntry = {n?: number; at?: number; ws?: string; sid?: number; ev?: string; fn?: number; b?: number; p?: string; bin?: boolean; code?: number; m?: string; url?: string; s?: number; ms?: number; rule?: string};
+
+/**
+ * The app's network log in the order things happened: each line starts with its place in the app's sequence and
+ * its time since the first line shown, a socket line with the socket (ws#2), the direction (→ sent, ← received)
+ * and the frame's number on that socket.
+ */
+export const fmtAppLog = (x: {apps: {app: number; platform?: string; entries: NetEntry[]}[]}): string =>
+  x.apps
+    .map(a => {
+      const t0 = a.entries[0]?.at ?? 0;
+      const head = (e: NetEntry) => `${e.n !== undefined ? `#${e.n} ` : ''}${e.at !== undefined ? `+${((e.at - t0) / 1000).toFixed(3)}s ` : ''}`;
+      const rule = (e: NetEntry) => (e.rule ? ` [${e.rule}${e.rule === 'freeze' && (e.ev === 'send' || e.ev === 'recv') ? ': dropped' : ''}]` : '');
+      const line = (e: NetEntry) => {
+        if (!e.ws) return `${e.m} ${e.url} → ${e.s} in ${e.ms} ms${rule(e)}`;
+        const sock = `ws${e.sid !== undefined ? `#${e.sid}` : ''}`;
+        if (e.ev === 'send' || e.ev === 'recv') {
+          const body = e.bin ? `${e.b} B binary` : `${e.b} B ${JSON.stringify(e.p ?? '')}`;
+          return `${sock} ${e.ev === 'send' ? '→' : '←'} ${e.fn !== undefined ? `${e.fn}. ` : ''}${body}${rule(e)}`;
+        }
+        return `${sock} ${e.ev}${e.code !== undefined ? ` ${e.code}` : ''} ${e.ws}${rule(e)}`;
+      };
+      return [`app ${a.app} (${a.platform ?? '?'})${a.entries.some(e => e.ws) ? ' · ws: → sent, ← received' : ''}`, ...a.entries.map(e => `  ${head(e)}${line(e)}`)].join('\n');
+    })
+    .join('\n') || 'no app connected';
+
 export const formatResult = (method: string, r: unknown): string => {
   const x = r as Record<string, unknown>;
   switch (method) {
@@ -457,9 +483,7 @@ export const formatResult = (method: string, r: unknown): string => {
       );
     }
     case 'appLog':
-      return (x.apps as {app: number; platform?: string; entries: Record<string, unknown>[]}[])
-        .map(a => [`app ${a.app} (${a.platform ?? '?'})`, ...a.entries.map(e => (e.ws ? `  ws ${e.ev} ${e.ws}${e.rule ? ` [${e.rule}]` : ''}` : `  ${e.m} ${e.url} → ${e.s} in ${e.ms} ms${e.rule ? ` [${e.rule}]` : ''}`))].join('\n'))
-        .join('\n') || 'no app connected';
+      return fmtAppLog(x as Parameters<typeof fmtAppLog>[0]);
     case 'net': {
       const rules = x.rules as {id: string; kind: string; match: string; action: string; status?: number; ms?: number}[];
       const lines = rules.map(r => `${r.id}: ${r.action} ${r.kind} matching "${r.match}"${r.status ? ` → ${r.status}` : ''}${r.ms ? ` ${r.ms} ms` : ''}`);

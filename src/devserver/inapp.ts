@@ -46,10 +46,21 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
     }
     return null;
   };
+  // Every entry carries its place in one sequence (n) and its time, so what came first stays visible across
+  // requests and socket frames.
+  var logSeq = 0;
   var record = function (e: any) {
+    e.n = ++logSeq;
     e.at = Date.now();
     state.log.push(e);
-    if (state.log.length > 200) state.log.shift();
+    if (state.log.length > 300) state.log.shift();
+  };
+  // A frame as its size and the start of its text; binary data only by size.
+  var frameOf = function (data: any) {
+    if (typeof data === 'string') return {b: data.length, p: data.length > 160 ? data.slice(0, 160) + '…' : data};
+    if (data && typeof data.byteLength === 'number') return {b: data.byteLength, bin: true};
+    if (data && typeof data.size === 'number') return {b: data.size, bin: true};
+    return {b: 0};
   };
   var ours = function (url: string) {
     return url.indexOf(cfg.http) === 0;
@@ -188,19 +199,36 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
       var u = String(url);
       var rule = match(u, 'ws');
       var ws = new W(rule && rule.action === 'fail' ? 'ws://127.0.0.1:9/pitbox-fail' : url, protocols, options);
-      var entry: any = {url: u, ws: ws, frozen: !!(rule && rule.action === 'freeze')};
+      var entry: any = {url: u, ws: ws, frozen: !!(rule && rule.action === 'freeze'), sid: state.sockets.length + 1, frames: 0};
       state.sockets.push(entry);
-      record({ws: u, ev: 'connect', rule: rule ? rule.action : undefined});
+      record({ws: u, sid: entry.sid, ev: 'connect', rule: rule ? rule.action : undefined});
+      var frame = function (dir: string, data: any, dropped: boolean) {
+        var f: any = frameOf(data);
+        f.ws = u;
+        f.sid = entry.sid;
+        f.ev = dir;
+        f.fn = ++entry.frames;
+        if (dropped) f.rule = 'freeze';
+        record(f);
+      };
       var origSend = ws.send.bind(ws);
       ws.send = function (data: any) {
-        if (entry.frozen || state.frozenAll) return;
+        if (entry.frozen || state.frozenAll) {
+          frame('send', data, true);
+          return;
+        }
+        frame('send', data, false);
         return origSend(data);
       };
       // A frozen socket stays open and silent: messages are dropped, and nobody hears a close.
       var dispatch = ws.dispatchEvent.bind(ws);
       ws.dispatchEvent = function (ev: any) {
-        if ((entry.frozen || state.frozenAll) && ev && ev.type === 'message') return true;
-        if (ev && (ev.type === 'close' || ev.type === 'error')) record({ws: u, ev: ev.type});
+        if (ev && ev.type === 'message') {
+          var drop = entry.frozen || state.frozenAll;
+          frame('recv', ev.data, drop);
+          if (drop) return true;
+        }
+        if (ev && (ev.type === 'open' || ev.type === 'close' || ev.type === 'error')) record({ws: u, sid: entry.sid, ev: ev.type, code: ev.code});
         return dispatch(ev);
       };
       return ws;

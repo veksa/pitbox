@@ -115,6 +115,37 @@ describe('in-app script', () => {
     app.dispatchEvent({type: 'message', data: 'after'});
     expect(app.received).toEqual(['before', 'after']);
   });
+
+  it('logs socket frames in order with their direction, number and time, dropped ones marked', async () => {
+    const {g, sent, sockets} = sandbox();
+    const channel = sockets.find(s => s.url === cfg.ws)!;
+    const Ws = g.WebSocket as new (u: string) => {send: (d: unknown) => void; dispatchEvent: (e: {type: string; data?: unknown}) => boolean};
+    const app = new Ws('wss://api.example.test/ws');
+    app.dispatchEvent({type: 'open'});
+    app.send('{"op":"hello"}');
+    app.dispatchEvent({type: 'message', data: '{"op":"welcome"}'});
+    app.send(new Uint8Array(12));
+    channel.onmessage!({data: JSON.stringify({type: 'rules', rules: [{id: 'r1', kind: 'ws', match: 'api.example.test', action: 'freeze'}]})});
+    app.dispatchEvent({type: 'message', data: 'lost'});
+    channel.onmessage!({data: JSON.stringify({type: 'query', what: 'log', reqId: 1})});
+    const entries = JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' ')).data as Record<string, unknown>[];
+    expect(entries.map(e => [e.ev, e.sid, e.fn])).toEqual([
+      ['connect', 1, undefined],
+      ['open', 1, undefined],
+      ['send', 1, 1],
+      ['recv', 1, 2],
+      ['send', 1, 3],
+      ['recv', 1, 4],
+    ]);
+    expect(entries.map(e => e.n)).toEqual([1, 2, 3, 4, 5, 6]);
+    const {formatResult} = await import('./format.ts');
+    const text = formatResult('appLog', {apps: [{app: 1, platform: 'android', entries}]});
+    expect(text).toMatch(/^app 1 \(android\) · ws: → sent, ← received$/m);
+    expect(text).toMatch(/^ {2}#3 \+\d\.\d{3}s ws#1 → 1\. 14 B "\{\\"op\\":\\"hello\\"\}"$/m);
+    expect(text).toMatch(/^ {2}#4 \+\d\.\d{3}s ws#1 ← 2\. 16 B /m);
+    expect(text).toMatch(/ws#1 → 3\. 12 B binary$/m);
+    expect(text).toMatch(/ws#1 ← 4\. 4 B "lost" \[freeze: dropped\]$/m);
+  });
 });
 
 describe('the app console', () => {
