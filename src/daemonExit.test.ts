@@ -47,6 +47,13 @@ process.exit(0);
 
     const pid = JSON.parse(fs.readFileSync(path.join(dir, '.pitbox', 'pids.json'), 'utf8')).svc;
     await killTreeAndWait(pid.pid, 8000, pid.startedAt);
-    expect(await tcpOpen(port)).toBe(false);
+    // The grandchild's listening socket can outlive the wait by a moment on a busy machine: poll for it to close
+    // rather than reading it once, but long enough that a server the kill missed still fails the test.
+    let open = true;
+    for (const deadline = Date.now() + 5000; open && Date.now() < deadline; ) {
+      open = await tcpOpen(port);
+      if (open) await new Promise(r => setTimeout(r, 100));
+    }
+    expect(open).toBe(false);
   }, 60_000);
 });
