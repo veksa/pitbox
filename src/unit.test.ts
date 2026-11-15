@@ -66,6 +66,12 @@ describe('config', () => {
     const taken = net.createServer();
     await new Promise<void>(r => taken.listen(0, '::', () => r()));
     const p = (taken.address() as import('node:net').AddressInfo).port;
+    const bindable = (port: number) =>
+      new Promise<boolean>(resolve => {
+        const probe = net.createServer();
+        probe.once('error', () => resolve(false));
+        probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+      });
     try {
       // A range of two whose other port is free: the taken one is never given, wherever the pick starts.
       const other = p > 1024 ? p - 1 : p + 1;
@@ -74,8 +80,9 @@ describe('config', () => {
       if (await portAnswers(other)) return;
       for (let i = 0; i < 5; i++) {
         const got = await freePort({PITBOX_PORTS: range}).catch(() => undefined);
-        // Test files run in parallel and take ephemeral ports too: a neighbour taken meanwhile proves nothing.
-        if (got !== other && (await portAnswers(other))) return;
+        // Test files run in parallel and take ephemeral ports too: a neighbour taken meanwhile proves nothing. Nor does
+        // one nobody answers on that cannot be bound either (a socket still closing, a range Windows keeps reserved).
+        if (got !== other && ((await portAnswers(other)) || !(await bindable(other)))) return;
         expect(got).toBe(other);
       }
       await expect(freePort({PITBOX_PORTS: `${p}-${p}`})).rejects.toThrow(/no free port in PITBOX_PORTS/);
