@@ -146,6 +146,34 @@ describe('in-app script', () => {
     expect(text).toMatch(/ws#1 → 3\. 12 B binary$/m);
     expect(text).toMatch(/ws#1 ← 4\. 4 B "lost" \[freeze: dropped\]$/m);
   });
+
+  it('keeps the requests in the log under a chatty socket, and forgets a socket once it closed', () => {
+    const {g, sent, sockets} = sandbox();
+    const channel = sockets.find(s => s.url === cfg.ws)!;
+    const Xhr = g.XMLHttpRequest as new () => {open: (m: string, u: string) => void; send: () => void};
+    const Ws = g.WebSocket as new (u: string) => {send: (d: unknown) => void; dispatchEvent: (e: {type: string; data?: unknown}) => boolean};
+    const query = (what: string, limit?: number) => {
+      channel.onmessage!({data: JSON.stringify({type: 'query', what, limit, reqId: sent.length})});
+      return JSON.parse(sent[sent.length - 1]!.split(' ').slice(1).join(' ')).data;
+    };
+    const req = new Xhr();
+    req.open('GET', 'https://api.example.test/feed');
+    req.send();
+    const before = (query('log', 300) as Record<string, unknown>[]).length;
+    const chat = new Ws('wss://api.example.test/ws');
+    for (let i = 0; i < 1000; i++) chat.dispatchEvent({type: 'message', data: `tick ${i}`});
+    const log = query('log', 300) as Record<string, unknown>[];
+    expect(log.filter(e => e.fn !== undefined)).toHaveLength(200);
+    expect(log.length).toBe(before + 1 + 200);
+    expect(log.at(-1)).toMatchObject({p: 'tick 999', fn: 1000});
+    expect(query('idle').sockets).toBe(1);
+    chat.dispatchEvent({type: 'close'});
+    expect(query('idle').sockets).toBe(0);
+    // Socket numbers are not reused once one is gone.
+    const next = new Ws('wss://api.example.test/ws');
+    next.send('hi');
+    expect((query('log', 1) as Record<string, unknown>[])[0]).toMatchObject({sid: 2, fn: 1});
+  });
 });
 
 describe('the app console', () => {

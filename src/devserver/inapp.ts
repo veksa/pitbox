@@ -49,11 +49,24 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
   // Every entry carries its place in one sequence (n) and its time, so what came first stays visible across
   // requests and socket frames.
   var logSeq = 0;
+  var frameCount = 0;
+  var socketSeq = 0;
   var record = function (e: any) {
     e.n = ++logSeq;
     e.at = Date.now();
     state.log.push(e);
-    if (state.log.length > 300) state.log.shift();
+    // Socket frames hold at most 200 of the 300 places: a chatty socket (a heartbeat, a stream of events) does not
+    // push the requests out of the log.
+    if (e.fn !== undefined && ++frameCount > 200) {
+      for (var i = 0; i < state.log.length; i++) {
+        if (state.log[i].fn !== undefined) {
+          state.log.splice(i, 1);
+          frameCount--;
+          break;
+        }
+      }
+    }
+    if (state.log.length > 300 && state.log.shift().fn !== undefined) frameCount--;
   };
   // A frame as its size and the start of its text; binary data only by size.
   var frameOf = function (data: any) {
@@ -199,7 +212,7 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
       var u = String(url);
       var rule = match(u, 'ws');
       var ws = new W(rule && rule.action === 'fail' ? 'ws://127.0.0.1:9/pitbox-fail' : url, protocols, options);
-      var entry: any = {url: u, ws: ws, frozen: !!(rule && rule.action === 'freeze'), sid: state.sockets.length + 1, frames: 0};
+      var entry: any = {url: u, ws: ws, frozen: !!(rule && rule.action === 'freeze'), sid: ++socketSeq, frames: 0};
       state.sockets.push(entry);
       record({ws: u, sid: entry.sid, ev: 'connect', rule: rule ? rule.action : undefined});
       var frame = function (dir: string, data: any, dropped: boolean) {
@@ -229,6 +242,11 @@ function pitboxInApp(cfg: InAppConfig, fmt: (v: any, depth?: number, seen?: any[
           if (drop) return true;
         }
         if (ev && (ev.type === 'open' || ev.type === 'close' || ev.type === 'error')) record({ws: u, sid: entry.sid, ev: ev.type, code: ev.code});
+        // A closed socket leaves the list: an app that reconnects all day would otherwise keep every one it opened.
+        if (ev && ev.type === 'close') {
+          var at = state.sockets.indexOf(entry);
+          if (at >= 0) state.sockets.splice(at, 1);
+        }
         return dispatch(ev);
       };
       return ws;
