@@ -74,6 +74,24 @@ describe('push payloads', () => {
     expect(msg).toMatchObject({title: 'Android T', body: 'B', channel: 'messages', tag: 'c1', sound: 'default', collapseId: 'c1', priority: 'high', ttl: 86_400, badge: 1, threadId: 'c1', viaFcm: true, data: {type: 'x', url: '/a', extra: '1'}});
   });
 
+  it('renames what firebase-admin renames before sending, and nothing else', () => {
+    const msg = fromFcm({
+      token: 't',
+      notification: {title: 'T', imageUrl: 'https://img.example.test/a.png'},
+      apns: {
+        liveActivityToken: 'abc',
+        fcmOptions: {imageUrl: 'https://img.example.test/b.png'},
+        payload: {aps: {mutableContent: true, contentAvailable: false, threadId: 'g', interruptionLevel: 'time-sensitive', alert: {titleLocKey: 'k'}}},
+      },
+    });
+    expect(msg.threadId).toBe('g');
+    expect(msg.image).toBe('https://img.example.test/a.png');
+    // contentAvailable: false is dropped, as firebase-admin drops it; interruptionLevel stays camelCase, as APNs gets it.
+    expect(msg.aps).toEqual({'mutable-content': 1, interruptionLevel: 'time-sensitive'});
+    expect(toApns(msg, undefined, 'm').fcm_options).toEqual({image: 'https://img.example.test/a.png'});
+    expect(fromFcm({apns: {fcmOptions: {imageUrl: 'https://img.example.test/b.png'}, payload: {aps: {alert: {title: 'T'}}}}}).image).toBe('https://img.example.test/b.png');
+  });
+
   it('reads an HTTP v1 request and a legacy one', () => {
     expect(fromFcm({message: {token: 't', data: {kind: 'read'}, android: {priority: 'NORMAL', ttl: '60s'}}})).toMatchObject({silent: true, priority: 'normal', ttl: 60, data: {kind: 'read'}});
     expect(fromFcm({to: 't', notification: {title: 'T'}, collapse_key: 'k', priority: 'high', time_to_live: 30})).toMatchObject({title: 'T', collapseId: 'k', priority: 'high', ttl: 30});

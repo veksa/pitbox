@@ -126,8 +126,44 @@ const ttlSeconds = (v: unknown): number | undefined => {
  * it) or the legacy API (`{to, notification, data, collapse_key, priority}`). Android fields win over the
  * shared notification; the `apns` block fills what iOS needs.
  */
+/**
+ * A firebase-admin `Message` as the FCM HTTP v1 request firebase-admin itself would send: the renames its
+ * `send` does before the request goes out — `apns.liveActivityToken`, `apns.fcmOptions.imageUrl`, the aps
+ * `contentAvailable` / `mutableContent` / `threadId` (true → 1, false dropped), the alert's `locKey` family and
+ * `android.notification.imageUrl`. Only those: any other camelCase aps key (`interruptionLevel`, `relevanceScore`)
+ * reaches APNs as it is written and means nothing there, so it is not fixed up here either.
+ */
+export const fromFirebaseAdmin = (m: Obj): Obj => {
+  const rename = (o: Obj, map: Record<string, string>): Obj => {
+    const out: Obj = {};
+    for (const [k, v] of Object.entries(o)) out[map[k] && !(map[k] in o) ? map[k] : k] = v;
+    return out;
+  };
+  const out: Obj = {...m};
+  if (isObj(m.android) && isObj(m.android.notification)) {
+    out.android = {...m.android, notification: rename(m.android.notification, {imageUrl: 'image'})};
+  }
+  if (isObj(m.notification)) out.notification = rename(m.notification, {imageUrl: 'image'});
+  if (!isObj(m.apns)) return out;
+  const apns = rename(m.apns, {liveActivityToken: 'live_activity_token', fcmOptions: 'fcm_options'});
+  if (isObj(apns.fcm_options)) apns.fcm_options = rename(apns.fcm_options, {imageUrl: 'image', analyticsLabel: 'analytics_label'});
+  if (isObj(apns.payload) && isObj(apns.payload.aps)) {
+    const aps = rename(apns.payload.aps, {contentAvailable: 'content-available', mutableContent: 'mutable-content', threadId: 'thread-id'});
+    for (const k of ['content-available', 'mutable-content']) {
+      if (aps[k] === true) aps[k] = 1;
+      else if (aps[k] !== undefined && aps[k] !== 1) delete aps[k];
+    }
+    if (isObj(aps.alert)) {
+      aps.alert = rename(aps.alert, {locKey: 'loc-key', locArgs: 'loc-args', titleLocKey: 'title-loc-key', titleLocArgs: 'title-loc-args', subtitleLocKey: 'subtitle-loc-key', subtitleLocArgs: 'subtitle-loc-args', actionLocKey: 'action-loc-key', launchImage: 'launch-image'});
+    }
+    apns.payload = {...apns.payload, aps};
+  }
+  out.apns = apns;
+  return out;
+};
+
 export const fromFcm = (raw: Obj): PushMessage => {
-  const m = isObj(raw.message) ? raw.message : raw;
+  const m = fromFirebaseAdmin(isObj(raw.message) ? raw.message : raw);
   const notification = isObj(m.notification) ? m.notification : {};
   const android = isObj(m.android) ? m.android : {};
   const an = isObj(android.notification) ? android.notification : {};
@@ -143,7 +179,7 @@ export const fromFcm = (raw: Obj): PushMessage => {
     title: s(an.title) ?? s(notification.title) ?? fromIos?.title,
     subtitle: fromIos?.subtitle,
     body: s(an.body) ?? s(notification.body) ?? fromIos?.body,
-    image: s(an.image) ?? s(notification.image) ?? s(notification.imageUrl),
+    image: s(an.image) ?? s(notification.image) ?? (isObj(apns.fcm_options) ? s(apns.fcm_options.image) : undefined),
     channel: s(an.channel_id) ?? s(an.channelId) ?? s(notification.android_channel_id),
     sound: s(an.sound) ?? s(notification.sound) ?? fromIos?.sound,
     tag: s(an.tag) ?? s(notification.tag),
@@ -216,6 +252,8 @@ export const toApns = (msg: PushMessage, bundleId?: string, messageId?: string):
   // React Native Firebase on iOS treats a notification as an FCM message (onMessage, getInitialNotification)
   // only when it carries the id FCM adds.
   if (msg.viaFcm && messageId && out['gcm.message_id'] === undefined) out['gcm.message_id'] = messageId;
+  // FCM hands an iOS app its image under `fcm_options`, for the app's Notification Service Extension to fetch.
+  if (msg.viaFcm && msg.image !== undefined && out.fcm_options === undefined) out.fcm_options = {image: msg.image};
   if (bundleId) out['Simulator Target Bundle'] = bundleId;
   return out;
 };
