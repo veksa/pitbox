@@ -1,5 +1,6 @@
 // The daemon: one per project, HTTP RPC on loopback with a random token, discovered through
-// `.pitbox/daemon.json`. It keeps services, actors, mocks and port forwards alive between agent sessions.
+// `.pitbox/daemon.json`. It keeps services, actors, mocks and port forwards alive between agent sessions, and goes
+// when the whole stand goes down (afterDown) or on `pitbox daemon stop`, closing the browsers it started.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -8,6 +9,7 @@ import path from 'node:path';
 import {Engine} from './engine.ts';
 import {daemonAnswers, resolveProject} from './client.ts';
 import {takeOver} from './siblings.ts';
+import {reapOrphanBrowsers} from '../drivers/web/orphans.ts';
 import {withLockAsync} from '../lease/lease.ts';
 import {IDLE_MS} from './activity.ts';
 import {DAEMON_ACTIVITY, DAEMON_STOP, daemonFile, VERSION, VERSION_HEADER, type DaemonInfo} from './info.ts';
@@ -40,6 +42,19 @@ const onlyDaemon = async (file: string, stateDir: string) => {
   if (r.starting.length) process.stderr.write(`${stamp} another daemon of this config is still starting, left alone: pid ${r.starting.join(', ')}\n`);
 };
 
+/**
+ * What the daemon does after a `down`: `stopping` when the whole stand went down (no services named) — services are
+ * stopped and devices given back, so nothing is left for it to keep warm; kept, saying why, while another session's
+ * call still runs in it or the caller asked to keep it (`keepDaemon`); undefined for a `down` of named services.
+ */
+export const afterDown = (params: Record<string, unknown>, otherCalls: number): string | undefined => {
+  const named = Array.isArray(params.services) && params.services.length > 0;
+  if (named) return undefined;
+  if (params.keepDaemon === true) return 'kept (asked to)';
+  if (otherCalls > 0) return `kept: ${otherCalls} call${otherCalls > 1 ? 's' : ''} of another session still running in it; \`pitbox daemon stop\` (stand action=stop) ends it`;
+  return 'stopping';
+};
+
 /** How long a daemon waits for another one of its config to finish starting before it gives up. */
 const START_LOCK_WAIT_MS = 90_000;
 
@@ -53,6 +68,9 @@ export const serve = async (configFile?: string) => {
 
 const start = async (configFile: string | undefined, project: {file: string; stateDir: string}) => {
   await onlyDaemon(project.file, project.stateDir);
+  // Browsers an earlier daemon of this project started and left running when it died without stopping.
+  const reaped = await reapOrphanBrowsers(project.stateDir).catch(() => []);
+  if (reaped.length) process.stderr.write(`${new Date().toISOString()} closed ${reaped.length} browser${reaped.length > 1 ? 's' : ''} an earlier daemon of this project left running: pid ${reaped.join(', ')}\n`);
   const engine = await Engine.create(configFile);
   const {stateDir, root, file} = engine.loaded;
   fs.mkdirSync(stateDir, {recursive: true});
@@ -114,7 +132,11 @@ const start = async (configFile: string | undefined, project: {file: string; sta
       } finally {
         done();
       }
+      // The whole stand down leaves the daemon nothing to keep: it goes too, with the browsers it started.
+      const after = method === 'down' ? afterDown(body.params ?? {}, engine.activity.report().inFlight) : undefined;
+      if (after) result = {...(result as object), daemon: after};
       res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: true, result}));
+      if (after === 'stopping') setTimeout(() => void shutdown(0, true), 50);
     } catch (e) {
       res.writeHead(200, {'content-type': 'application/json'}).end(JSON.stringify({ok: false, error: (e as Error).message}));
     }

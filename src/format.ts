@@ -304,8 +304,13 @@ export const formatResult = (method: string, r: unknown): string => {
       lines.push(...fmtPrewarm(x.prewarm as Prewarm | undefined));
       return lines.join('\n');
     }
-    case 'down':
-      return fmtServices(x.services as ServiceState[]).join('\n');
+    case 'down': {
+      const lines = fmtServices(x.services as ServiceState[]);
+      const devices = x.devices as {released: string[]; shutDown?: string[]} | undefined;
+      if (devices?.released.length) lines.push(`gave back ${devices.released.join(', ')}${devices.shutDown?.length ? ` (shut down ${devices.shutDown.join(', ')})` : ''}`);
+      if (x.daemon) lines.push(x.daemon === 'stopping' ? 'daemon: stopped, with the browsers it started' : `daemon ${x.daemon}`);
+      return lines.join('\n');
+    }
     case 'restart':
     case 'devPrewarm':
       return [...(x.services ? fmtServices(x.services as ServiceState[]) : []), ...fmtPrewarm(x.prewarm as Prewarm | undefined)].join('\n') || 'nothing to prewarm';

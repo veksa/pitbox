@@ -4,7 +4,6 @@
 import path from 'node:path';
 import {connect, resolveProject, runningDaemon} from './daemon/client.ts';
 import {formatResult} from './format.ts';
-import {DAEMON_STOP} from './daemon/info.ts';
 
 const HELP = `pitbox — run, drive and debug apps from one tool
 
@@ -14,7 +13,8 @@ setup
 
 stand
   up [service…]                 start the stand (all autostart services, the LLM mock) or the named services
-  down [service…]               stop what pitbox started
+  down [service…] [--keep-daemon]   stop what pitbox started; the whole stand down also gives the devices back and stops
+                                the project's daemon with the browsers it started (--keep-daemon keeps it)
   restart <service…>            stop and start again, with the running services that depend on them
   status                        services, actors, mock, devices, forwarded ports
   logs <service|actor> [-n 40] [--grep re]
@@ -116,7 +116,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'fresh', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'replace', 'relaunch', 'fresh', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep', 'keep-daemon'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -138,8 +138,9 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
   const pkg = flags.pkg as string | undefined;
   const common = {device, pkg};
   switch (cmd) {
-    case 'up':
     case 'down':
+      return {method: cmd, params: {services: rest, ...(flags['keep-daemon'] ? {keepDaemon: true} : {})}};
+    case 'up':
     case 'restart':
       return {method: cmd, params: {services: rest}};
     case 'status':
@@ -388,7 +389,7 @@ export const main = async () => {
     const running = await runningDaemon({config});
     // Every daemon process of the config, not only the one the daemon file names: one whose file another overwrote
     // runs on unreachable (daemon/siblings.ts).
-    const {daemonsOf, stopDaemons} = await import('./daemon/siblings.ts');
+    const {daemonsOf} = await import('./daemon/siblings.ts');
     const strays = daemonsOf(resolveProject({config}).file).filter(pid => pid !== running?.info.pid);
     if (sub === 'status' || !sub) {
       process.stdout.write(running ? `running: pid ${running.info.pid}, port ${running.info.port}, ${running.info.config}\n` : `not running (${resolveProject({config}).stateDir})\n`);
@@ -399,32 +400,13 @@ export const main = async () => {
       return;
     }
     if (sub === 'stop' || sub === 'restart') {
-      // Unreachable daemons first, by SIGTERM (their leases stay with the project), so the stop below gives their
-      // devices back with its own.
-      const left = strays.length ? await stopDaemons(strays) : [];
-      const stray = strays.length ? `; ${strays.length - left.length} unreachable daemon${strays.length > 1 ? 's' : ''} of this config stopped too (pid ${strays.join(', ')})` : '';
-      if (left.length) {
-        process.stdout.write(`pid ${left.join(', ')} (a daemon of this config) did not stop on SIGTERM\n`);
-        process.exitCode = 1;
-      }
-      // A restart keeps the devices this project holds; a stop gives them back (and shuts down those it booted).
-      // `keepLeases` is what a daemon from before `release` reads; `by` says a person asked, so it stops even in use.
-      if (running) await running.call(DAEMON_STOP, sub === 'stop' ? {release: true, by: 'user'} : {keepLeases: true, by: 'user'}).catch(() => undefined);
-      // Stopped means gone: devices it booted shut down first, and a script that boots next must not race that.
-      const {isAlive} = await import('./util/proc.ts');
-      const end = Date.now() + 120_000;
-      while (running && isAlive(running.info.pid) && Date.now() < end) await new Promise(r => setTimeout(r, 200));
-      if (running && isAlive(running.info.pid)) {
-        process.stdout.write(`still stopping: pid ${running.info.pid} is giving its devices back (a device that will not shut down holds it up)\n`);
-        process.exitCode = 1;
-        return;
-      }
-      if (sub === 'stop') {
-        process.stdout.write(running ? `stopped${stray}\n` : strays.length ? `stopped${stray.replace(/^; /, ': ')}\n` : 'not running\n');
-        return;
-      }
+      const {stopProjectDaemon} = await import('./daemon/stop.ts');
+      const r = await stopProjectDaemon({config}, sub);
+      if (r.lines.length) process.stdout.write(`${r.lines.join('\n')}\n`);
+      if (r.failed) process.exitCode = 1;
+      if (!r.stopped || sub === 'stop') return;
       const c = await connect({config});
-      process.stdout.write(`running: pid ${c.info.pid}${stray}\n`);
+      process.stdout.write(`running: pid ${c.info.pid}${r.stray}\n`);
       return;
     }
     throw new Error('daemon status|stop|restart');
@@ -434,6 +416,13 @@ export const main = async () => {
   const result = await client.call(method, params);
   process.stdout.write(`${args.flags.json ? JSON.stringify(result, null, 2) : formatResult(method, result)}\n`);
   if (failed(method, result)) process.exitCode = 1;
+  // The whole stand went down and the daemon with it: done once it is gone, so nothing it started outlives the command.
+  if ((result as {daemon?: string} | undefined)?.daemon === 'stopping') {
+    const {waitDaemonGone} = await import('./daemon/stop.ts');
+    const r = await waitDaemonGone(client);
+    if (r.lines.length) process.stdout.write(`${r.lines.join('\n')}\n`);
+    if (r.failed) process.exitCode = 1;
+  }
 };
 
 /** A verdict that failed exits non-zero, so a script or a shell `&&` sees it. */

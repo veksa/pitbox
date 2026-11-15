@@ -17,6 +17,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
    `value="<ip:port> <code>"` from its Pair device with pairing code screen. The daemon applies and repairs
    forwards on its own. Devices are leased per session ([parallel.md](parallel.md)): boot your own instead of
    using one `device list` shows as held by someone else, and `device action=release` at the end.
+4. At the end of the task, when the stand is no longer needed: `stand action=down` — services stop, devices go
+   back, and the project's daemon stops with the browsers it started. `stand action=stop` stops the daemon alone
+   (it gives the devices back too); never end a pitbox process by hand.
 
 ## Driving the app
 

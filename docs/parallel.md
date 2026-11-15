@@ -210,7 +210,8 @@ still refused, and a lease of a daemon that is gone is taken over once its grace
    that does gets the device as `{apple_device}` / `{android_device}` — never `simctl … booted`, a bare `adb` or
    `gradlew installDebug` with no serial: those reach whichever device the system picks.
 4. At the end of the task: `device action=release` (or `stand action=down`) — pitbox shuts down what it booted
-   for you and leaves the rest.
+   for you and leaves the rest; `stand action=down` also stops the project's daemon with its browsers, never
+   another project's.
 
 ## Moving from a hand-made lock
 

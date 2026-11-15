@@ -32,6 +32,15 @@ pitbox versions — or when it is newer, it is kept as it is and the agent hears
 `pitbox daemon restart` replaces it at once. How an agent should use it:
 [agents.md](agents.md).
 
+The daemon runs until the stand goes down. `pitbox down` (`stand action=down`) with no services named stops the
+services, gives the devices back and then stops the project's daemon too, with every browser it started for the
+web apps; the command returns once the daemon is gone, and the next command starts a new one. It stays while
+another session's call is still running in it (the answer says so), or with `--keep-daemon` (`keep=true`).
+`pitbox daemon stop` (`stand action=stop`) stops it at any time — devices given back, browsers closed — and
+`pitbox daemon status` says whether one runs. Only this project's daemon is touched, found by its config, never
+another project's. A browser left running by a daemon that died without stopping (killed outright) is closed by the
+project's next daemon as it starts: each daemon records the browsers it launches in `.pitbox/browsers.json`.
+
 ## A first config
 
 `pitbox init` in the project writes a first `pitbox.config.ts` from what it finds (the app, its id and

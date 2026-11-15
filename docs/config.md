@@ -34,7 +34,8 @@ when installed), `sh`, `cmd`, or a path to a shell.
 ## services
 
 A map of stand services. `pitbox up` starts the autostart ones in dependency order; a service whose probe
-already answers is adopted (`external`), not started twice. Services outlive the daemon; only `down` stops them.
+already answers is adopted (`external`), not started twice. Services outlive the daemon; only `down` stops them
+(and the whole stand down stops the daemon as well).
 
 Only this project's server is adopted. When the probe's port is on this machine (`tcp:<port>`, `http://localhost…`)
 and the process listening there runs in a folder outside both the service's `cwd` and the project's repository (the

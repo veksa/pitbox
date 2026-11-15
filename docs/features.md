@@ -7,7 +7,8 @@ compact text.
 
 - **Services from a config.** Services start in dependency order and are health-checked; anything already
   answering its probe is adopted instead of started twice; logs go to files; services outlive agent sessions
-  and daemon restarts, and only `down` stops them.
+  and daemon restarts, and only `down` stops them — the whole stand down also gives the devices back and stops the
+  project's daemon with the browsers it started.
 - **Actors** (extra users of the app), **project tools** (a protocol call, an SQL query) and an
   **OpenAI-compatible LLM mock** with forced replies, errors and delays.
 - **Named states** — an emulator snapshot or a simulator app's data, plus the project's backend dump, restored

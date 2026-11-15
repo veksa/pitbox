@@ -337,13 +337,13 @@ describe('crash events', () => {
 
 describe('mcp tools', () => {
   it('route every tool and every action to an existing engine method, and stay small', async () => {
-    const {registerTools} = await import('./mcp/server.ts');
+    const {registerTools, STOP_DAEMON} = await import('./mcp/server.ts');
     const {Engine} = await import('./daemon/engine.ts');
     const dir = tmp();
     const config = {app: {android: 'com.example.app'}, devserver: {}, actors: {peer: {start: 'x {name} {port}'}}, tools: {sql: {run: 'q {query}', params: {query: 'SQL'}}}};
     fs.writeFileSync(path.join(dir, 'pitbox.config.json'), JSON.stringify(config));
     const engine = await Engine.create(path.join(dir, 'pitbox.config.json'));
-    const methods = new Set(Object.keys(engine.methods));
+    const methods = new Set([...Object.keys(engine.methods), STOP_DAEMON]);
     type Handler = (a: Record<string, unknown>) => Promise<unknown>;
     const tools: {name: string; schema: Record<string, {options?: string[]; def?: {values?: unknown}}>; handler: Handler; size: number}[] = [];
     registerTools({registerTool: (name, def, handler) => tools.push({name, schema: def.inputSchema as never, handler: handler as Handler, size: JSON.stringify(def).length})}, config as never, async () => ({
@@ -351,7 +351,13 @@ describe('mcp tools', () => {
         called.push(method);
         throw new Error('stop');
       },
-    }));
+    }), undefined, {
+      // Run by the MCP server itself, never sent to the daemon.
+      stopDaemon: async () => {
+        called.push(STOP_DAEMON);
+        return 'stopped';
+      },
+    });
     const called: string[] = [];
     let checks = 0;
     for (const t of tools) {

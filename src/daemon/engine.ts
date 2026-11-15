@@ -1752,7 +1752,8 @@ export class Engine {
 
   /**
    * Daemon shutdown. Services keep running on purpose — keeping them warm is the point — and the next daemon
-   * adopts them from the pid file; only `down` stops them. Actors and the mock belong to the daemon and go. Device
+   * adopts them from the pid file; only `down` stops them. Actors, the mock and the browsers of the web apps belong to
+   * the daemon and go. Device
    * leases stay with the project, and the devices keep running: the next daemon adopts them, and an agent mid-run
    * on a simulator does not lose it to a restart, a signal or a version swap. Only `release` (an explicit
    * `pitbox daemon stop`) gives them back, shutting down those this daemon booted.
@@ -1768,6 +1769,9 @@ export class Engine {
     await this.#wear?.close().catch(() => undefined);
     await this.#dev?.stop();
     for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
+    // A web app's browser starts on first use by any call (js eval, goto, downloads), not only through a device UI:
+    // every one closes here, or it would outlive the daemon.
+    for (const r of this.#webRunners.values()) await r.stop().catch(() => undefined);
     for (const r of this.#macRunners.values()) await r.stop().catch(() => undefined);
     if (opts.release) await this.#releaseAll().catch(() => undefined);
   }

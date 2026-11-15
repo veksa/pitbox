@@ -6,7 +6,8 @@ import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {z} from 'zod';
 import {loadConfig} from '../config/load.ts';
 import {toolParams, type PitboxConfig} from '../config/schema.ts';
-import {connect, resolveProject, type DaemonClient} from '../daemon/client.ts';
+import {connect, refused, resolveProject, type DaemonClient} from '../daemon/client.ts';
+import {stopProjectDaemon, waitDaemonGone} from '../daemon/stop.ts';
 import {VERSION} from '../daemon/info.ts';
 import {formatResult} from '../format.ts';
 
@@ -18,15 +19,45 @@ type Caller = {call: (method: string, params: Record<string, unknown>) => Promis
 type ToolServer = {registerTool: (name: string, def: {description: string; inputSchema: Shape}, handler: (args: Record<string, unknown>) => Promise<{content: {type: 'text'; text: string}[]; isError?: boolean}>) => unknown};
 
 /** Registers every tool on `server`; separate from the transport so a test can call each tool against a fake. */
-export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: () => Promise<Caller>, onError: () => void = () => undefined) => {
+/**
+ * What runs on the MCP server's side rather than in the daemon: stopping the daemon itself (`stand action=stop`), and
+ * waiting for it to go after a whole-stand `down` answered that it stops (the next call then starts a new one).
+ */
+export type LocalHooks = {stopDaemon?: () => Promise<string>; daemonStopping?: (c: Caller) => Promise<string | undefined>};
+
+/** The method name `stand action=stop` maps to: handled by the MCP server, never sent to the daemon. */
+export const STOP_DAEMON = 'stopDaemon';
+
+export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: () => Promise<Caller>, onError: () => void = () => undefined, hooks: LocalHooks = {}) => {
 
   // `method` may depend on the arguments (tools with an `action`).
   const tool = (name: string, description: string, shape: Shape, method: string | ((a: Record<string, unknown>) => string), map: (a: Record<string, unknown>) => Record<string, unknown> = a => a) => {
     server.registerTool(name, {description, inputSchema: shape}, async (args: Record<string, unknown>) => {
       try {
-        const c = await daemon();
         const m = typeof method === 'string' ? method : method(args);
-        const result = await c.call(m, map(args));
+        if (m === STOP_DAEMON) {
+          if (!hooks.stopDaemon) throw new Error('stopping the daemon is not available here');
+          const text = await hooks.stopDaemon();
+          onError();
+          return {content: [{type: 'text' as const, text}]};
+        }
+        let c = await daemon();
+        let result: unknown;
+        try {
+          result = await c.call(m, map(args));
+        } catch (e) {
+          // The daemon this server knew is gone (a `down` or `daemon stop` from elsewhere): nothing reached it, so the
+          // call goes once more, to the project's daemon as it is now — started again when none runs.
+          if (!refused(e)) throw e;
+          onError();
+          c = await daemon();
+          result = await c.call(m, map(args));
+        }
+        if ((result as {daemon?: string} | undefined)?.daemon === 'stopping') {
+          onError();
+          const left = await hooks.daemonStopping?.(c);
+          if (left) result = {...(result as object), daemon: left};
+        }
         // A note about the daemon (one of another version kept as it is) reaches the agent once.
         const note = c.note;
         c.note = undefined;
@@ -54,9 +85,10 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   tool('status', 'Services, dev server, devices, forwarded ports.', {}, 'status');
   tool(
     'stand',
-    'Services: up (all autostart, or named; running ones are adopted), down, restart, logs <name>.',
-    {action: z.enum(['up', 'down', 'restart', 'logs']), services: opt.list(), name: opt.str(), lines: opt.num(), grep: opt.str()},
-    a => ({up: 'up', down: 'down', restart: 'restart', logs: 'logs'})[a.action as string]!,
+    "Services: up (all autostart, or named; running ones are adopted), down (all: also gives the devices back and stops the project's daemon with the browsers it started; keep=true keeps the daemon), restart, logs <name>, stop (the project's daemon now, with its browsers; devices given back).",
+    {action: z.enum(['up', 'down', 'restart', 'logs', 'stop']), services: opt.list(), name: opt.str(), lines: opt.num(), grep: opt.str(), keep: opt.bool()},
+    a => ({up: 'up', down: 'down', restart: 'restart', logs: 'logs', stop: STOP_DAEMON})[a.action as string]!,
+    a => (a.action === 'down' && a.keep ? {...a, keepDaemon: true} : a),
   );
   if (config.actors && Object.keys(config.actors).length) {
     tool('actor', 'Extra app users: start <type> <name>, stop <name>, call <name> with a JSON body.', {action: z.enum(['start', 'stop', 'call']), type: opt.str(), name: z.string(), port: opt.num(), body: z.record(z.string(), z.unknown()).optional()}, a => ({start: 'actorStart', stop: 'actorStop', call: 'actorCall'})[a.action as string]!);
@@ -224,6 +256,15 @@ export const startMcp = async (opts: {config?: string} = {}) => {
   const {config} = await loadConfig({file});
   const server = new McpServer({name: 'pitbox', version: VERSION});
   let client: DaemonClient | undefined;
-  registerTools(server as unknown as ToolServer, config, async () => (client ??= await connect({config: file})), () => (client = undefined));
+  registerTools(server as unknown as ToolServer, config, async () => (client ??= await connect({config: file})), () => (client = undefined), {
+    stopDaemon: async () => {
+      const r = await stopProjectDaemon({config: file}, 'stop');
+      return r.lines.join('\n');
+    },
+    daemonStopping: async c => {
+      const r = await waitDaemonGone(c as DaemonClient);
+      return r.failed ? r.lines.join('\n') : undefined;
+    },
+  });
   await server.connect(new StdioServerTransport());
 };

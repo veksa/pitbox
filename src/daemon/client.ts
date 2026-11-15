@@ -75,7 +75,7 @@ export const runningDaemon = async (opts: {config?: string; cwd?: string}) => {
 };
 
 /** Refused, not slow: nothing listens on the daemon's port, so the pid in its file is someone else's now. */
-const refused = (e: unknown) => /ECONNREFUSED/.test(String((e as {cause?: {code?: string}})?.cause?.code ?? (e as Error)?.message));
+export const refused = (e: unknown) => /ECONNREFUSED/.test(String((e as {cause?: {code?: string}})?.cause?.code ?? (e as Error)?.message));
 
 /**
  * Waits for a daemon that is alive but slow to answer (a busy moment), up to `waitMs`. A second daemon for the

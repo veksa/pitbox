@@ -14,6 +14,7 @@ import {pitboxFmt} from '../../devserver/valuefmt.ts';
 import type {UiNode, UiWindow} from '../../ui/snapshot.ts';
 import type {AppEvent} from '../android/events.ts';
 import {KEYS} from '../android/driver.ts';
+import {forgetClosedBrowsers, recordBrowsers} from './orphans.ts';
 
 export type WebAppConfig = {
   /** Where the app lives: `open` goes here, and a route that starts with `/` is joined to it. */
@@ -457,6 +458,8 @@ export class WebRunner {
       this.#context = undefined;
       try {
         this.#browser = await type.launch({headless: !this.cfg.headed, ...(this.cfg.channel ? {channel: this.cfg.channel} : {})});
+        // On record, so the project's next daemon closes it if this one dies without closing it (orphans.ts).
+        recordBrowsers(this.#stateDir);
       } catch (e) {
         const msg = (e as Error).message.split('\n')[0] ?? '';
         throw new WebError(`cannot start ${this.cfg.browser ?? 'chromium'}: ${msg}`, /Executable doesn't exist|install/i.test(msg) ? `npx playwright-core install ${this.cfg.browser ?? 'chromium'}, or set web.<app>.channel: 'chrome'` : undefined);
@@ -875,7 +878,9 @@ export class WebRunner {
   }
 
   async stop(): Promise<void> {
+    const had = !!this.#browser;
     await this.#browser?.close().catch(() => undefined);
+    if (had) forgetClosedBrowsers(this.#stateDir);
     this.#browser = undefined;
     this.#context = undefined;
     this.#page = undefined;
