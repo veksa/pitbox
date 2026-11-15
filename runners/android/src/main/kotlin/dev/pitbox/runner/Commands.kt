@@ -117,15 +117,29 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
     else -> "window"
   }
 
+  /** Empties the client's node cache: `clearCache` from Android 14, setting the service info again before (it clears it too). */
+  private fun freshNodes() {
+    if (Build.VERSION.SDK_INT >= 34) {
+      try {
+        if (ui.clearCache()) return
+      } catch (e: Exception) {
+        // fall through to the older way
+      }
+    }
+    ui.serviceInfo = ui.serviceInfo
+  }
+
   /**
    * Visible nodes as a flat list with parent indexes. Without `all`, only nodes worth targeting or reading:
    * with text, a description, an id, or an interaction.
    */
   private fun tree(all: Boolean): JSONObject {
-    // Before Android 10 the client's node cache can keep a subtree as it was when a view in it was hidden
-    // or moved (a screen that comes back over another one): its nodes stay out of later trees. Setting the
-    // service info again clears that cache, so each tree is read anew.
-    if (Build.VERSION.SDK_INT < 29) ui.serviceInfo = ui.serviceInfo
+    // Each tree is read anew, never from the client's node cache. The cache drops a node only when the app reports
+    // a change with an accessibility event, and Jetpack Compose sends none unless an accessibility service is
+    // enabled — a UiAutomation does not count —, so on a Compose screen (every Wear OS launcher, tile and app) the
+    // tree stayed as first read: a list that scrolled still showed its old rows. Before Android 10 the cache also
+    // kept a subtree as it was when a view in it was hidden or moved.
+    freshNodes()
     val nodes = JSONArray()
     val windows = JSONArray()
     val paint = ArrayList<String>()
@@ -593,5 +607,5 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 }
 
 object BuildInfo {
-  const val VERSION = 21
+  const val VERSION = 22
 }
