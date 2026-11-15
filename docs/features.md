@@ -47,6 +47,10 @@ compact text.
   panel controls; the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
   controller; TV remote and media keys; the app's home-screen widgets added, removed and listed on phones and
   tablets (`widget`: Android 10 to 16 on Launcher3 and Pixel Launcher, iOS and iPadOS simulators).
+- **Watch pairing** — an Apple Watch simulator paired with the session's iPhone simulator in one call (`device
+  action=pair value=watch`), both leased; then `device=watch` drives the watch and its app (`app.watch.apple`).
+  A watch in another session's pair is never taken; one is cloned when none is free, and what pitbox paired or
+  created goes when the session gives the devices back ([parallel.md](parallel.md#watch-pairs)).
 
 ## UI automation
 

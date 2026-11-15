@@ -151,6 +151,17 @@ left to each agent's discipline.
   runs with no lease, and it never takes a device: a `POST /push` naming a device the session does not hold is
   refused with the holder in the verdict. A token bound to a device it no longer holds is routed by kind instead,
   with a note in the verdict. With no device of the session online the gateway answers 503.
+- **Watch pairs stay with their session.** <a id="watch-pairs"></a>`device action=pair value=watch` pairs an Apple
+  Watch simulator with the iPhone the session holds, and leases the watch too (its lease names the phone, so
+  `lease list` does not count it as a second device left running, and a call with no device still means the phone).
+  The watch is the named one (`watch=`, `apple.watch`) or a twin, taken only when it is shut down, nobody holds it
+  and it is in no pair with another phone — `simctl list pairs` shows every session's pairs, shut-down ones too,
+  and none of them is touched. With no such watch, a new one is created (`<name> (pitbox N)`). Pairing again
+  answers the same pair. `device action=unpair value=watch`, a release of the phone or the watch, `down` and a
+  daemon's exit undo only what pitbox made: the pair it created (while it still joins the same two simulators),
+  the watch it booted (shut down) or created (deleted). A pair the phone already had with a free watch stays. A
+  pair left by a session that died is unpaired by the next beat or `devices clean` once neither simulator has a
+  live lease. `simctl pair_activate` that hangs (45 s) is rolled back with a hint to boot a fresh phone.
 - **Shared caches.** The Apple runner, the fold helper and the Mac runner are built once per source and Xcode
   version under `~/Library/Caches/pitbox` and shared by every daemon. A version in use is marked
   (`.in-use-<pid>`), a build holds `<version>.lock` (a second daemon building the same version waits and finds it
@@ -167,6 +178,8 @@ left to each agent's discipline.
 | `device action=lease value=<purpose>` · `pitbox device lease [--device d] [--purpose text]` | hold a device now (it is taken on first use anyway) |
 | `device action=release [keep=true]` · `pitbox device release [--keep]` | give it back; one pitbox booted shuts down unless `keep` |
 | `device action=shutdown [force=true]` · `pitbox shutdown [--force]` | only your device; `force` (with the device named) names whose it was |
+| `device action=pair value=watch [watch=<name\|udid>]` · `pitbox device pair watch [<watch>]` | pair an Apple Watch simulator with your iPhone simulator; `device=watch` then names it |
+| `device action=unpair value=watch` · `pitbox device unpair watch` | undo the pair pitbox made and give the watch back |
 | `pitbox lease acquire <device> --as "<label>" [--ttl 30m] [--purpose text] [--pid n] [--wait 5m]` | a lease from a shell, no daemon: for scripts that drive a device with `simctl` or `adb` themselves; exits 1 naming the holder |
 | `pitbox lease release <device> --as "<label>" [--force]` · `pitbox lease list` | give it back · every lease, live and stale, after ending the ones nobody released (see *Leases nobody released are ended*) |
 

@@ -23,6 +23,7 @@ export default defineConfig({
 | `android` | Android package; the default for `open`, `stop`, `clear`, logs, perf |
 | `apple` | Apple bundle id; the default for the same commands on a simulator, and the app the Apple runner reads |
 | `scheme` | the app's URL scheme |
+| `watch` | `{apple: 'com.example.app.watchkitapp'}`: the app the same commands take on an Apple Watch simulator (a paired watch: `device=watch`); without it, `apple` |
 | `connect` | link that points the app at the dev server, used by `qr` and by `open` without a target. Placeholders: `{devserver}` (URL-encoded `http://host:port`), `{host}`, `{port}`. Default: pitbox's connect link `pitbox.<android>://connect?devserver={host}:{port}`, handled by the connect library in debug builds. With a dev launcher, its own link: `myapp://expo-development-client/?url={devserver}` |
 
 ## shell
@@ -123,6 +124,7 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 | Field | Meaning |
 |---|---|
 | `simulator` | default simulator for `boot`: a name (`iPhone 17`; the newest runtime wins when names repeat) or a udid |
+| `watch` | the watch `device action=pair value=watch` pairs with the phone: a simulator name (`Apple Watch Series 11 (46mm)`) or a udid; without it, any free watch simulator (newest runtime first) |
 | `remote` | a Mac that serves its simulators to this machine: `http://mac.example.test:7700` |
 | `token` | the device host's token; better in `PITBOX_REMOTE_TOKEN` than in the config |
 
