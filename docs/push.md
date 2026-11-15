@@ -279,9 +279,11 @@ device. The response object has no public initializer, so the hook makes it with
 method: private API, compiled only into debug builds. Without the hook the answer says so.
 
 **Android emulator.** The notification's actions come from `dumpsys notification` (by title); pitbox opens the
-shade, finds the notification's row, expands it when its buttons are hidden, and taps the button — System UI fires
-the action's intent, as for a person's tap. With `text=`, the reply field the action opens gets the text and its
-send button is pressed. `dismiss` swipes the row away. Nothing in the app is needed.
+shade, finds the notification's row (a messaging notification by the newest message it shows), expands its group and
+then the notification when its buttons are hidden, and taps the button inside that row — never one of the next
+notification — so System UI fires the action's intent, as for a person's tap. With `text=`, the reply field the
+action opens gets the text and its send button is pressed. `dismiss` swipes the notification's own row away, the
+group expanded first so the swipe does not take the whole group. Nothing in the app is needed.
 
 ## Live Activities
 
