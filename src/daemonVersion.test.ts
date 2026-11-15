@@ -19,7 +19,10 @@ const dirs: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(() => {
   for (const c of children.splice(0)) c.kill();
-  for (const d of dirs.splice(0)) fs.rmSync(d, {recursive: true, force: true});
+  // On Windows a daemon runs under a small wrapper (svcwrap) that keeps the daemon log open and the project folder as
+  // its working directory, and writes the exit status there once the daemon is gone: for that moment after the
+  // daemon's own exit the folder cannot be removed (EPERM, EBUSY), so the removal is retried.
+  for (const d of dirs.splice(0)) fs.rmSync(d, {recursive: true, force: true, maxRetries: 20, retryDelay: 250});
   fs.rmSync(leaseDir(), {recursive: true, force: true});
 });
 
