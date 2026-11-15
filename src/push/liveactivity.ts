@@ -139,7 +139,14 @@ export const readLiveActivityState = async (host: LiveActivityHost, udid: string
 };
 
 /** Which activity (or, for a start, which type) a token names in a state; undefined when it names none. */
-export const tokenIn = (state: LiveActivityState, token: string) => state.tokens.find(t => t.token.toLowerCase() === token.toLowerCase());
+/**
+ * The entry a token names. The system may hand one push-to-start token to several attribute types, so a push that
+ * says what it wants (`kind`, `type`) takes the entry that matches it, and only then the first with the token.
+ */
+export const tokenIn = (state: LiveActivityState, token: string, want?: {kind?: string; type?: string}) => {
+  const all = state.tokens.filter(t => t.token.toLowerCase() === token.toLowerCase());
+  return (want && all.find(t => (!want.kind || t.kind === want.kind) && (!want.type || t.type === want.type))) ?? all[0];
+};
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 

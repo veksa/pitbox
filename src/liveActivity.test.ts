@@ -153,6 +153,18 @@ describe('live activity delivery', () => {
     expect((await deliverLiveActivity(awake.host, 'SIM-1', 'com.example.app', {id: 'm3', event: 'update', activityId: 'A1', state: {}}, {waitMs: 300})).launched).toBe(false);
   });
 
+  it('starts the type a push names when the system gave one push-to-start token to several types', async () => {
+    const shared = 'cc'.repeat(32);
+    const s = fakeSim(state({
+      types: ['DeliveryAttributes', 'RideAttributes'],
+      tokens: [{token: shared, kind: 'start', type: 'DeliveryAttributes'}, {token: shared, kind: 'start', type: 'RideAttributes'}],
+      activities: [],
+    }));
+    const r = await center(s.host).send({apns: {aps: {...start.aps, 'attributes-type': 'RideAttributes'}}, liveActivityToken: shared, fromGateway: true}, 'gateway apns');
+    expect(r).toMatchObject({ok: true});
+    expect(r.verdict).toMatch(/started \(stand-in\) · RideAttributes/);
+  });
+
   it('resolves the activity from its token, refuses the wrong kind of token, and answers in one line', async () => {
     const s = fakeSim(state());
     const c = center(s.host);

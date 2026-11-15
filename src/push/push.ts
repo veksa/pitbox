@@ -323,7 +323,7 @@ export class PushCenter {
     let activityId = opts.activityId;
     let type = push.type;
     if (token) {
-      const hit = tokenIn(state, token);
+      const hit = tokenIn(state, token, push.event === 'start' ? {kind: 'start', type: push.type} : {kind: 'activity'});
       if (!hit) return fail(`not delivered: no activity or push-to-start token of ${app} on this simulator has the token ${shortToken(token)}`, 'unregistered');
       if (push.event === 'start' && hit.kind !== 'start') return fail("dropped: a start sent to an activity's token — the system starts activities only from a push-to-start token");
       if (push.event !== 'start' && hit.kind === 'start') return fail(`dropped: an ${push.event} sent to the push-to-start token of ${hit.type} — the system ignores it; send it to the activity's own token`);
