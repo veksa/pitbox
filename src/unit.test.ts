@@ -257,6 +257,16 @@ describe('runner version', () => {
   });
 });
 
+describe('the apple runner tree', () => {
+  it('turns frames into points only through the clamping helper', () => {
+    // Int(_:) traps on an infinite or NaN edge, and the system shell reports such frames (lock-screen
+    // Live Activity cards, the largest text sizes): one raw conversion takes the whole runner down.
+    const swift = fs.readFileSync('runners/apple/Runner/Commands.swift', 'utf8');
+    expect(swift.match(/Int\(\s*\w+\.(?:min|max)[XY]/g) ?? []).toEqual([]);
+    expect(swift).toMatch(/let visible = Self\.finite\(f\)/);
+  });
+});
+
 describe('the android runner tree', () => {
   it('fetches nodes in batches the app does not cut short on a screen that keeps redrawing', () => {
     const kotlin = fs.readFileSync('runners/android/src/main/kotlin/dev/pitbox/runner/Commands.kt', 'utf8');

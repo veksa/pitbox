@@ -281,7 +281,7 @@ final class Commands {
     // The keyboard as its own window, like Android's input method: the host keeps gestures above it. Its keys
     // stay out — text goes in with `text`.
     if let k = keyboard {
-      let b = [Int(k.minX.rounded()), Int(k.minY.rounded()), Int(k.maxX.rounded()), Int(k.maxY.rounded())]
+      let b = Self.box(k)
       nodes.append(["p": -1, "w": windows.count, "c": "Keyboard", "b": b])
       windows.append(["type": "ime", "title": "keyboard", "pkg": "com.apple.keyboard"])
       hasher.combine(b)
@@ -306,7 +306,7 @@ final class Commands {
     var index = parent
     let f = n.frame
     if n.elementType == .keyboard {
-      if !f.isEmpty && f.intersects(screen) { keyboard = keyboard.map { $0.union(f) } ?? f }
+      if Self.finite(f) && !f.isEmpty && f.intersects(screen) { keyboard = keyboard.map { $0.union(f) } ?? f }
       return
     }
     // From iOS 26 the keyboard draws out of process, in a window of its own that also holds the prediction bar
@@ -321,7 +321,7 @@ final class Commands {
     }
     // A skipped wrapper hands its focus down to the control that stands for it.
     var passFocus = false
-    let visible = !f.isEmpty && f.intersects(screen) && n.elementType != .application
+    let visible = Self.finite(f) && !f.isEmpty && f.intersects(screen) && n.elementType != .application
     if visible {
       let type = n.elementType
       let label = n.label
@@ -336,7 +336,7 @@ final class Commands {
       // React Native's Text is a view carrying the text with the static text inside it: one line, not two.
       let repeats = ident.isEmpty && !interactive && echo.map { $0.0 == label && Self.same($0.1, f) } == true
       if !wrapper && !repeats && (all || interactive || !label.isEmpty || !value.isEmpty || !ident.isEmpty) {
-        let b = [Int(f.minX.rounded()), Int(f.minY.rounded()), Int(f.maxX.rounded()), Int(f.maxY.rounded())]
+        let b = Self.box(f)
         var o: [String: Any] = ["p": parent, "w": window, "c": Self.typeNames[type] ?? "Other", "b": b]
         if !ident.isEmpty { o["id"] = ident }
         let placeholder = n.placeholderValue ?? ""
@@ -404,6 +404,22 @@ final class Commands {
     return nil
   }
 
+  /// Whether every edge of a frame is a real number. The system shell reports some elements (lock-screen
+  /// Live Activity cards, views laid out at the largest text sizes) with infinite or NaN frames.
+  static func finite(_ f: CGRect) -> Bool {
+    f.minX.isFinite && f.minY.isFinite && f.maxX.isFinite && f.maxY.isFinite
+  }
+
+  /// A frame as whole points, `[minX, minY, maxX, maxY]`. `Int(_:)` traps on a non-finite or out-of-range
+  /// value and takes the whole runner down, so each edge is clamped first.
+  static func box(_ f: CGRect) -> [Int] {
+    func px(_ v: CGFloat) -> Int {
+      guard v.isFinite else { return v.isNaN ? 0 : (v > 0 ? 1_000_000 : -1_000_000) }
+      return Int(min(max(v, -1_000_000), 1_000_000).rounded())
+    }
+    return [px(f.minX), px(f.minY), px(f.maxX), px(f.maxY)]
+  }
+
   private static func same(_ g: CGRect, _ f: CGRect) -> Bool {
     abs(g.minX - f.minX) < 2 && abs(g.minY - f.minY) < 2 && abs(g.maxX - f.maxX) < 2 && abs(g.maxY - f.maxY) < 2
   }
@@ -436,7 +452,7 @@ final class Commands {
 
   private func describe(_ e: XCUIElement) -> [String: Any] {
     let f = e.frame
-    var o: [String: Any] = ["c": Self.typeNames[e.elementType] ?? "Other", "b": [Int(f.minX.rounded()), Int(f.minY.rounded()), Int(f.maxX.rounded()), Int(f.maxY.rounded())]]
+    var o: [String: Any] = ["c": Self.typeNames[e.elementType] ?? "Other", "b": Self.box(f)]
     if !e.identifier.isEmpty { o["id"] = e.identifier }
     if !e.label.isEmpty { o["t"] = e.label }
     return o
