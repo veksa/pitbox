@@ -67,7 +67,6 @@ const list = (p: Params, k: string): string[] => {
 /** Machine-wide pitbox state, shared by every project. */
 const machineRelayFile = () => path.join(os.homedir(), '.pitbox', 'relay-avds.json');
 
-/** What an Apple simulator cannot do of the Android-only form factor commands, and why. */
 /**
  * Logpoint expressions: a list, one expression, or a list sent as JSON text (`'["a","b"]'`) — the last would
  * otherwise log an array of two strings, never the values.
@@ -92,6 +91,7 @@ const MAX_PAUSE_S = 600;
 /** How long after a launch the first pointer action waits for window animations: an opening one is over by then. */
 const LAUNCH_SETTLE_MS = 3000;
 
+/** What an Apple simulator cannot do of the Android-only form factor commands, and why. */
 const APPLE_HAS_NO = {
   posture: 'posture is for Android foldables here: a foldable iPhone folds through its own path',
   rotate: 'rotate is for Android here',
