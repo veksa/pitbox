@@ -244,9 +244,14 @@ actor Worker {
     save()
   }
 
-  /// A made-up token, recorded and announced; the same one again for the same activity or type.
+  /// A made-up token, recorded and announced; the same one again for the same activity or type. A token kept from an
+  /// earlier launch is announced again, as the system hands its tokens out again on every launch: an app that keeps
+  /// them in memory only (and reports them on sign-in) would otherwise never see it after the first launch.
   func synthesize(kind: String, type: String, activityId: String?) -> String {
-    if let t = state.tokens.first(where: { $0.kind == kind && $0.type == type && $0.activityId == activityId }) { return t.token }
+    if let t = state.tokens.first(where: { $0.kind == kind && $0.type == type && $0.activityId == activityId }) {
+      if t.synthetic == true { PitboxLiveActivity.announce(PitboxLiveActivityToken(kind: kind, type: type, activityId: activityId, token: t.token)) }
+      return t.token
+    }
     let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "device"
     let token = Core.syntheticToken(udid, Bundle.main.bundleIdentifier ?? "", type, kind, activityId ?? "")
     state.record(.init(token: token, kind: kind, type: type, activityId: activityId, synthetic: true))

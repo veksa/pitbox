@@ -290,7 +290,8 @@ APNs path's device token, or FCM's `live_activity_token` (the FCM token itself p
 A simulator gives real tokens to an app with the `aps-environment` entitlement (a simulator build carries it as it
 is), so the app's own token code sends them to its server unchanged. Without the entitlement the system gives none,
 and refuses a start with a push type: the hook then starts the activity without one and makes up stable 64-hex
-tokens, passed to `PitboxLiveActivity.onSyntheticToken` for the app to send on.
+tokens, passed to `PitboxLiveActivity.onSyntheticToken` for the app to send on — again on every launch, as the
+system does with real tokens, so an app that reports them on sign-in still has them after a restart.
 
 | Gateway answer | When |
 |---|---|
