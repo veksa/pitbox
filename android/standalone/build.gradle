@@ -41,6 +41,14 @@ project(':connect') {
 
   apply plugin: 'maven-publish'
 
+  // With kotlin.stdlib.default.dependency=false (gradle.properties): the stdlib of the language version the library
+  // is compiled as, which is what the published POM declares. check-connect checks it.
+  afterEvaluate {
+    dependencies {
+      implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.1.21'
+    }
+  }
+
   plugins.withId('com.android.library') {
     android {
       publishing {
