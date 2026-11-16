@@ -35,6 +35,14 @@ const TRANSITION_PAUSE_MS = 150;
 export const retriedRead = (cmd: string, e: unknown): boolean =>
   READS.has(cmd) && e instanceof AndroidError && /^runner: NullPointerException\b/.test(e.message);
 
+/**
+ * A tree with no window at all, not even the status bar or the launcher: what a runner answers once its UiAutomation
+ * connection died under it (adbd restarted by `adb root` / `adb unroot`) while its process and socket live on. Never
+ * a real screen of a booted device, so the runner is started again and asked once more.
+ */
+export const deadTree = (cmd: string, answer: Record<string, unknown>): boolean =>
+  cmd === 'tree' && Array.isArray(answer.windows) && answer.windows.length === 0;
+
 /** A runner of this version or a newer one: newer runners serve older hosts. */
 const usable = (v?: number) => v !== undefined && v >= RUNNER_VERSION;
 
@@ -233,13 +241,19 @@ export class AndroidRunner {
 
   async call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {
     await this.start();
+    let answer: T;
     try {
-      return await this.#send<T>(cmd, args, timeoutMs);
+      answer = await this.#send<T>(cmd, args, timeoutMs);
     } catch (e) {
       if (!retriedRead(cmd, e)) throw e;
       await new Promise(r => setTimeout(r, TRANSITION_PAUSE_MS));
-      return this.#send<T>(cmd, args, timeoutMs);
+      answer = await this.#send<T>(cmd, args, timeoutMs);
     }
+    if (!deadTree(cmd, answer)) return answer;
+    // Useless to every daemon connected to it, so restarting it cuts nobody off from anything that works.
+    this.#teardown();
+    await machineLock(`runner-${leaseKey('android', this.serial)}`, () => this.#launch());
+    return this.#send<T>(cmd, args, timeoutMs);
   }
 
   #send<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown>, timeoutMs: number): Promise<T> {

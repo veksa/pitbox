@@ -7,7 +7,7 @@ import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
 import {AndroidDriver, CONNECT_PREFS, isUnresolvedLink, mergeConnectPrefs} from './drivers/android/driver.ts';
-import {instrumentCommand} from './drivers/android/runner.ts';
+import {deadTree, instrumentCommand} from './drivers/android/runner.ts';
 import {shownPath} from './format.ts';
 import {parseProbe, probePort} from './stand/health.ts';
 import {pickReply} from './stand/llmMock.ts';
@@ -652,6 +652,15 @@ describe('android runner start', () => {
     // An unreadable level keeps the option, as before.
     expect(instrumentCommand(Number.NaN)).toContain('--no-hidden-api-checks');
     expect(instrumentCommand(26)).toMatch(/^rm -f \S+; nohup am instrument -w -r -e port \d+ dev\.pitbox\.runner\/\.RunnerInstrumentation > \S+ 2>&1 &$/);
+  });
+});
+
+describe('android runner after adbd restarted', () => {
+  it('takes a tree without any window for a runner whose UiAutomation died, and nothing else', () => {
+    expect(deadTree('tree', {windows: [], nodes: []})).toBe(true);
+    expect(deadTree('tree', {windows: [{type: 'app'}], nodes: []})).toBe(false);
+    expect(deadTree('info', {windows: []})).toBe(false);
+    expect(deadTree('tree', {})).toBe(false);
   });
 });
 
