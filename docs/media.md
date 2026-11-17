@@ -10,9 +10,10 @@ Checked on emulator 37.2.13 (Android 16, API 36) and Xcode 27.2 (iOS 27.2).
 
 | Feature | Android emulator | iOS simulator |
 |---|---|---|
-| Microphone: a file (WAV as is, anything else through ffmpeg) | ✅ `mic <file>` through the emulator's gRPC `injectAudio`; boot with `--audio` | ❌ the simulator records from the Mac's input device; see [iOS microphone](#ios-microphone) |
-| Microphone: tone, noise (white, pink, brown), silence, parts joined, noise mixed in at an SNR, repeats | ✅ | ❌ (same) |
-| Microphone: in the background, stopped mid-sound, again and again | ✅ `bg`, `mic stop`, `mic status` | ❌ |
+| Microphone: a file (WAV as is, anything else through ffmpeg) | ✅ `mic <file>` through the emulator's gRPC `injectAudio`; boot with `--audio` | ✅ through a loopback driver on the Mac (BlackHole 2ch): the Mac's input is switched to it while the sound plays; see [iOS microphone](#ios-microphone) |
+| Microphone: tone, noise (white, pink, brown), silence, parts joined, noise mixed in at an SNR, repeats | ✅ | ✅ |
+| Microphone: in the background, stopped mid-sound, waited for, again and again | ✅ `bg`, `mic stop`, `mic wait`, `mic status` | ✅ (one simulator at a time: the Mac has one input) |
+| Microphone: played only once the app records | ✅ (`dumpsys audio`) | ✅ (Core Audio's list of processes that record, macOS 14 and later) |
 | What the app plays, to a WAV | ✅ `capture start audio` (gRPC `streamAudio`) | ❌ the simulator plays through the Mac's output; simctl captures no sound |
 | Checks on that sound: there is sound, how long, how loud, which frequency | ✅ `capture check`, `expect sound …` | ❌ (no sound to check) |
 | A transcript of it | ✅ through your own command (`media.transcribe`) | ❌ |
@@ -54,12 +55,14 @@ pitbox mic noise brown 3s -30dB              # white (default), pink or brown no
 pitbox mic hello.wav repeat=3 gap=2s         # three times, two seconds apart
 pitbox mic long-talk.wav bg                  # answers at once; plays as soon as the app starts recording
 pitbox mic status                            # what plays, how far it is
+pitbox mic wait                              # until the sound in the background has played (fails when it failed)
 pitbox mic stop                              # ends it mid-sound
 ```
 
 Options anywhere in the value: `noise=white|pink|brown|<file>` with `snr=<dB>` (default 10; the signal's RMS over the
 part that sounds against the noise's RMS), `gain=<dB>`, `repeat=<n>` with `gap=<secs>`, `wait=<secs>` (how long to
-wait for the app to record: 10 s by default, 60 s with `bg`), `bg`. Paths are from the project root. The sound is made
+wait for the app to record: 10 s by default, 60 s with `bg`), `bg`, `force` (iOS: switch the Mac's input although
+another app records from it). Paths are from the project root. The sound is made
 at 48 kHz mono and sent in real time, 100 ms a packet; what the app does not record while it plays is lost, as with a
 person speaking. A new `mic` replaces the one playing.
 
@@ -68,16 +71,54 @@ In a flow, a sound in the background lines up with the press that starts recordi
 ```
 mic question.wav noise=pink snr=15 bg
 press id=record
+mic wait
 wait text~="Transcript"
 ```
 
+Start the sound with `bg` before the press that starts recording: on iOS this is required (see below), and on Android
+it works the same.
+
 ### iOS microphone
 
-A simulator records from the Mac's current input device, and nothing in simctl feeds it a file. The route that works is
-a loopback audio device on the Mac (BlackHole or similar): install it, choose it as the Mac's input (or as the
-Simulator's in its I/O menu), play the file to it, and allow Simulator to use the microphone in System Settings ›
-Privacy & Security › Microphone. That permission is the Mac's own and is given by a person; pitbox never changes it.
-pitbox does not install audio drivers.
+A simulator records from the Mac's default input device, and nothing in simctl feeds it a file. `mic` on iOS therefore
+goes through a loopback audio driver:
+
+1. It writes the Mac's current input down (in `~/.pitbox/mic-input.json`) and switches the input to the loopback
+   (`SwitchAudioSource`).
+2. It waits until an app of that simulator records from the loopback, then plays the sound to the loopback's output
+   only (ffmpeg's AudioToolbox output, the device chosen by index). The Mac's own output is never touched: nothing
+   plays through the speakers.
+3. It puts the previous input back when the sound ends — after it played, on an error, on `mic stop`, on Ctrl-C of a
+   `mic` in the foreground, on a timeout (the sound's length plus 15 s), and when the daemon stops. A daemon that died
+   mid-sound leaves the note behind, and the next daemon puts the input back when it starts. An input someone chose
+   while the sound played is left as it is.
+
+The input is switched only while the sound plays. Setup, once per Mac:
+
+```sh
+brew install blackhole-2ch switchaudio-osx ffmpeg   # then restart coreaudiod (or log in again) for BlackHole to show
+```
+
+and allow the microphone to the simulator in System Settings › Privacy & Security › Microphone: macOS asks the first
+time an app in a simulator records (the request comes from CoreSimulator's SimulatorTrampoline). That permission is the
+Mac's own and is given by a person; pitbox never changes it. pitbox does not install audio drivers. Another loopback
+device is named in the config:
+
+```ts
+media: {loopback: 'Loopback Audio'},
+```
+
+Rules that follow from the Mac having one input:
+
+- **Start the sound before the recording.** A simulator's app keeps the input device it started recording from: an
+  app that started before the switch hears the Mac's own microphone, and `mic` says so instead of playing. Use
+  `mic <sound> bg`, then start the recording (`mic wait` waits for the sound to finish).
+- **Another app recording from the Mac's input** (a call, dictation) would hear the sound instead of its microphone:
+  `mic` refuses and names it; `force` switches anyway.
+- Every simulator on the Mac records from the same input: a second simulator that records while the sound plays hears
+  it too. One sound plays at a time; a new one replaces the one playing.
+- Knowing that the app records needs the small Swift helper in `runners/apple/Audio`, built with `swiftc` on first use.
+  Without it (no Xcode command line tools) the sound plays at once, and the answer says so.
 
 ## Capture: what the device plays and shows
 
@@ -174,7 +215,7 @@ pitbox settings reset=mic                    # the next request prompts
 
 ## MCP
 
-- `device action=mic value="hello.wav noise=pink snr=10 bg"`, `value=stop`, `value=status`
+- `device action=mic value="hello.wav noise=pink snr=10 bg"`, `value=wait`, `value=stop`, `value=status`
 - `device action=camera value="image card.png"`, `action=library value="add a.jpg"`, `action=call value="incoming"`,
   `action=audio value="volume music max"`; `action=boot audio=true camera=image:card.png`
 - `capture action=start what=screen fps=30 touches=true`, `action=stop`, `action=frames count=6`,
