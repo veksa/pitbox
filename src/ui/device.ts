@@ -146,7 +146,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
    * above it once it is up (a composer that rides on the keyboard), and the screen read mid-way says the control
    * is under the keys.
    */
-  async #keyboardStill(snap: Snapshot, selector?: string, timeoutMs = 1500): Promise<Snapshot> {
+  async #keyboardStill(snap: Snapshot, selector?: string, timeoutMs = 1500): Promise<{snap: Snapshot; still: boolean}> {
     const end = Date.now() + timeoutMs;
     const {height} = await this.size();
     const at = (s: Snapshot) => {
@@ -163,7 +163,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     for (;;) {
       await this.runner.call('idle', {quiet: 150, timeout: 600}, 6000);
       const next = await this.snapshot();
-      if (state(next) === state(prev) || Date.now() > end) return next;
+      if (state(next) === state(prev)) return {snap: next, still: true};
+      if (Date.now() > end) return {snap: next, still: false};
       prev = next;
     }
   }
@@ -294,10 +295,12 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       return top !== undefined && (!t || (!!t.node && s.windows[t.node.w]?.type !== 'ime' && t.y >= top));
     };
     let covered = await coveredIn(snap, target);
+    // Whether the keyboard was just seen standing still: hiding it needs no wait for the screen to go quiet first.
+    let still = false;
     // Under a keyboard that may still be moving: looked at again once it stands still, so a control the app
     // lifts above it is tapped where it ends up instead of closing the keyboard for it.
     if (covered && target && !ref) {
-      snap = await this.#keyboardStill(snap, selector);
+      ({snap, still} = await this.#keyboardStill(snap, selector));
       try {
         target = resolveTarget(snap, selector);
       } catch {
@@ -306,7 +309,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       covered = await coveredIn(snap, target);
     }
     if (covered || !target) {
-      snap = await this.#hideKeyboard(selector);
+      snap = await this.#hideKeyboard(selector, still ? snap : undefined);
       target = resolveTarget(snap, selector);
     }
     // React Native's warnings toast over the target (a tab bar under it): closed with its own dismiss button, as a
@@ -336,11 +339,11 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
    * Hides the on-screen keyboard (back, or return where there is no back) and returns the screen once the app is there again: a fullscreen
    * keyboard (landscape on a small screen) hides the app's window from the list until a moment after it goes.
    */
-  async #hideKeyboard(selector?: string): Promise<Snapshot> {
+  async #hideKeyboard(selector?: string, still?: Snapshot): Promise<Snapshot> {
     // A keyboard that is still coming up does not take back yet: the app does, and closes. Back goes once the
-    // screen is quiet and the keyboard is still there.
-    await this.runner.call('idle', {quiet: 300, timeout: 1500}, 6000);
-    const now = await this.snapshot();
+    // screen is quiet and the keyboard is still there — or at once on a screen just seen with the keyboard still.
+    if (!still) await this.runner.call('idle', {quiet: 300, timeout: 1500}, 6000);
+    const now = still ?? (await this.snapshot());
     if (!now.windows.some(w => w.type === 'ime')) return now;
     // Back on Android. iOS has no back: return ends the editing there, as a person does (a single-line field gives
     // up focus on submit), and the keyboard goes with it.
