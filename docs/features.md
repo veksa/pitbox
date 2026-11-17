@@ -75,7 +75,10 @@ compact text.
   password offer) are named in snapshots and failed waits; React Native's warnings toast is kept away in apps on
   pitbox's dev server and closed elsewhere when it covers the target.
 - **Fast on busy screens** — taps on a screen with a playing video take milliseconds (the platform's
-  wait-for-animations is skipped).
+  wait-for-animations is skipped). On iOS the runner skips XCUITest's wait for the app around every event and
+  query (pitbox settles by comparing trees instead), taps as one synthesized touch (about 250 ms instead of 400),
+  and keeps XCUITest's waits only between the keys it types and before a touch, where an app still animating
+  would drop it.
 
 ## Checks instead of screenshots
 

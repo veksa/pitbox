@@ -58,6 +58,16 @@ without it. Details and method: [slim devices, warm templates and native builds]
 | … its CPU over the minute after | 0.24–0.28 cores | 0.02–0.16 cores |
 | First UI action, 20 s or more after the boot | 17 s | 2.6 s |
 
+**iOS UI actions** (the Apple example on an iPhone 17 Pro simulator, iOS 27.2; median of five):
+
+| | Before | pitbox |
+|---|---|---|
+| Tap | 395 ms | 249 ms |
+| Fill a field | 3.67 s | 2.87 s |
+| Fill a field with a sentence | 5.39 s | 4.77 s |
+| Press a button under the keyboard after a fill | 3.10 s | 2.25 s |
+| Press that changes nothing | 2.25 s | 2.06 s |
+
 **Native builds** (the React Native example; once built, every checkout and session on the Mac reuses the build):
 
 | | Android | iOS |
