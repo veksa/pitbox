@@ -81,7 +81,9 @@ export const featureChecks = async ({pitbox, device, dir, platform, bin}) => {
   } finally {
     dropBaseline();
   }
-  fresh();
+  // Right after a launch the window's opening transition still runs (on an emulator that renders on the GPU, every
+  // frame of it): the check is about the app's own still screen.
+  steps('open!\nwait id=title 30\nwait 2s');
   const media = on(['media']);
   check('media sees a still screen', /not moving/.test(media.out));
 
