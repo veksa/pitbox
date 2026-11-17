@@ -9,7 +9,7 @@ import {parseStartDate} from '../../lease/lease.ts';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
-import {keepsOverrides, notDisabled, simSlimList, slimSimulator, unslimSimulator, type SimSlimOptions} from './slim.ts';
+import {keepsOverrides, notDisabled, simSlimList, slimSimulator, storeDir, unslimSimulator, type SimSlimOptions} from './slim.ts';
 
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
 
@@ -339,10 +339,12 @@ export class AppleDriver {
   }
 
   /** Deletes a simulator (one pitbox created for a session); it must be shut down. */
+  /** Deletes a simulator and its Mac-side launchd folder (logs, overrides, what slim wrote), which simctl leaves. */
   async delete(udid: string) {
     this.forgetList();
     await this.#ok(['delete', udid], 'delete', 60_000);
     this.forgetList();
+    if (/^[0-9A-F-]{36}$/i.test(udid)) fs.rmSync(storeDir(udid), {recursive: true, force: true});
   }
 
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {
