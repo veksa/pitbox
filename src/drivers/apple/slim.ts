@@ -74,14 +74,39 @@ export const SIM_SLIM_LABELS = [
   'com.apple.diagnosticextensionsd',
   'com.apple.photoanalysisd',
   'com.apple.SafariBookmarksSyncAgent',
+  // Wallet's watch companion, media analysis, Memoji, voice banking, Find My, on-device model catalog, Files
+  // indexing, watch contact sync, iMessage identity, ID verification
+  'com.apple.NPKCompanionAgent',
+  'com.apple.mediaanalysisd',
+  'com.apple.avatarsd',
+  'com.apple.voicebankingd',
+  'com.apple.findmy.findmylocated',
+  'com.apple.modelcatalogd',
+  'com.apple.fileindexerd',
+  'com.apple.addressbooksyncd',
+  'com.apple.identityservicesd',
+  'com.apple.coreidvd',
 ];
+
+/**
+ * Daemons that others call in a tight loop while they are off: disabling one keeps several cores busy for good
+ * (sleepd: healthd, mobiletimerd and SpringBoard spin, and diagnosticd with them). Never disabled.
+ */
+export const SIM_NEVER = ['com.apple.sleepd', 'com.apple.SpringBoard', 'com.apple.backboardd', 'com.apple.runningboardd', 'com.apple.CoreSimulator.bridge'];
+
+/** Home screen widgets and Live Activities (about 0.6 GB with their extensions): off only on request, `disable:
+ *  ['widgets']`, since an app's own widgets and Live Activities need them. */
+export const SIM_WIDGET_LABELS = ['com.apple.chronod', 'com.apple.liveactivitiesd', 'com.apple.navd'];
+
+/** A name in `keep` / `disable`: a launchd label, or a group (`widgets`). */
+const expand = (names: string[] = []) => names.flatMap(n => (n === 'widgets' ? SIM_WIDGET_LABELS : [n]));
 
 export type SimSlimOptions = {keep?: string[]; disable?: string[]};
 
 /** What a slim boot disables: the default list and `disable`, less `keep`. */
 export const simSlimList = (opts: SimSlimOptions = {}): string[] => {
-  const keep = new Set(opts.keep ?? []);
-  return [...new Set([...SIM_SLIM_LABELS, ...(opts.disable ?? [])])].filter(l => !keep.has(l) && /^[\w.-]+$/.test(l));
+  const keep = new Set([...expand(opts.keep), ...SIM_NEVER]);
+  return [...new Set([...SIM_SLIM_LABELS, ...expand(opts.disable)])].filter(l => !keep.has(l) && /^[\w.-]+$/.test(l));
 };
 
 /** Whether a runtime keeps launchd overrides across boots: iOS 18.5 and later (`com.apple.CoreSimulator.SimRuntime.iOS-18-5`). */

@@ -234,7 +234,7 @@ export const configSchema = z.object({
       /**
        * Slim simulators (default true; iPhone and iPad on iOS 18.5+): a boot from shut down disables launchd daemons an
        * app under test does not need (Siri and Apple Intelligence, Spotlight, Mail, Screen Time, News, posters…).
-       * `false` boots stock and puts back what pitbox disabled. `{keep: [...], disable: [...]}` takes launchd labels.
+       * `false` boots stock and puts back what pitbox disabled. `{keep: [...], disable: [...]}` takes launchd labels and the group `widgets` (widgets and Live Activities, on by default).
        */
       slim: z.union([z.boolean(), z.object({keep: z.array(z.string()).optional(), disable: z.array(z.string()).optional()}).strict()]).optional(),
     })

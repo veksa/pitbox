@@ -249,7 +249,7 @@ overrides from a file on the Mac when the simulator starts
 (`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`, kept across an erase). pitbox writes
 them there while the simulator is shut down, just before its boot, so slimming costs no extra boot: Siri and Apple
 Intelligence, Spotlight, Mail, Screen Time and Family, the Health app, Home, Fitness, News, Weather, Game Center,
-lock screen posters, ads, experiments and diagnostics. SpringBoard and the keyboard, notifications and push, widgets
+lock screen posters, ads, experiments and diagnostics, Find My, Memoji, media analysis, iMessage identity. SpringBoard and the keyboard, notifications and push, widgets
 and Live Activities, location, privacy prompts, the photo library, accessibility (the UI runner reads through it),
 universal links, keychain, contacts, calendars and reminders, HealthKit, Wallet and StoreKit stay. Each label's
 earlier value is kept beside the file (`pitbox-slim.json`); a stock boot puts exactly those back. After the boot
@@ -260,12 +260,19 @@ Measured on the same Mac, an iPhone 17 simulator on iOS 27.2, headless; the medi
 
 | | Stock | Slim |
 |---|---|---|
-| Processes | 207 | 130 |
-| Footprint (phys_footprint, what Activity Monitor shows) | 8.5 GB | 4.7 GB |
-| Settings launch (`simctl launch`, median of 5) | 108 ms | 108 ms |
+| | Stock | Slim | Slim, `disable: ['widgets']` |
+|---|---|---|---|
+| Processes | 207 | 122 | 111 |
+| Footprint (phys_footprint, what Activity Monitor shows) | 8.5 GB | 4.5 GB | 3.8 GB |
+| Settings launch (`simctl launch`, median of 5) | 108 ms | 115 ms | 112 ms |
 
 A simulator that has booted before comes up in under two seconds either way; the gain is memory: about twice as
-many simulators fit before the Mac starts swapping.
+many simulators fit before the Mac starts swapping. Widgets and Live Activities (`chronod`, `liveactivitiesd`, with
+their extensions) stay on by default, as an app's own widgets need them; `apple.slim: {disable: ['widgets']}`
+takes them off too.
+
+Not every daemon can go: some are called in a tight loop while they are off. With `sleepd` off, `healthd`,
+`mobiletimerd` and SpringBoard kept 4.5 cores busy for good; such daemons are never disabled, even when listed.
 
 ## Moving from a hand-made lock
 

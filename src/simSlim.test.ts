@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {encodeStore, keepsOverrides, notDisabled, parseStore, SIM_SLIM_LABELS, simSlimList, slimSimulator, storeDir, unslimSimulator} from './drivers/apple/slim.ts';
+import {encodeStore, keepsOverrides, notDisabled, parseStore, SIM_SLIM_LABELS, SIM_WIDGET_LABELS, simSlimList, slimSimulator, storeDir, unslimSimulator} from './drivers/apple/slim.ts';
 
 const UDID = '00000000-0000-0000-0000-000000000001';
 let root: string;
@@ -31,6 +31,18 @@ describe('simulator slim', () => {
   it('keeps what pitbox features and apps under test lean on', () => {
     for (const label of ['com.apple.SpringBoard', 'com.apple.chronod', 'com.apple.liveactivitiesd', 'com.apple.apsd', 'com.apple.usernotificationsd', 'com.apple.locationd', 'com.apple.tccd', 'com.apple.assetsd', 'com.apple.AccessibilityUIServer', 'com.apple.swcd', 'com.apple.healthd', 'com.apple.passd', 'com.apple.appstored', 'com.apple.remindd', 'com.apple.calaccessd'])
       expect(SIM_SLIM_LABELS).not.toContain(label);
+  });
+
+  it('never disables a daemon others spin on while it is off, even when asked', () => {
+    expect(SIM_SLIM_LABELS).not.toContain('com.apple.sleepd');
+    expect(simSlimList({disable: ['com.apple.sleepd', 'com.apple.SpringBoard']})).not.toContain('com.apple.sleepd');
+    expect(simSlimList({disable: ['com.apple.SpringBoard']})).not.toContain('com.apple.SpringBoard');
+  });
+
+  it('turns widgets off only on request, as a group', () => {
+    for (const l of SIM_WIDGET_LABELS) expect(simSlimList()).not.toContain(l);
+    expect(simSlimList({disable: ['widgets']})).toEqual(expect.arrayContaining(SIM_WIDGET_LABELS));
+    expect(simSlimList({disable: ['widgets'], keep: ['widgets']})).not.toContain('com.apple.chronod');
   });
 
   it('reads and writes the store as launchd_sim does', () => {
