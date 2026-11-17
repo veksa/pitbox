@@ -281,7 +281,8 @@ same app, and two sessions on JS-only branches build the same native code twice,
 (`app.build` in the config) makes each build once:
 
 - **Fingerprinted.** The build is keyed by a hash of its native inputs: the command and output, the path and
-  content of every input file (as git lists them: tracked and untracked, not ignored). For an app whose JS comes from a dev server the JS is not an input: a JS edit keeps the build.
+  content of every input file (as git lists them: tracked and untracked, not ignored), and for iOS the Xcode
+  version. For an app whose JS comes from a dev server the JS is not an input: a JS edit keeps the build.
 - **Shared.** Builds are kept in `~/Library/Caches/pitbox/builds/<app id>/<platform>/<fingerprint>` (an .app is
   cloned on APFS, costing no space), so every checkout and worktree of the app reuses them; the newest three per
   platform stay. A fingerprint built before — a branch switched back, an edit undone — is installed at once.
@@ -300,6 +301,19 @@ Measured on the React Native example (Android, warm Gradle daemon), `pitbox buil
 | a native edit (`MainActivity.kt`) | new fingerprint, built | 1.3 s |
 | the native edit undone | the earlier build reused | 0.08 s |
 | one native edit in two worktrees, built at once | one Gradle run (10.0 s); the other waited 10.1 s and reused it | 10.1 s |
+
+The same on iOS (`pitbox build ios`, warm DerivedData; the first build ran `pod install`, which rewrote
+`Podfile.lock` — the build is kept under the fingerprint before and after, so the next request reuses it):
+
+| Step | Result | Wall time |
+|---|---|---|
+| first build | built (`pod install`, xcodebuild), installed | 16.1 s |
+| again, same inputs | reused, installed | 0.37 s |
+| a JS edit (`App.tsx`) | reused | 0.11 s |
+| another worktree of the repository | reused | 0.16 s |
+| a native edit (`AppDelegate.swift`) | new fingerprint, built | 7.7 s |
+| the native edit undone | the earlier build reused | 0.12 s |
+| one native edit in two worktrees, asked 2 s apart | one xcodebuild (3.1 s); the other waited 1.1 s and reused it | 3.1 s |
 
 ## Moving from a hand-made lock
 

@@ -12,6 +12,11 @@ export default defineConfig({
         command: `cd android && ./gradlew assembleDebug -q -PreactNativeArchitectures=${process.arch === 'arm64' ? 'arm64-v8a' : 'x86_64'}`,
         output: 'android/app/build/outputs/apk/debug/app-debug.apk',
       },
+      ios: {
+        // Pods out of step with the lock file (a pull changed it) fail the build: installed again first.
+        command: "(cd ios && (cmp -s Podfile.lock Pods/Manifest.lock || pod install)) && xcodebuild build -workspace ios/PitboxExample.xcworkspace -scheme PitboxExample -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/build -quiet",
+        output: 'ios/build/Build/Products/Debug-iphonesimulator/PitboxExample.app',
+      },
     },
   },
   devserver: {

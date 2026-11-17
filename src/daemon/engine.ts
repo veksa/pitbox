@@ -1397,6 +1397,13 @@ export class Engine {
     };
   }
 
+  #xcode?: Promise<string>;
+  /** The Xcode a build would use, as `xcodebuild -version` says: a new Xcode is a new build. */
+  #xcodeVersion(): Promise<string> {
+    this.#xcode ??= run('xcodebuild', ['-version'], {timeoutMs: 30_000}).then(r => r.stdout.trim()).catch(() => '');
+    return this.#xcode;
+  }
+
   /**
    * Slims an emulator this session just booted (`android.slim`, default on; `slim` of the boot wins), or makes a
    * stock one of it: what pitbox disabled comes back. The boot's answer says what was done; a failure is said too,
@@ -2403,7 +2410,8 @@ export class Engine {
       if (!spec) throw new Error(`no ${platform} build: set app.build.${platform} = {command, output} in the config`);
       const root = this.#loaded.root;
       const app = (platform === 'android' ? this.config.app?.android : this.config.app?.apple) ?? path.basename(root);
-      const r = await ensureBuild({root, app, platform, spec, inputs: spec.inputs ?? (this.config.devserver ? jsAppInputs(platform) : ['**']), ...(this.config.shell ? {shell: this.config.shell} : {})});
+      const toolchain = platform === 'ios' ? await this.#xcodeVersion() : '';
+      const r = await ensureBuild({root, app, platform, spec, inputs: spec.inputs ?? (this.config.devserver ? jsAppInputs(platform) : ['**']), toolchain, ...(this.config.shell ? {shell: this.config.shell} : {})});
       if (bool(p, 'install') === false) return r;
       const installed = (await this.methods.install({apk: r.artifact, device: str(p, 'device'), replace: bool(p, 'replace')})) as {ms: number; serial?: string; udid?: string};
       return {...r, installed: {on: installed.serial ?? installed.udid, ms: installed.ms}};
