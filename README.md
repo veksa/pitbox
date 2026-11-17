@@ -29,6 +29,44 @@ extra reach inside the app.
 - **Inside a React Native app with no app code** — fresh code or stale, the network log and rules, the
   console, `eval` and logpoints, hot updates, React renders.
 
+## Speed
+
+What pitbox does to devices and builds by default, measured on an Apple-silicon Mac: before is the same step
+without it. Details and method: [slim devices, warm templates and native builds](docs/parallel.md#slim-devices).
+
+**Android emulator** (API 36 Google APIs phone image, 2 GB, headless; median of three boots):
+
+| | Before | pitbox |
+|---|---|---|
+| Boot | 15.0 s | 12.9 s |
+| Settings cold start | 207 ms | 117 ms |
+| App processes running | 46 | 28 |
+| Guest swap in use | 583 MB | 200 MB |
+| Emulator CPU while idle | 0.15 cores | 0.08 cores |
+| Shutdown | 3.1–3.8 s | 2.1 s |
+| Written to disk at every shutdown | 2.6 GB | none |
+| Background dexopt starting mid-run | 21 s at ~3 cores | never |
+
+**iOS simulator** (iPhone 17, iOS 27.2):
+
+| | Before | pitbox |
+|---|---|---|
+| Processes running | 207 | 122 |
+| Memory footprint on the Mac | 8.5 GB | 4.5 GB (3.8 GB with widgets off) |
+| A second session's own simulator: boot | 12.0–13.2 s | 1.9–2.0 s |
+| … boot to the app's first screen | 29.1–32.1 s | 21.6–22.9 s |
+| … its CPU over the minute after | 0.24–0.28 cores | 0.02–0.16 cores |
+| First UI action, 20 s or more after the boot | 17 s | 2.6 s |
+
+**Native builds** (the React Native example; once built, every checkout and session on the Mac reuses the build):
+
+| | Android | iOS |
+|---|---|---|
+| Build | 12.0 s | 16.1 s |
+| Again, same native inputs | 0.24 s | 0.37 s |
+| After a JS-only edit | 0.08 s | 0.11 s |
+| In another checkout of the app | 0.26 s | 0.16 s |
+
 ## Quick start
 
 ```sh
