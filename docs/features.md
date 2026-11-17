@@ -26,7 +26,9 @@ compact text.
   settings, network conditions, screenshots, keys.
 - **Apple simulators** — iPhone, foldable iPhone, iPad, Apple TV, Apple Watch and Vision Pro, through `simctl`
   and an XCUITest runner built on the Mac on first use. A Mac can serve its simulators to pitbox on another
-  machine (`pitbox serve-devices`).
+  machine (`pitbox serve-devices`). On Vision Pro: windows, ornaments, attachments, system menus (an item the
+  menu drops is pressed again) and sliders (a swipe drags them by its length); a touch on a space's 3D content
+  reaches no window and is an error, not a silent tap.
 - **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots,
   selectors, actions, checks and flows as on a phone, page errors reported with the action that caused them.
   One flow can switch between a web app and a phone. A phone in the browser — a Playwright device preset or a

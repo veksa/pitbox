@@ -102,8 +102,21 @@ const buildInto = async (dir: string, src: string, destination: string, find: ()
 
 type Pending = {resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout};
 
+/**
+ * What to tell the agent about a runner from its `info`. On visionOS XCUITest waits for the app's animations to end
+ * before and after every event, and an open system menu never stops animating: the runner turns that wait off
+ * through XCUITest's own (not public) switch. A runner whose XCUITest lost the switch says so, and every press into
+ * a menu would otherwise time out a minute later with nothing to explain it.
+ */
+export const runnerNotice = (info: {platform?: string; animationWaitOff?: boolean}): string | undefined =>
+  info.platform === 'visionos' && info.animationWaitOff === false
+    ? "this Xcode's XCUITest no longer lets pitbox skip its wait for animations: a press into a system menu (or anything that keeps animating) waits a minute and can time out — use the menu's effect through the app, or an older Xcode"
+    : undefined;
+
 export class AppleRunner {
   readonly udid: string;
+  /** Told once with the next action's answer (`DeviceUi`). */
+  readonly notices: string[] = [];
   /** The app the runner reads and drives when it is in front (the system shell otherwise). */
   bundleId?: string;
   readonly #driver: AppleDriver;
@@ -164,6 +177,8 @@ export class AppleRunner {
       }
       await this.#connect(port).catch(() => new Promise(r => setTimeout(r, 400)));
     }
+    const notice = runnerNotice(await this.call<{platform?: string; animationWaitOff?: boolean}>('info', {}, 30_000).catch(() => ({})));
+    if (notice) this.notices.push(notice);
     if (this.bundleId) await this.call('activate', {}, 30_000).catch(() => undefined);
   }
 

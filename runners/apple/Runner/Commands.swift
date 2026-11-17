@@ -28,11 +28,34 @@ final class Commands {
   /// A fresh handle for an app: one kept across a crash and relaunch points at the dead process and hangs
   /// queries. The system shell never restarts, so its handle is kept.
   private func app(_ id: String) -> XCUIApplication {
-    if id != Self.shellId { return XCUIApplication(bundleIdentifier: id) }
+    if id != Self.shellId { return Self.patient(XCUIApplication(bundleIdentifier: id)) }
     if let a = apps[id] { return a }
-    let a = XCUIApplication(bundleIdentifier: id)
+    let a = Self.patient(XCUIApplication(bundleIdentifier: id))
     apps[id] = a
     return a
+  }
+
+  /// Before and after every event (a tap, `activate`) XCUITest waits for the app to idle, and that includes the
+  /// "animations complete" notification. On visionOS an open system menu (SwiftUI `Menu`, a picker in an ornament)
+  /// keeps animating, the notification never comes, and each wait runs out its full minute: the press that opened
+  /// the menu, a press on its item and every command queued behind them time out. The event loop still idles, so
+  /// the wait for it stays; the host settles on its own by comparing trees (`idle`).
+  static func patient(_ a: XCUIApplication) -> XCUIApplication {
+    #if os(visionOS)
+    let setter = NSSelectorFromString("setIdleAnimationWaitEnabled:")
+    if a.responds(to: setter) { a.setValue(false, forKey: "idleAnimationWaitEnabled") }
+    #endif
+    return a
+  }
+
+  /// Whether XCUITest can be told to skip the animation wait (it is not public API): `info` reports it, and the
+  /// host tells the agent when it cannot, instead of every press into a menu timing out unexplained.
+  static var animationWaitOff: Bool {
+    #if os(visionOS)
+    return XCUIApplication.instancesRespond(to: NSSelectorFromString("setIdleAnimationWaitEnabled:"))
+    #else
+    return true
+    #endif
   }
 
   /// The app on screen: the one the host names when it is in front, otherwise the system shell.
@@ -80,7 +103,9 @@ final class Commands {
       // A synthesized touch at a point does not press a control on visionOS; the element is pressed. The host's
       // node first: every window has its own coordinates, so a point can be inside views of several windows.
       let point = CGPoint(x: double(req, "x", 0), y: double(req, "y", 0))
-      if let e = node(req) ?? control(at: point, req) ?? element(at: point, req, where: { $0 != .application && $0 != .window && $0 != .other }) {
+      if let hit = node(req) ?? control(at: point, req) ?? element(at: point, req, where: { $0 != .application && $0 != .window && $0 != .other }) {
+        let e = hit.element
+        if cmd == "tap" && hit.menu { return try pressMenuItem(hit, req) }
         if cmd == "tap" { e.tap() } else if cmd == "doubletap" { e.doubleTap() } else { e.press(forDuration: double(req, "hold", 800) / 1000) }
         return [:]
       }
@@ -98,7 +123,17 @@ final class Commands {
         }
       }
       let c = coordinate(req)
+      let started = Date()
       if cmd == "tap" { c.tap() } else if cmd == "doubletap" { c.doubleTap() } else { c.press(forDuration: double(req, "hold", 800) / 1000) }
+      #if os(visionOS)
+      // A touch at a point with no control under it (3D content of a space, the place of a control that has hidden)
+      // reaches no scene on visionOS: XCUITest gives up delivering it after about five seconds and reports nothing.
+      // The time it took is the only sign, so it is said instead of passing as a tap.
+      let hold = cmd == "longpress" ? double(req, "hold", 800) / 1000 : 0
+      if Date().timeIntervalSince(started) > 4 + hold {
+        throw RunnerError("the touch at \(Int(double(req, "x", 0))),\(Int(double(req, "y", 0))) reached no window: nothing pressable is there (XCUITest cannot touch a space's 3D content, and a control that has hidden takes no touch)")
+      }
+      #endif
       return [:]
       #endif
     case "swipe": return try swipe(req)
@@ -188,7 +223,7 @@ final class Commands {
     #else
     let platform = "ios"
     #endif
-    return ["width": Int(size.width), "height": Int(size.height), "platform": platform, "version": runnerVersion]
+    return ["width": Int(size.width), "height": Int(size.height), "platform": platform, "version": runnerVersion, "animationWaitOff": Self.animationWaitOff]
   }
 
   // MARK: tree
@@ -474,29 +509,81 @@ final class Commands {
   // MARK: input
 
   #if !os(tvOS)
+  /// An element to act on, with the snapshot node it was found as and whether it is an item of a system menu.
+  struct Hit {
+    let element: XCUIElement
+    let node: XCUIElementSnapshot
+    let menu: Bool
+  }
+
+  /// The window an element is drawn in (XCUITest's own attribute, not public API).
+  private static func context(_ n: XCUIElementSnapshot) -> Int? {
+    (n.dictionaryRepresentation[XCUIElement.AttributeName(rawValue: "windowContextID")] as? NSNumber)?.intValue
+  }
+
+  /// Whether a node, reached through `path` (its ancestors, the root first), is an item of a system menu (a SwiftUI
+  /// `Menu`, a picker in menu style): a row of a list drawn in a window of its own, not the app's. On visionOS the
+  /// menu is a platter with its own window over the app's.
+  private static func menuItem(_ n: XCUIElementSnapshot, path: [XCUIElementSnapshot]) -> Bool {
+    guard let root = path.first, let own = context(n), let app = context(root), own != app else { return false }
+    let chain = path + [n]
+    return chain.indices.dropFirst().contains { chain[$0].elementType == .cell && chain[$0 - 1].elementType == .collectionView }
+  }
+
+  #if os(visionOS)
+  /// A system menu on visionOS drops some synthesized taps on its items: the touch reaches the menu's platter (it
+  /// becomes the key window, or nothing happens at all) and the item is not chosen, about one tap in two, at any
+  /// time after the menu opened. A chosen item closes the menu (or, in a menu that stays open, changes its
+  /// checkmark), so an item still there as it was a moment after the tap was not chosen and is tapped again.
+  private func pressMenuItem(_ hit: Hit, _ req: [String: Any]) throws -> [String: Any] {
+    let n = hit.node
+    var e = hit.element
+    for attempt in 1...4 {
+      e.tap()
+      Thread.sleep(forTimeInterval: 0.6)
+      guard let root = try? front(req).0.snapshot() else { return ["attempts": attempt] }
+      var same: XCUIElementSnapshot?
+      func visit(_ m: XCUIElementSnapshot) {
+        if same != nil { return }
+        if m.elementType == n.elementType && m.label == n.label && m.identifier == n.identifier && m.isSelected == n.isSelected
+          && Self.same(m.frame, n.frame) && Self.context(m) == Self.context(n) { same = m; return }
+        m.children.forEach(visit)
+      }
+      visit(root)
+      guard let still = same else { return ["attempts": attempt] }
+      guard attempt < 4, let again = resolve(still, in: front(req).0) else { break }
+      e = again
+    }
+    throw RunnerError("the menu item \"\(n.label)\" was tapped 4 times and the menu stayed open: another window in front of the menu (a second window of the app) takes the touches — move or close it first")
+  }
+  #endif
+
   /// The smallest control whose frame holds the point, as an element to act on.
-  private func control(at point: CGPoint, _ req: [String: Any]) -> XCUIElement? {
+  private func control(at point: CGPoint, _ req: [String: Any]) -> Hit? {
     element(at: point, req) { Self.tappable.contains($0) || Self.editable.contains($0) }
   }
 
   /// The element the host aimed at, by its id or label and its frame: found in one snapshot, then fetched by its
   /// type (a query over every type is slow enough on visionOS to time a tap out).
-  private func node(_ req: [String: Any]) -> XCUIElement? {
+  private func node(_ req: [String: Any]) -> Hit? {
     guard let b = req["bounds"] as? [Double], b.count == 4 else { return nil }
     let frame = CGRect(x: b[0], y: b[1], width: b[2] - b[0], height: b[3] - b[1])
     let id = req["ident"] as? String ?? "", label = req["label"] as? String ?? ""
     if id.isEmpty && label.isEmpty { return nil }
     let (a, _) = front(req)
     guard let root = try? a.snapshot() else { return nil }
-    var hit: XCUIElementSnapshot?
+    var hit: (XCUIElementSnapshot, [XCUIElementSnapshot])?
+    var path: [XCUIElementSnapshot] = []
     func visit(_ n: XCUIElementSnapshot) {
       if hit != nil { return }
-      if (id.isEmpty ? n.label == label : n.identifier == id) && Self.same(n.frame, frame) { hit = n; return }
+      if (id.isEmpty ? n.label == label : n.identifier == id) && Self.same(n.frame, frame) { hit = (n, path); return }
+      path.append(n)
       n.children.forEach(visit)
+      path.removeLast()
     }
     visit(root)
-    guard let n = hit else { return nil }
-    return resolve(n, in: a)
+    guard let (n, ancestors) = hit, let e = resolve(n, in: a) else { return nil }
+    return Hit(element: e, node: n, menu: Self.menuItem(n, path: ancestors))
   }
 
   /// A live element for a snapshot node: by its type and id or label, at the same frame.
@@ -507,22 +594,25 @@ final class Commands {
   }
 
   private func scroller(at point: CGPoint, _ req: [String: Any]) -> XCUIElement? {
-    element(at: point, req) { Self.scrollable.contains($0) }
+    element(at: point, req) { Self.scrollable.contains($0) }?.element
   }
 
-  private func element(at point: CGPoint, _ req: [String: Any], where wanted: (XCUIElement.ElementType) -> Bool) -> XCUIElement? {
+  private func element(at point: CGPoint, _ req: [String: Any], where wanted: (XCUIElement.ElementType) -> Bool) -> Hit? {
     let (a, _) = front(req)
     guard let root = try? a.snapshot() else { return nil }
-    var best: XCUIElementSnapshot?
+    var best: (XCUIElementSnapshot, [XCUIElementSnapshot])?
+    var path: [XCUIElementSnapshot] = []
     func visit(_ n: XCUIElementSnapshot) {
       if wanted(n.elementType) && n.frame.contains(point) {
-        if best.map({ n.frame.width * n.frame.height < $0.frame.width * $0.frame.height }) ?? true { best = n }
+        if best.map({ n.frame.width * n.frame.height < $0.0.frame.width * $0.0.frame.height }) ?? true { best = (n, path) }
       }
+      path.append(n)
       n.children.forEach(visit)
+      path.removeLast()
     }
     visit(root)
-    guard let n = best else { return nil }
-    return resolve(n, in: a)
+    guard let (n, ancestors) = best, let e = resolve(n, in: a) else { return nil }
+    return Hit(element: e, node: n, menu: Self.menuItem(n, path: ancestors))
   }
 
   private func coordinate(_ req: [String: Any], x xKey: String = "x", y yKey: String = "y") -> XCUICoordinate {
@@ -548,6 +638,19 @@ final class Commands {
     let dx = double(req, "x2", 0) - double(req, "x1", 0)
     let dy = double(req, "y2", 0) - double(req, "y1", 0)
     #if os(visionOS)
+    // A drag between points does not move a slider on visionOS either (and `adjust(toNormalizedSliderPosition:)`
+    // fails: a SwiftUI slider there reports no scrubber positions): the drag is made on the slider under the start,
+    // from its own coordinates. A visionOS slider follows a pinch-drag by its length, as an indirect one does, so the
+    // knob moves by x2 - x1 wherever the drag starts.
+    let start = CGPoint(x: double(req, "x1", 0), y: double(req, "y1", 0))
+    if let s = element(at: start, req, where: { $0 == .slider })?.element {
+      let f = s.frame
+      let at = { (x: Double, y: Double) in s.coordinate(withNormalizedOffset: CGVector(dx: (x - f.minX) / f.width, dy: (y - f.minY) / f.height)) }
+      let seconds = max(0.05, double(req, "duration", 300) / 1000)
+      let velocity = max(100, (dx * dx + dy * dy).squareRoot() / seconds)
+      at(start.x, start.y).press(forDuration: 0.1, thenDragTo: at(double(req, "x2", 0), double(req, "y2", 0)), withVelocity: XCUIGestureVelocity(CGFloat(velocity)), thenHoldForDuration: 0.1)
+      return ["slider": true]
+    }
     // A drag between points does not scroll on visionOS; the scroller under the start swipes itself.
     if let e = scroller(at: CGPoint(x: double(req, "x1", 0), y: double(req, "y1", 0)), req) {
       if abs(dy) >= abs(dx) { dy < 0 ? e.swipeUp(velocity: .slow) : e.swipeDown(velocity: .slow) } else { dx < 0 ? e.swipeLeft(velocity: .slow) : e.swipeRight(velocity: .slow) }
@@ -575,6 +678,11 @@ final class Commands {
         field = hit
         #if !os(tvOS)
         hit.tap()
+        #endif
+        #if os(visionOS)
+        // Without XCUITest's wait for animations (`patient`) the tap returns before the field has taken the
+        // keyboard, and typing then fails ("Neither element nor any descendant has keyboard focus").
+        _ = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true")).waitForExistence(timeout: 2)
         #endif
       }
     }
@@ -753,13 +861,13 @@ final class Commands {
     let point = CGPoint(x: double(req, "x", 0), y: double(req, "y", 0))
     let action = req["action"] as? String ?? ""
     if action == "wheel" {
-      let e = element(at: point, req) { Self.scrollable.contains($0) } ?? front(req).0
+      let e = element(at: point, req) { Self.scrollable.contains($0) }?.element ?? front(req).0
       // A notch is about three lines, as a wheel's; a positive amount scrolls towards the top, which iOS takes
       // as a negative delta.
       e.scroll(byDeltaX: 0, deltaY: CGFloat(-double(req, "amount", -1) * 120))
       return [:]
     }
-    let target = element(at: point, req) { _ in true }
+    let target = element(at: point, req) { _ in true }?.element
     guard let e = target else { throw RunnerError("nothing under \(Int(point.x)),\(Int(point.y))") }
     switch action {
     case "hover": e.hover()

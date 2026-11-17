@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
-import {sourceHash} from './drivers/apple/runner.ts';
+import {runnerNotice, sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
@@ -386,5 +386,17 @@ describe('simulator boots', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('apple runner notice', () => {
+  it('says when a visionOS runner cannot skip the animation wait that hangs presses into menus', () => {
+    expect(runnerNotice({platform: 'visionos', animationWaitOff: false})).toMatch(/system menu/);
+  });
+
+  it('says nothing when the wait is off, on other platforms, or from an older runner', () => {
+    expect(runnerNotice({platform: 'visionos', animationWaitOff: true})).toBeUndefined();
+    expect(runnerNotice({platform: 'ios', animationWaitOff: false})).toBeUndefined();
+    expect(runnerNotice({platform: 'visionos'})).toBeUndefined();
   });
 });
