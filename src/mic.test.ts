@@ -55,7 +55,7 @@ describe('mic', () => {
     expect(p.subarray(p.length - 4).toString('hex')).toBe('1a020102');
   });
 
-  it('plays a long file as calls of 2 s: one long call stops reaching the guest after a few seconds', () => {
+  it('splits packets into runs of 2 s', () => {
     const runs = segments(Array.from({length: 45}, (_, i) => i));
     expect(runs.map(r => r.length)).toEqual([20, 20, 5]);
     expect(runs.flat()).toEqual(Array.from({length: 45}, (_, i) => i));

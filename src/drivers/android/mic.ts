@@ -84,9 +84,9 @@ export const activeRecorders = (dumpsys: string): string[] => {
 };
 
 /**
- * The packets in runs of `per` (2 s of 100 ms packets), each run its own injectAudio call: emulator 37.2 stops passing
- * one long call's audio on to the guest after a few seconds (its capture fails with I/O errors and hears silence),
- * while calls of a couple of seconds back to back play through.
+ * The packets in runs of `per` (2 s of 100 ms packets). `injectWav` plays the whole file as one run: emulator 37.4
+ * passes the first injectAudio call on and then fails every capture read (`pcm_readi ... I/O error`) once a second
+ * call starts, and 37.2 hears nothing either way.
  */
 export const segments = <T>(parts: T[], per = 20): T[][] => {
   const out: T[][] = [];
@@ -95,8 +95,8 @@ export const segments = <T>(parts: T[], per = 20): T[][] => {
 };
 
 /**
- * Plays a WAV into the microphone of emulator `serial`, paced in real time (100 ms packets), and returns when it has
- * played (in calls of 2 s, see `segments`) or `signal` stopped it. What the app does not record while it plays is lost, as with a person speaking.
+ * Plays a WAV into the microphone of emulator `serial`, paced in real time (100 ms packets) in one injectAudio call,
+ * and returns when it has played or `signal` stopped it. What the app does not record while it plays is lost, as with a person speaking.
  *
  * Emulator 37.2 ends its own process when audio is injected while no app records (a null audio forwarder): callers
  * wait for a recording first (`activeRecorders`), and `listening` is asked before every further call. A recording
@@ -125,7 +125,7 @@ export const injectWav = async (
   }
   let from = 0;
   let unheard = false;
-  for (const run of segments(parts)) {
+  for (const run of segments(parts, Math.max(1, parts.length))) {
     if (opts.signal?.aborted) break;
     // A new call while nothing records would end the emulator (see above).
     if (from > 0 && opts.listening && !(await opts.listening())) {
