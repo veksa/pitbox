@@ -723,7 +723,7 @@ final class Commands {
       }
     }
     guard field.exists else { return ["set": false] }
-    return try Quiescence.waiting { try type(text, into: field, req) }
+    return try type(text, into: field, req)
   }
 
   /// Types into a field that has the keyboard focus: what it held first goes, unless the text is appended.
@@ -733,13 +733,13 @@ final class Commands {
     if field.elementType == .secureTextField {
       return try secureText(field, text, held: before == (field.placeholderValue ?? "") ? 0 : before.count)
     }
-    if !text.isEmpty { field.typeText(text) }
+    if !text.isEmpty { Quiescence.waiting { field.typeText(text) } }
     // A controlled React Native input re-renders between keystrokes and can drop one that XCUITest typed
     // meanwhile. Checked, and typed again key by key when the field does not hold what was typed.
     if let got = field.value as? String, got != before + text {
       try clear(field)
       for ch in before + text {
-        field.typeText(String(ch))
+        Quiescence.waiting { field.typeText(String(ch)) }
         Thread.sleep(forTimeInterval: 0.05)
       }
       return ["set": true, "retyped": true]
@@ -767,10 +767,10 @@ final class Commands {
       if attempt == 2 { field.typeKey(XCUIKeyboardKey(rawValue: "a"), modifierFlags: .command) }
       #endif
       if attempt == 0 {
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: left.count))
+        Quiescence.waiting { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: left.count)) }
       } else {
         for _ in 0..<(attempt == 2 ? 1 : left.count) {
-          field.typeText(XCUIKeyboardKey.delete.rawValue)
+          Quiescence.waiting { field.typeText(XCUIKeyboardKey.delete.rawValue) }
           Thread.sleep(forTimeInterval: 0.03)
         }
       }
@@ -790,15 +790,15 @@ final class Commands {
       let value = (field.value as? String) ?? ""
       return value == (field.placeholderValue ?? "") ? 0 : value.count
     }
-    if !text.isEmpty { field.typeText(text) }
+    if !text.isEmpty { Quiescence.waiting { field.typeText(text) } }
     let typed = count()
     if typed == held + text.count { return ["set": true] }
     #if os(iOS) || os(visionOS)
-    if typed > held { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed - held)) }
+    if typed > held { Quiescence.waiting { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: typed - held)) } }
     let board = UIPasteboard.general
     let saved = board.items
     board.string = text
-    field.typeKey(XCUIKeyboardKey(rawValue: "v"), modifierFlags: .command)
+    Quiescence.waiting { field.typeKey(XCUIKeyboardKey(rawValue: "v"), modifierFlags: .command) }
     board.items = saved
     let pasted = count()
     if pasted == held + text.count { return ["set": true, "pasted": true] }
