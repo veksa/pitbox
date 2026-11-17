@@ -534,13 +534,23 @@ final class Commands {
   /// A system menu on visionOS drops some synthesized taps on its items: the touch reaches the menu's platter (it
   /// becomes the key window, or nothing happens at all) and the item is not chosen, about one tap in two, at any
   /// time after the menu opened. A chosen item closes the menu (or, in a menu that stays open, changes its
-  /// checkmark), so an item still there as it was a moment after the tap was not chosen and is tapped again.
+  /// checkmark), so an item still there as it was after the tap was not chosen and is tapped again.
+  ///
+  /// The item is watched, not waited for: its element is asked every 0.1 s whether it is still where it was (one
+  /// query, not a snapshot of the app), so a tap that landed answers as soon as the menu starts to close — about a
+  /// third of a second. Only an item still in place after 0.8 s is compared in a snapshot (a menu that stays open
+  /// shows its choice by a checkmark) and, unchanged, tapped again.
   private func pressMenuItem(_ hit: Hit, _ req: [String: Any]) throws -> [String: Any] {
     let n = hit.node
     var e = hit.element
     for attempt in 1...4 {
       e.tap()
-      Thread.sleep(forTimeInterval: 0.6)
+      let deadline = Date().addingTimeInterval(0.8)
+      repeat {
+        // A label can come back elsewhere (a menu's button shows the chosen item): the item is its frame too.
+        if !e.exists || !Self.same(e.frame, n.frame) { return ["attempts": attempt] }
+        Thread.sleep(forTimeInterval: 0.1)
+      } while Date() < deadline
       guard let root = try? front(req).0.snapshot() else { return ["attempts": attempt] }
       var same: XCUIElementSnapshot?
       func visit(_ m: XCUIElementSnapshot) {
