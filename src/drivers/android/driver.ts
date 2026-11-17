@@ -137,15 +137,19 @@ export type RunningEmulator = {
   launch?: string;
   /** Whether it runs with audio (started without `-no-audio`); undefined when its command line is unknown. */
   audio?: boolean;
+  /** The back camera it was started with (`-camera-back`), when pitbox or someone named one. */
+  camera?: string;
 };
 
 /** The arguments of an emulator's command line as its discovery file writes it (`"/sdk/qemu" "-avd" "Pixel"`). */
 export const cmdlineArgs = (cmdline: string): string[] => [...cmdline.matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map(m => m[1] ?? m[2]!);
 
 /** What a discovery file's command line says about audio. */
-export const launchedWith = (cmdline: string): Pick<RunningEmulator, 'audio'> => {
+export const launchedWith = (cmdline: string): Pick<RunningEmulator, 'audio' | 'camera'> => {
   const args = cmdlineArgs(cmdline);
-  return args.length ? {audio: !args.includes('-no-audio') && !args.includes('-noaudio')} : {};
+  if (!args.length) return {};
+  const camera = args[args.indexOf('-camera-back') + 1];
+  return {audio: !args.includes('-no-audio') && !args.includes('-noaudio'), ...(args.includes('-camera-back') && camera ? {camera} : {})};
 };
 
 /** Where emulators put their discovery files: the temp folder the emulator uses on each system. */
@@ -345,6 +349,8 @@ export type BootOptions = {
   noSnapshot?: boolean;
   /** Starts the emulator with audio (by default it runs with `-no-audio`): what `mic` feeds needs it. */
   audio?: boolean;
+  /** The back camera: `emulated`, `virtualscene`, `webcam0`, `none`, `imagefile:<path>`, `videofile:<path>` (`-camera-back`). */
+  camera?: string;
 };
 
 /** The emulator's command line for a boot, before pitbox's launch marker. */
@@ -356,6 +362,7 @@ export const bootArgs = (avd: string, opts: BootOptions, readOnly: boolean): str
   else if (opts.coldBoot !== false) args.push('-no-snapshot-load');
   if (opts.wipe) args.push('-wipe-data');
   if (opts.headless) args.push('-no-window');
+  if (opts.camera) args.push('-camera-back', opts.camera);
   return args;
 };
 

@@ -185,6 +185,12 @@ export const configSchema = z.object({
       /** Boot emulators with audio (default off: `-no-audio`); `mic` feeds the microphone of one that has it. */
       audio: z.boolean().optional(),
       /**
+       * The back camera of emulators pitbox boots: `emulated` (the AVD's moving test scene), `virtualscene` (a 3D room
+       * with posters), `none`, `webcam0` (the Mac's or PC's own camera: asks for camera access), `image:<file>` or
+       * `video:<file>` (a picture or a clip shown to the camera; `camera image|video <file>` swaps it at run time).
+       */
+      camera: z.string().optional(),
+      /**
        * The Wear OS emulator `device action=pair value=watch` pairs with an Android phone: an AVD name or a serial.
        * Without it, a Wear OS emulator this session holds, else the first Wear OS AVD.
        */
