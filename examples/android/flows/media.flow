@@ -1,0 +1,19 @@
+# Media on the example's media screen: a tone into the microphone once the app records, the sound the app plays
+# captured and checked, a phone call taking audio focus and giving it back. Needs an emulator with audio:
+#   pitbox boot <avd> --audio && pitbox run media
+open pitboxexample://media
+mic silence 300ms + tone 523 2s -6dB bg
+press id=record
+wait gone text="mic: recording" 10
+expect text~="mic: sound"
+capture start audio
+press id=play_tone
+wait 3s
+capture stop
+expect sound min=1s freq=880
+press id=play_long
+call incoming 5550100
+wait text="focus: loss transient" 10
+call end
+wait text="focus: gain" 10
+press id=stop_tone

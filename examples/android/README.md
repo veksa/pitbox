@@ -7,8 +7,9 @@ an ambient-aware screen; AndroidX) and `wearface/` (a Watch Face Format face, re
 slot defaults to the example's data source).
 
 What it has: a text field and a button that greets, a button that asks the stand (`../stand/server.mjs` on port
-4100, forwarded to the device), a button that crashes, forty rows below the fold, and a second screen behind the
-deep link `pitboxexample://detail/<id>`.
+4100, forwarded to the device), a button that crashes, forty rows below the fold, a second screen behind the
+deep link `pitboxexample://detail/<id>`, and a media screen behind `pitboxexample://media` (records the microphone and
+says what it heard, plays a tone, holds audio focus, shows the microphone and camera permissions).
 
 | Flow | Runs on | Checks |
 |---|---|---|
@@ -26,6 +27,7 @@ deep link `pitboxexample://detail/<id>`.
 | `fold` | foldable | the app follows the hinge from the outer screen to the inner one |
 | `mouse` | foldable, tablet, desktop, XR | hover, a context menu on a right click, the wheel |
 | `window` | foldable, tablet, desktop | a freeform window, resized, fullscreen again |
+| `media` | phone (booted with `--audio`) | a tone into the microphone once the app records, the app's sound captured and checked, a phone call taking audio focus and giving it back |
 | `crash` | phone | fails on purpose: the crash comes back with the step and the stack |
 | `sign-in` | phone | what `as <user>` runs: the user's name typed and greeted |
 | `matrix` | phone | run by `matrix` over the config's font scales and dark modes |
