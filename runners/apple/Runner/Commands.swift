@@ -123,7 +123,11 @@ final class Commands {
         }
       }
       #if os(iOS)
-      Quiescence.beforeEvent(front(req).0)
+      let point = CGPoint(x: double(req, "x", 0), y: double(req, "y", 0))
+      let hold = cmd == "longpress" ? double(req, "hold", 800) / 1000 : 0
+      let target = front(req).0
+      Quiescence.beforeEvent(target)
+      if Events.tap(point, count: cmd == "doubletap" ? 2 : 1, hold: hold, in: target) { return [:] }
       #endif
       let c = coordinate(req)
       let started = Date()
