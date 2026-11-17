@@ -1,7 +1,11 @@
+import {execFileSync} from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {builtinRules} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
-import {describeSlim, packageNames, SLIM_PACKAGES, SLIM_RECORD, slim, slimList, unslim} from './drivers/android/slim.ts';
+import {describeSlim, packageNames, SLIM_PACKAGES, SETTINGS_RECORD, SLIM_RECORD, slim, slimList, tune, unslim, untune} from './drivers/android/slim.ts';
 
 /** A device's package manager and record file, driven through the shell commands slim sends. */
 const fakeDevice = (installed: string[], disabled: string[] = [], record: string[] = [], refuse: string[] = []) => {
@@ -138,5 +142,51 @@ describe('doctor emulator-slim', () => {
 
   it('respects keep', async () => {
     expect(await rule.check({config: {android: {slim: {keep: ['com.google.android.youtube']}}}, android: android(['com.google.android.youtube'])} as unknown as DoctorContext)).toEqual([]);
+  });
+});
+
+/** The device's shell for real (`sh`), with getprop, pm, cmd and settings stubbed over files in a temp folder. */
+const stubShell = (sdk: number, settings: Record<string, string> = {}) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-tune-'));
+  for (const [k, v] of Object.entries(settings)) fs.writeFileSync(path.join(dir, k.replace(' ', '.')), v);
+  const prelude = [
+    `getprop() { echo ${sdk}; }`,
+    `pm() { echo "pm $*" >> '${dir}/log'; echo 'Background dexopt job disabled'; }`,
+    `cmd() { echo "cmd $*" >> '${dir}/log'; }`,
+    `settings() { f='${dir}'/$2.$3; case $1 in get) cat "$f" 2>/dev/null || echo null;; put) printf %s "$4" > "$f";; delete) rm -f "$f";; esac; }`,
+  ].join('\n');
+  const shell = async (c: string) => execFileSync('sh', ['-c', `${prelude}\n${c.replaceAll(SETTINGS_RECORD, `${dir}/record`)}`], {encoding: 'utf8'});
+  const get = (k: string) => (fs.existsSync(path.join(dir, k.replace(' ', '.'))) ? fs.readFileSync(path.join(dir, k.replace(' ', '.')), 'utf8') : null);
+  const log = () => (fs.existsSync(path.join(dir, 'log')) ? fs.readFileSync(path.join(dir, 'log'), 'utf8') : '');
+  return {shell, get, log, done: () => fs.rmSync(dir, {recursive: true, force: true})};
+};
+
+describe('slim tuning', () => {
+  it('turns background dexopt, flag sync and the spell checker off; stock puts the setting back', async () => {
+    const d = stubShell(36, {'secure spell_checker_enabled': '1'});
+    expect(await tune(d.shell)).toEqual({off: ['background dexopt', 'flag sync', 'spell check'], failed: []});
+    expect(d.get('secure spell_checker_enabled')).toBe('0');
+    // A second boot keeps the first earlier value, not the 0 it finds.
+    await tune(d.shell);
+    expect(await untune(d.shell)).toBe(1);
+    expect(d.get('secure spell_checker_enabled')).toBe('1');
+    expect(await untune(d.shell)).toBe(0);
+    d.done();
+  });
+
+  it('a setting that had no value has none again after stock', async () => {
+    const d = stubShell(36);
+    await tune(d.shell);
+    expect(d.get('secure spell_checker_enabled')).toBe('0');
+    await untune(d.shell);
+    expect(d.get('secure spell_checker_enabled')).toBeNull();
+    d.done();
+  });
+
+  it('never sends bg-dexopt-job before API 34, where it would start a dexopt run', async () => {
+    const d = stubShell(33);
+    expect((await tune(d.shell)).off).toEqual(['flag sync', 'spell check']);
+    expect(d.log()).not.toContain('bg-dexopt-job');
+    d.done();
   });
 });

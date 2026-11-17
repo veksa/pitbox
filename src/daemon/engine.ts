@@ -13,7 +13,7 @@ import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, isUnresolvedLink, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {cameraArg, sameCamera} from '../drivers/android/camera.ts';
-import {describeSlim, slim, unslim} from '../drivers/android/slim.ts';
+import {describeSlim, slim, unslim, tune, untune} from '../drivers/android/slim.ts';
 import {MediaCenter, androidPermissions, appleService} from '../media/center.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
@@ -1415,9 +1415,13 @@ export class Engine {
     try {
       if (!(want ?? cfg !== false)) {
         const back = await unslim(sh);
-        return back.length ? `stock: ${back.length} background apps on again` : undefined;
+        const settings = await untune(sh);
+        const parts = [...(back.length ? [`${back.length} background apps on again`] : []), ...(settings ? [`${settings} settings put back`] : [])];
+        return parts.length ? `stock: ${parts.join(', ')}` : undefined;
       }
-      return describeSlim(await slim(sh, typeof cfg === 'object' ? cfg : {}));
+      const apps = describeSlim(await slim(sh, typeof cfg === 'object' ? cfg : {}));
+      const t = await tune(sh);
+      return [apps, ...(t.off.length ? [`${t.off.join(', ')} off`] : []), ...(t.failed.length ? [`not turned off: ${t.failed.join(', ')}`] : [])].join('; ');
     } catch (e) {
       return `failed: ${(e as Error).message.split('\n')[0]}`;
     }

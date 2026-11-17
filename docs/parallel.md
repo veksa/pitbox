@@ -244,6 +244,22 @@ median of three boots after the first (stock and slim from the same freshly wipe
 The footprint does not drop: what the apps no longer take, the GPU's buffers take. The gain is speed (boot,
 app starts, every frame), less swapping inside the guest and less CPU.
 
+Each slim boot also turns off work that starts on its own in the middle of a run:
+
+- **Background dexopt** (`pm bg-dexopt-job --disable`, API 34 and later). The job waits only for the screen to be
+  off a while — an emulator always charges — and then compiles apps: on a fresh AVD one run took 21 s and kept
+  three cores busy. The switch lasts until the emulator shuts down, so a stock boot has nothing to put back. Before
+  API 34 the command takes no `--disable` and would start a run instead; it is not sent there.
+- **Server-pushed feature flags** (`cmd device_config set_sync_disabled_for_tests until_reboot`, API 31 and later),
+  as Android's own compatibility tests do: Play services cannot change the device's behaviour mid-run.
+- **The keyboard's spell checker** (`secure spell_checker_enabled 0`). The earlier value is written down
+  (`/data/local/tmp/pitbox-slim-settings`) and a stock boot puts it back.
+
+Wi-Fi and Bluetooth scanning are already off in the emulator images. A cold boot (the default) runs `-no-snapshot`:
+`-no-snapshot-load` only skipped loading the quickboot snapshot, and the emulator still wrote the guest's RAM to
+disk on every exit (2.6 GB for a 2 GB guest) — no snapshot is written now, and a release takes 2.1 s instead of
+3.1–3.8 s. `coldBoot: false` keeps the quickboot snapshot, loaded and saved.
+
 **iOS simulators** (`apple.slim`; iPhone and iPad on iOS 18.5 and later). launchd_sim reads its disable
 overrides from a file on the Mac when the simulator starts
 (`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`, kept across an erase). pitbox writes

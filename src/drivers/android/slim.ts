@@ -121,3 +121,65 @@ export const describeSlim = (r: SlimResult): string => {
   if (r.failed.length) parts.push(`not disabled: ${r.failed.join(', ')}`);
   return parts.join('; ');
 };
+
+// Quieter between boots, too: background work that starts on its own in the middle of a run.
+
+/**
+ * Per-boot switches, in memory until the emulator shuts down, so a stock boot has nothing to put back. Each runs only
+ * from the API level that has it: before ART Service (API 34) `bg-dexopt-job` takes no `--disable` and would start a
+ * dexopt run instead.
+ */
+export const BOOT_TUNING: {name: string; minSdk: number; command: string; ok: RegExp}[] = [
+  // The idle-time dexopt job: it waits only for the screen to be off for a while (an emulator always charges) and
+  // then keeps three cores busy for about 20 s on a fresh AVD.
+  {name: 'background dexopt', minSdk: 34, command: 'pm bg-dexopt-job --disable', ok: /disabled/i},
+  // Server-pushed feature flags: they change the device's behaviour, and make it work, mid-run.
+  {name: 'flag sync', minSdk: 31, command: 'cmd device_config set_sync_disabled_for_tests until_reboot', ok: /^$/},
+];
+
+/** Settings a slim device keeps; the earlier value is written down, a stock boot puts it back. */
+export const SLIM_SETTINGS: {name: string; ns: 'global' | 'secure' | 'system'; key: string; value: string}[] = [
+  // The keyboard's spell checker: a session per text field, under every typed word.
+  {name: 'spell check', ns: 'secure', key: 'spell_checker_enabled', value: '0'},
+];
+
+/** `ns key earlier-value` per setting pitbox changed; `null`: the setting had no value. */
+export const SETTINGS_RECORD = '/data/local/tmp/pitbox-slim-settings';
+
+export type TuneResult = {off: string[]; failed: string[]};
+
+/** Turns the per-boot switches and the settings off in one shell call; what refused is said, never thrown. */
+export const tune = async (shell: Shell): Promise<TuneResult> => {
+  const script = [
+    'sdk=$(getprop ro.build.version.sdk)',
+    ...BOOT_TUNING.map((t, i) => `if [ "$sdk" -ge ${t.minSdk} ]; then echo "#${i} $(${t.command} 2>&1 | tr '\\n' ' ' | sed 's/ *$//')"; fi`),
+    ...SLIM_SETTINGS.map(
+      s =>
+        `grep -q '^${s.ns} ${s.key} ' ${SETTINGS_RECORD} 2>/dev/null || echo "${s.ns} ${s.key} $(settings get ${s.ns} ${s.key})" >> ${SETTINGS_RECORD}; ` +
+        `settings put ${s.ns} ${s.key} ${s.value} && echo '+${s.name}' || echo '-${s.name}'`,
+    ),
+    'true',
+  ].join('; ');
+  const out = await shell(script, 30_000);
+  const r: TuneResult = {off: [], failed: []};
+  for (const line of out.split('\n')) {
+    const m = /^#(\d+) ?(.*)$/.exec(line.trim());
+    if (m) {
+      const t = BOOT_TUNING[Number(m[1])]!;
+      (t.ok.test(m[2]!.trim()) ? r.off : r.failed).push(t.name);
+    } else if (line.startsWith('+')) r.off.push(line.slice(1).trim());
+    else if (line.startsWith('-')) r.failed.push(line.slice(1).trim());
+  }
+  return r;
+};
+
+/** Puts back the settings pitbox changed and forgets the record; the number put back. */
+export const untune = async (shell: Shell): Promise<number> => {
+  const lines = (await shell(`cat ${SETTINGS_RECORD} 2>/dev/null; true`))
+    .split('\n')
+    .map(l => l.trim().split(/\s+/))
+    .filter(([ns, key, v]) => /^(global|secure|system)$/.test(ns ?? '') && /^\w+$/.test(key ?? '') && /^[\w.-]+$/.test(v ?? ''));
+  if (!lines.length) return 0;
+  await shell(`${lines.map(([ns, key, v]) => (v === 'null' ? `settings delete ${ns} ${key}` : `settings put ${ns} ${key} ${v}`)).join('; ')}; rm -f ${SETTINGS_RECORD}`, 30_000);
+  return lines.length;
+};
