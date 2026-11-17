@@ -81,6 +81,15 @@ describe('native build cache', () => {
     expect(runs()).toBe(2);
   });
 
+  it('a build that rewrites its own inputs is reused under the fingerprint it leaves', async () => {
+    const rewrite = {command: `printf x >> '${counter()}'; printf '\\n# pods 1.17' >> package.json; mkdir -p out; cat android/Main.kt > out/app.apk`, output: 'out/app.apk'};
+    const run = () => ensureBuild({root, app: 'com.example.app', platform: 'android', spec: rewrite, inputs: jsAppInputs('android'), cacheRoot: cache});
+    expect((await run()).reused).toBe(false);
+    // The command appends again on a rebuild only; the next request finds the build under the rewritten inputs.
+    expect((await run()).reused).toBe(true);
+    expect(runs()).toBe(1);
+  });
+
   it('another checkout of the same app reuses the build', async () => {
     await build();
     const other = root;

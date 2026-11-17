@@ -222,6 +222,19 @@ export const ensureBuild = async (o: {root: string; app: string; platform: Nativ
           fs.writeFileSync(path.join(tmp, DONE), JSON.stringify(done));
           fs.rmSync(slot, {recursive: true, force: true});
           fs.renameSync(tmp, slot);
+          // A build that rewrites its own inputs (`pod install` updating Podfile.lock, codegen into a tracked file)
+          // is kept under the fingerprint it leaves as well: the next request asks for that one.
+          const after = fingerprint(o.root, o.spec, o.inputs, o.toolchain).hash;
+          if (after !== fp.hash) {
+            const again = path.join(dir, after);
+            const tmp2 = `${again}.tmp-${process.pid}`;
+            fs.rmSync(tmp2, {recursive: true, force: true});
+            fs.mkdirSync(tmp2, {recursive: true});
+            copy(path.join(slot, name), path.join(tmp2, name));
+            fs.writeFileSync(path.join(tmp2, DONE), JSON.stringify(done));
+            fs.rmSync(again, {recursive: true, force: true});
+            fs.renameSync(tmp2, again);
+          }
           gcBuilds(dir, fp.hash);
           return {platform: o.platform, fingerprint: fp.hash, reused: false, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs, inputs: fp.files, ...(waitedMs > 1000 ? {waitedMs} : {})};
         },
