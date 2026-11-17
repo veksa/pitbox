@@ -407,8 +407,8 @@ describe('emulators', () => {
   });
 
   it('passes -no-audio unless audio is asked for, and reads it back from the command line', () => {
-    expect(bootArgs('Pixel', {}, false)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-no-audio', '-no-snapshot-load']);
-    expect(bootArgs('Pixel', {audio: true, headless: true}, true)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-read-only', '-no-snapshot-load', '-no-window']);
+    expect(bootArgs('Pixel', {}, false)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-no-audio', '-no-snapshot']);
+    expect(bootArgs('Pixel', {audio: true, headless: true}, true)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-read-only', '-no-snapshot', '-no-window']);
     expect(launchedWith('"/sdk/qemu" "-avd" "Pixel" "-no-audio" "-prop" "qemu.pitbox_launch=x"')).toEqual({audio: false});
     expect(launchedWith('"/sdk/qemu" "-avd" "Pixel" "-no-boot-anim"')).toEqual({audio: true});
     expect(launchedWith('')).toEqual({});

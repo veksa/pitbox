@@ -360,8 +360,8 @@ export const bootArgs = (avd: string, opts: BootOptions, readOnly: boolean): str
   const args = ['-avd', avd, '-no-boot-anim'];
   if (!opts.audio) args.push('-no-audio');
   if (readOnly) args.push('-read-only');
-  if (opts.noSnapshot) args.push('-no-snapshot');
-  else if (opts.coldBoot !== false) args.push('-no-snapshot-load');
+  // A cold boot saves no snapshot either: nothing loads it, and saving writes the guest's RAM (2.5 GB) on every exit.
+  if (opts.noSnapshot || opts.coldBoot !== false) args.push('-no-snapshot');
   if (opts.wipe) args.push('-wipe-data');
   if (opts.headless) args.push('-no-window');
   if (opts.camera) args.push('-camera-back', opts.camera);

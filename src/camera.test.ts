@@ -24,7 +24,7 @@ describe('emulator camera', () => {
   });
 
   it('boots with -camera-back and reads it back from the command line', () => {
-    expect(bootArgs('Pixel', {audio: true, camera: 'imagefile:/f.png'}, false)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-no-snapshot-load', '-camera-back', 'imagefile:/f.png']);
+    expect(bootArgs('Pixel', {audio: true, camera: 'imagefile:/f.png'}, false)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-no-snapshot', '-camera-back', 'imagefile:/f.png']);
     expect(launchedWith('"/qemu" "-avd" "P" "-camera-back" "videofile:/a b.mp4"')).toEqual({audio: true, camera: 'videofile:/a b.mp4'});
     expect(launchedWith('"/qemu" "-avd" "P" "-no-audio"')).toEqual({audio: false});
     expect(sameCamera('imagefile:/x.png', 'imagefile:/y.png')).toBe(true);
