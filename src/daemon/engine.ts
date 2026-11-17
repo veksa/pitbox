@@ -379,7 +379,7 @@ export class Engine {
     const hooks: UiHooks = {
       beforeAction: () => {
         const proxy = this.#dev?.proxy;
-        if (!proxy || !proxy.apps().length) return undefined;
+        if (!proxy || !proxy.appsSeen) return undefined;
         const id = crypto.randomBytes(16).toString('hex');
         proxy.setTrace(id);
         this.#lastTrace = {id, at: Date.now()};

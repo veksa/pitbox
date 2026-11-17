@@ -255,6 +255,14 @@ export class DevProxy {
 
   // ---- apps -------------------------------------------------------------------------------------------------
 
+  /**
+   * Whether an app has talked to this proxy since it started. An app relaunched a moment ago is not connected yet
+   * when the first action after the launch begins, and still takes that action's trace: it gets it with its hello.
+   */
+  get appsSeen(): boolean {
+    return this.#appSeq > 0;
+  }
+
   apps(): AppInfo[] {
     return [...this.#apps.values()].map(({ws: _ws, ...info}) => info);
   }

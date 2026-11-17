@@ -417,6 +417,23 @@ describe('proxy with the in-app script', () => {
     ws.close();
   });
 
+  it('hands the trace set while no app was connected to an app that connects after (one relaunched a moment ago)', async () => {
+    // Sessions an earlier test closed are gone first: no app is connected when the action begins.
+    await new Promise(r => setTimeout(r, 300));
+    expect(proxy.appsSeen).toBe(true);
+    proxy.setTrace('e'.repeat(32));
+    const ws = new WsClient(`ws://127.0.0.1:${port}/pitbox/app`);
+    const got = new Promise<string>(r => ws.on('message', d => {
+      const m = JSON.parse(String(d));
+      if (m.type === 'trace') r(m.id);
+    }));
+    await new Promise(r => ws.on('open', r));
+    ws.send(JSON.stringify({type: 'hello', bundle: 'x', gen: 0, platform: 'ios', startedAt: Date.now()}));
+    expect(await got).toBe('e'.repeat(32));
+    proxy.setTrace(null);
+    ws.close();
+  });
+
   it('drops an app session that stops answering pings, keeps one that answers', async () => {
     // Sessions an earlier test closed are gone first.
     await new Promise(r => setTimeout(r, 300));
