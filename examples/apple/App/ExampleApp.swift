@@ -197,6 +197,7 @@ struct VisionControls: View {
   @Environment(\.dismissImmersiveSpace) private var dismissSpace
   @State private var space = "no space"
   @State private var ornament = "ornament not pressed"
+  @State private var quality = "Auto"
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -213,9 +214,16 @@ struct VisionControls: View {
       Button("Leave space") { Task { await dismissSpace(); space = "no space" } }.accessibilityIdentifier("leave_space")
       Text(space).accessibilityIdentifier("space_state")
       Text(ornament).accessibilityIdentifier("ornament_result")
+      Text("quality \(quality)").accessibilityIdentifier("quality_result")
     }
     .ornament(attachmentAnchor: .scene(.bottom)) {
-      Button("Ornament") { ornament = "ornament pressed" }.accessibilityIdentifier("ornament_button").padding().glassBackgroundEffect()
+      HStack {
+        Button("Ornament") { ornament = "ornament pressed" }.accessibilityIdentifier("ornament_button")
+        // A system menu: its items open in a platter of their own, over the app's window.
+        Menu(quality) {
+          ForEach(["Low", "High", "Auto"], id: \.self) { q in Button(q) { quality = q } }
+        }.accessibilityIdentifier("quality_menu")
+      }.padding().glassBackgroundEffect()
     }
   }
 }
