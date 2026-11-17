@@ -780,9 +780,12 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   /** Waits until `selector` matches (or stops matching with `gone`). */
   async wait(selector: string, opts: {gone?: boolean; timeoutMs?: number} = {}): Promise<{ms: number; snapshot: Snapshot}> {
+    // The first read may start the runner (an XCUITest runner takes a minute and more on a busy machine) and see
+    // the runner's own app still in front: the wait's seconds start once the screen has been read, so an optional
+    // step does not spend them all on the start and give up after a single look.
+    let snap = await this.snapshot();
     const t0 = Date.now();
     const deadline = t0 + (opts.timeoutMs ?? 10_000);
-    let snap = await this.snapshot();
     let waitedOut = 0;
     while (matches(snap, selector) === !!opts.gone) {
       // A loaded machine makes the system UI miss its deadline ("System UI isn't responding"); Wait is what a

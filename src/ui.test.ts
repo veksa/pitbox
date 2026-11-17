@@ -693,6 +693,29 @@ describe("iOS's offer to save a password", () => {
   });
 });
 
+describe('a wait whose first read starts the runner', () => {
+  it('counts its seconds from that read, so a slow start does not use them up', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    let reads = 0;
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'tree') {
+          reads++;
+          // The first read starts the runner, longer than the whole wait, and sees the shell rather than the app.
+          if (reads === 1) await new Promise(r => setTimeout(r, 1500));
+          return {windows: app, nodes: reads === 1 ? [] : [{p: -1, w: 0, c: 'Button', b: [0, 0, 400, 100], id: 'later', f: 'c'}]};
+        }
+        if (cmd === 'info') return {width: 1179, height: 2556};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('sim', runner as never).wait('id=later', {timeoutMs: 1000});
+    expect(reads).toBeGreaterThan(1);
+  }, 15_000);
+});
+
 describe('a keyboard over the target', () => {
   it('is waited out when it was fullscreen and the app comes back a moment later', async () => {
     const {DeviceUi} = await import('./ui/device.ts');
