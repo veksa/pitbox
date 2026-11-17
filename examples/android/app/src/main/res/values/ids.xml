@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="detail_screen" type="id" />
+    <item name="media_screen" type="id" />
+    <item name="media_perms" type="id" />
+    <item name="mic_result" type="id" />
+    <item name="audio_focus" type="id" />
+    <item name="audio_route" type="id" />
+    <item name="ask_mic" type="id" />
+    <item name="record" type="id" />
+    <item name="record_long" type="id" />
+    <item name="play_tone" type="id" />
+    <item name="play_long" type="id" />
+    <item name="stop_tone" type="id" />
 </resources>
