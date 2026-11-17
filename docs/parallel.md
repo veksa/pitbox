@@ -290,6 +290,34 @@ takes them off too.
 Not every daemon can go: some are called in a tight loop while they are off. With `sleepd` off, `healthd`,
 `mobiletimerd` and SpringBoard kept 4.5 cores busy for good; such daemons are never disabled, even when listed.
 
+## Warm templates
+
+When the simulator a session asks for is another session's, pitbox gives it one of its own (`<name> (pitbox N)`),
+deleted again when it is given back — and a new simulator's first boot is the slowest there is: the runtime fills
+the new data (caches, databases, the app registry), indexes and migrates it, and keeps the Mac busy for a minute
+after. So the first time pitbox creates one of a model and runtime, it also makes that model's **template** in the
+background: a simulator (`pitbox template · iPhone 17 · iOS 27.2`) booted slim and headless, left until its
+processes are quiet (under 0.3 cores over 10 s; 4 minutes at most), and shut down. Every later one is a clone of
+it (`simctl clone`, copy-on-write on APFS) and boots into data that has settled already.
+
+A template is the Mac's, used by every project, and written down in `~/.pitbox/sim-templates.json`; a simulator the
+file does not name is never taken for one, and no session is ever handed the template itself. It is made only when
+the Mac has room — no boot warning, and under three devices running, so the background boot never makes a fourth —
+under a lease of its own, so another session cannot take it meanwhile; a template left half-made by a daemon that
+died is deleted and made again. `devices clean --all` deletes the templates; `apple.templates: false` turns them off.
+
+Measured through pitbox on an Apple-silicon Mac, iPhone 17 on iOS 27.2, slim, two runs each: boot, install the
+example app, open it and wait for its first screen (the boot also starts the UI runner in the background):
+
+| | New simulator | Clone of the warm template |
+|---|---|---|
+| Boot | 12.0–13.2 s | 1.9–2.0 s |
+| Boot to the app's first screen | 29.1–32.1 s | 21.6–22.9 s |
+| The simulator's CPU over the minute after | 0.24–0.28 cores | 0.02–0.16 cores |
+
+What is left of the first screen's time is the UI runner's start (`xcodebuild test-without-building`, 15–20 s),
+which no data in the simulator shortens.
+
 ## Native builds
 
 A native build is the slowest step of a pass, and the one parallel work repeats most: every worktree builds the

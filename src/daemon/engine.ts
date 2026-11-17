@@ -41,10 +41,11 @@ import {AndroidRunner} from '../drivers/android/runner.ts';
 import {CrashWatcher} from '../drivers/android/events.ts';
 import {lanAddress} from '../util/lan.ts';
 import {httpAlive, portAnswers, portListeners, withinFolder} from '../util/net.ts';
-import {run} from '../util/proc.ts';
+import {run, isAlive} from '../util/proc.ts';
 import {DeviceLeases, type Candidate, type Held} from '../lease/devices.ts';
-import {describeHolder, listLeases, machineLock, refusal, staleReason, type Lease} from '../lease/lease.ts';
 import {bootWarning} from '../lease/resources.ts';
+import {forgetTemplate, isTemplate, listTemplates, readSimCpu, recordTemplate, templateName, templateOf, waitQuiet} from '../drivers/apple/templates.ts';
+import {acquire as acquireLease, DAEMON_TTL_MS, describeHolder, listLeases, machineLock, processStart, refusal, release as releaseLease, staleReason, type Lease} from '../lease/lease.ts';
 import {describeReaped, reapLeases, stillBootedByPitbox, type Running} from '../lease/reap.ts';
 import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, updateCreated, type Created} from '../lease/created.ts';
 import {WearRelay} from '../drivers/android/wearRelay.ts';
@@ -122,6 +123,9 @@ export const hasApsEnvironment = async (app: string): Promise<boolean | undefine
 
 /** Who listens on the bundler's port (util/net.ts `portListeners`); tests stand in for it. */
 export const bundlerProbe = {listeners: portListeners};
+
+/** Who holds a warm template while it is made: this daemon's process, under no session. */
+const TEMPLATE_HOLDER = () => ({owner: `template:${process.pid}`, label: 'pitbox · warm template', pid: process.pid, pidStart: processStart(process.pid)});
 
 export class Engine {
   #loaded: LoadedConfig;
@@ -822,6 +826,13 @@ export class Engine {
     });
   }
 
+  /** Whether a created simulator's warm template is made in the background. Settable for tests. */
+  static WARM_TEMPLATES = true;
+  /** Waits until a template being made is quiet. Settable for tests. */
+  static templateQuiet: (udid: string) => Promise<unknown> = udid => waitQuiet(() => readSimCpu(udid));
+  /** Whether the Mac has room for a template's background boot: no boot warning, and it would not be a fourth device. */
+  static templateRoom: (running: number) => boolean = running => running < 3 && !bootWarning('apple', running);
+
   /** How old a copy must be before a sweep may take it for a leftover. Settable for tests. */
   static COPY_GRACE_MS = 15 * 60_000;
   /** How long a release waits for a copy's emulator to let go of it before leaving the deletion to a sweep. */
@@ -893,7 +904,7 @@ export class Engine {
     else {
       const h = this.#leases.holderOf('apple', want.udid);
       why = h ? `${want.name} is held by ${describeHolder(h.lease)}` : `${want.name} runs without a lease (another tool or an older pitbox may drive it): left alone`;
-      const twins = sims.filter(x => x.udid !== want.udid && x.deviceType === want.deviceType && x.runtime === want.runtime);
+      const twins = sims.filter(x => x.udid !== want.udid && x.deviceType === want.deviceType && x.runtime === want.runtime && !isTemplate(x.udid));
       order.push(...twins.filter(owned), ...twins.filter(idle));
     }
     let pick: Simulator | undefined;
@@ -907,18 +918,22 @@ export class Engine {
       }
     }
     let created = false;
+    let cloned = false;
     if (!pick) {
       // Named and leased under one machine-wide lock: two sessions never pick the same N.
       pick = await machineLock('apple-create', async () => {
         const taken = new Set((await s.simulators()).map(x => x.name));
         let n = 2;
         while (taken.has(`${want.name} (pitbox ${n})`)) n++;
-        const sim = await s.createLike(want, `${want.name} (pitbox ${n})`);
-        recordCreated(sim.udid, sim.name, this.#createdBy());
-        this.#leases.claim('apple', sim.udid, {name: sim.name, booted: true, created: true});
-        return sim;
+        const made = await this.#cloneOrCreate(s, want, `${want.name} (pitbox ${n})`);
+        recordCreated(made.sim.udid, made.sim.name, this.#createdBy());
+        this.#leases.claim('apple', made.sim.udid, {name: made.sim.name, booted: true, created: true});
+        cloned = made.cloned;
+        return made.sim;
       });
       created = true;
+      // The next session that needs one of this model gets a clone of a warm template: made now, in the background.
+      if (!cloned) void this.#makeTemplate(s, want).catch(() => undefined);
     }
     const starting = pick.state !== 'Booted';
     const warning = starting ? bootWarning('apple', await this.#runningDevices()) : undefined;
@@ -937,7 +952,7 @@ export class Engine {
       return {
         ...r,
         platform: 'apple',
-        ...(why ? {instead: `${why}; ${created ? 'created' : 'took'} ${pick.name} instead`} : {}),
+        ...(why ? {instead: `${why}; ${created ? (cloned ? 'cloned a warm template as' : 'created') : 'took'} ${pick.name} instead`} : {}),
         ...(warning ? {warning} : {}),
       };
     } catch (e) {
@@ -948,6 +963,69 @@ export class Engine {
       throw e;
     } finally {
       this.#booting.delete(pick.udid);
+    }
+  }
+
+  /**
+   * A new simulator like `want`: a clone of the warm template of its model and runtime when one is ready, shut down
+   * and held by nobody; created empty otherwise. Runs under the lock that creates simulators.
+   */
+  async #cloneOrCreate(s: AppleDriver, want: Simulator, name: string): Promise<{sim: Simulator; cloned: boolean}> {
+    const t = this.config.apple?.templates !== false && want.deviceType ? templateOf(want.deviceType, want.runtime) : undefined;
+    if (t?.ready) {
+      const src = (await s.simulators()).find(x => x.udid === t.udid);
+      if (!src) forgetTemplate(t.udid);
+      else if (src.state === 'Shutdown' && !this.#leases.holderOf('apple', src.udid)) {
+        try {
+          return {sim: await s.cloneFrom(src.udid, name), cloned: true};
+        } catch {
+          // A clone that fails is no reason to fail the boot: an empty simulator as before.
+        }
+      }
+    }
+    return {sim: await s.createLike(want, name), cloned: false};
+  }
+
+  /**
+   * Makes the warm template of `like`'s model and runtime: a new simulator, booted slim and headless, left until it
+   * is quiet, shut down. Only when the Mac has room — no boot warning and under three devices running, so a
+   * background boot never makes a fourth — and once per model and runtime on the Mac. Held under a lease meanwhile,
+   * so no session takes it; a leftover of a daemon that died making one is deleted by the next attempt.
+   */
+  async #makeTemplate(s: AppleDriver, like: Simulator): Promise<void> {
+    if (!Engine.WARM_TEMPLATES || this.config.apple?.templates === false || !like.deviceType || !this.#isLocalApple(s)) return;
+    const deviceType = like.deviceType;
+    const old = templateOf(deviceType, like.runtime);
+    if (old?.ready || (old?.pid && isAlive(old.pid))) return;
+    if (!Engine.templateRoom(await this.#runningDevices())) return;
+    const sim = await machineLock('apple-create', async () => {
+      const again = templateOf(deviceType, like.runtime);
+      if (again?.ready || (again?.pid && isAlive(again.pid))) return undefined;
+      if (again) {
+        await s.delete(again.udid).catch(() => undefined);
+        forgetTemplate(again.udid);
+      }
+      const made = await s.createLike(like, templateName(deviceType, like.os));
+      recordTemplate({udid: made.udid, name: made.name, deviceType, runtime: like.runtime, at: Date.now(), pid: process.pid});
+      // Held apart from the session (whose devices the agent picks from): nobody takes it while it is made.
+      acquireLease('apple', made.udid, TEMPLATE_HOLDER(), {name: made.name, ttlMs: DAEMON_TTL_MS});
+      return made;
+    });
+    if (!sim) return;
+    try {
+      const cfg = this.config.apple?.slim;
+      await s.boot(sim.udid, {headless: true, slim: cfg === false ? false : typeof cfg === 'object' ? cfg : true});
+      await Engine.templateQuiet(sim.udid);
+      await s.shutdown(sim.udid);
+      recordTemplate({udid: sim.udid, name: sim.name, deviceType, runtime: like.runtime, at: Date.now(), ready: true});
+    } catch {
+      await s.shutdown(sim.udid).catch(() => undefined);
+      await machineLock('apple-create', async () => {
+        await s.delete(sim.udid).catch(() => undefined);
+        forgetTemplate(sim.udid);
+      }).catch(() => undefined);
+    } finally {
+      releaseLease('apple', sim.udid, l => l.owner === TEMPLATE_HOLDER().owner);
     }
   }
 
@@ -2399,6 +2477,17 @@ export class Engine {
             forgetCreated(x.udid);
             deleted.push(x.name);
           }
+          // Warm templates are the Mac's, kept for every project: only `all` deletes them (the next one is made again).
+          if (all)
+            for (const t of listTemplates()) {
+              const x = sims.find(y => y.udid === t.udid);
+              if (x && (x.state !== 'Shutdown' || this.#leases.holderOf('apple', x.udid) || (!t.ready && t.pid && isAlive(t.pid)))) continue;
+              if (x) {
+                await s.delete(x.udid);
+                deleted.push(x.name);
+              }
+              forgetTemplate(t.udid);
+            }
         });
       }
       // AVD copies: also those made for sessions that keep what they create; never one younger than the grace, one an

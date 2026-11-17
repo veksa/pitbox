@@ -260,6 +260,12 @@ export const configSchema = z.object({
        * `false` boots stock and puts back what pitbox disabled. `{keep: [...], disable: [...]}` takes launchd labels and the group `widgets` (widgets and Live Activities, on by default).
        */
       slim: z.union([z.boolean(), z.object({keep: z.array(z.string()).optional(), disable: z.array(z.string()).optional()}).strict()]).optional(),
+      /**
+       * Warm templates (default true): a simulator pitbox creates for a session (another holds the one asked for) is a
+       * clone of a template of its model and runtime — booted once until quiet, then shut down — so it skips the busy
+       * first boot. The first one made for a model is created as before, and its template made in the background.
+       */
+      templates: z.boolean().optional(),
     })
     .optional(),
   /**

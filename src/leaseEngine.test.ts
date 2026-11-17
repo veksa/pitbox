@@ -12,6 +12,7 @@ import {bundlerProbe, Engine} from './daemon/engine.ts';
 import {AndroidDriver, avdDir, avdLocked, avdStamp, avdTaken, bootArgs, createAvdLike, deleteAvd, insideFolder, killTree, launchedWith, lockPid, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
 import {avdHome} from './drivers/android/sdk.ts';
 import type {Simulator} from './drivers/apple/driver.ts';
+import {forgetTemplate, recordTemplate, templateOf} from './drivers/apple/templates.ts';
 import {isCreated, listCreated, recordCreated} from './lease/created.ts';
 import {leaseDir, readLease} from './lease/lease.ts';
 import {PushCenter} from './push/push.ts';
@@ -59,6 +60,14 @@ class FakeApple {
   createLike = async (like: Sim, name: string) => {
     const s = {...like, udid: `NEW${this.sims.length + 1}`, name, state: 'Shutdown'};
     this.sims.push(s);
+    return {...s};
+  };
+  cloned: string[] = [];
+  cloneFrom = async (source: string, name: string) => {
+    const src = this.sims.find(x => x.udid === source)!;
+    const s = {...src, udid: `CLONE${this.sims.length + 1}`, name, state: 'Shutdown'};
+    this.sims.push(s);
+    this.cloned.push(source);
     return {...s};
   };
   delete = async (udid: string) => {
@@ -154,6 +163,8 @@ const session = async (name: string, drivers: {android?: FakeAndroid | null; app
 };
 
 beforeEach(() => {
+  // A created simulator's warm template would boot in the background on the fake: only the tests about it make one.
+  Engine.WARM_TEMPLATES = false;
   fs.rmSync(leaseDir(), {recursive: true, force: true});
   // The created-devices list lives beside the leases: each test starts with none.
   fs.rmSync(path.join(path.dirname(leaseDir()), 'created-simulators.json'), {force: true});
@@ -163,6 +174,70 @@ afterEach(() => {
 });
 
 describe('simulators', () => {
+  it('a new simulator for the second session is a clone of the warm template; the template is never handed out', async () => {
+    const apple = new FakeApple([{}, {name: 'pitbox template · iPhone 17 · iOS 27.2'}]);
+    recordTemplate({udid: 'U2', name: 'pitbox template · iPhone 17 · iOS 27.2', deviceType: 'iPhone-17', runtime: 'iOS-27-2', at: 1, ready: true});
+    try {
+      const a = await session('alice', {apple});
+      const b = await session('bob', {apple});
+      await a.methods.boot({avd: 'iPhone 17'});
+      const r = (await b.methods.boot({avd: 'iPhone 17'})) as {udid: string; instead: string};
+      // U2 is shut down, of the same model and runtime and held by nobody: as a template it is still not taken.
+      expect(r.udid).toBe('CLONE3');
+      expect(r.instead).toMatch(/cloned a warm template as iPhone 17 \(pitbox 2\) instead/);
+      expect(apple.cloned).toEqual(['U2']);
+      expect(apple.sims.find(s => s.udid === 'U2')?.state).toBe('Shutdown');
+      await b.methods.release({});
+      expect(apple.deleted).toEqual(['CLONE3']);
+    } finally {
+      forgetTemplate('U2');
+    }
+  });
+
+  it('the first simulator created for a model makes its warm template in the background, apart from the session', async () => {
+    const apple = new FakeApple([{}]);
+    Engine.WARM_TEMPLATES = true;
+    const quiet = Engine.templateQuiet;
+    const room = Engine.templateRoom;
+    Engine.templateQuiet = async () => undefined;
+    Engine.templateRoom = () => true;
+    try {
+      const a = await session('alice', {apple});
+      const b = await session('bob', {apple});
+      await a.methods.boot({avd: 'iPhone 17'});
+      expect(((await b.methods.boot({avd: 'iPhone 17'})) as {udid: string}).udid).toBe('NEW2');
+      await vi.waitFor(() => expect(templateOf('iPhone-17', 'iOS-27-2')?.ready).toBe(true));
+      const t = templateOf('iPhone-17', 'iOS-27-2')!;
+      expect(t.name).toBe('pitbox template · iPhone 17 · iOS 27.2');
+      expect(apple.sims.find(s => s.udid === t.udid)?.state).toBe('Shutdown');
+      // Never the session's: its lease is gone, and the session holds only the simulator it asked for.
+      expect(readLease('apple', t.udid)).toBeUndefined();
+      expect(await b.methods.release({})).toMatchObject({released: 'iPhone 17 (pitbox 2)'});
+      // The next one is a clone of it.
+      const c = await session('carol', {apple});
+      expect(((await c.methods.boot({avd: 'iPhone 17'})) as {instead: string}).instead).toMatch(/cloned a warm template/);
+      expect(apple.cloned).toEqual([t.udid]);
+      forgetTemplate(t.udid);
+    } finally {
+      Engine.templateQuiet = quiet;
+      Engine.templateRoom = room;
+    }
+  });
+
+  it('a template not ready yet is not cloned: the simulator is created as before', async () => {
+    const apple = new FakeApple([{}, {name: 'pitbox template · iPhone 17 · iOS 27.2'}]);
+    recordTemplate({udid: 'U2', name: 'pitbox template · iPhone 17 · iOS 27.2', deviceType: 'iPhone-17', runtime: 'iOS-27-2', at: 1, pid: process.pid});
+    try {
+      const a = await session('alice', {apple});
+      const b = await session('bob', {apple});
+      await a.methods.boot({avd: 'iPhone 17'});
+      expect(((await b.methods.boot({avd: 'iPhone 17'})) as {udid: string}).udid).toBe('NEW3');
+      expect(apple.cloned).toEqual([]);
+    } finally {
+      forgetTemplate('U2');
+    }
+  });
+
   it('boots the named simulator for the first session and a new one for the second, deleted when given back', async () => {
     const apple = new FakeApple([{}]);
     const a = await session('alice', {apple});

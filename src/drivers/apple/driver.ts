@@ -313,6 +313,16 @@ export class AppleDriver {
     return sim;
   }
 
+  /** A copy of a shut-down simulator (`simctl clone`: copy-on-write on APFS, so a second or two), under `name`. */
+  async cloneFrom(source: string, name: string): Promise<Simulator> {
+    this.forgetList();
+    const udid = (await this.#ok(['clone', source, name], 'clone', 120_000)).trim();
+    this.forgetList();
+    const sim = (await this.simulators()).find(s => s.udid === udid);
+    if (!sim) throw new AppleError(`simctl cloned ${udid} but does not list it`);
+    return sim;
+  }
+
   /** The watch pairs on this Mac, whoever made them. */
   async pairs(): Promise<WatchPair[]> {
     return parsePairs(await this.#ok(['list', 'pairs', '-j'], 'list pairs'));
