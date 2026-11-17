@@ -128,7 +128,25 @@ export const avdLocked = (avd: string): boolean => {
 };
 
 /** What a running emulator says about itself in its discovery file (`<temp>/avd/running/pid_<N>.ini`). */
-export type RunningEmulator = {serial: string; avd: string; instance: string; readOnly: boolean; /** The marker pitbox launched it with. */ launch?: string};
+export type RunningEmulator = {
+  serial: string;
+  avd: string;
+  instance: string;
+  readOnly: boolean;
+  /** The marker pitbox launched it with. */
+  launch?: string;
+  /** Whether it runs with audio (started without `-no-audio`); undefined when its command line is unknown. */
+  audio?: boolean;
+};
+
+/** The arguments of an emulator's command line as its discovery file writes it (`"/sdk/qemu" "-avd" "Pixel"`). */
+export const cmdlineArgs = (cmdline: string): string[] => [...cmdline.matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map(m => m[1] ?? m[2]!);
+
+/** What a discovery file's command line says about audio. */
+export const launchedWith = (cmdline: string): Pick<RunningEmulator, 'audio'> => {
+  const args = cmdlineArgs(cmdline);
+  return args.length ? {audio: !args.includes('-no-audio') && !args.includes('-noaudio')} : {};
+};
 
 /** Where emulators put their discovery files: the temp folder the emulator uses on each system. */
 export const runningDirs = (): string[] => {
@@ -171,7 +189,7 @@ export const readRunning = (dirs: string[], alive: (pid: number) => boolean = em
       if (!port || !avd || !alive(pid)) continue;
       const cmdline = v('cmdline') ?? '';
       const launch = /qemu\.pitbox_launch=([\w-]+)/.exec(cmdline)?.[1];
-      out.push({serial: `emulator-${port}`, avd, instance: `pid:${pid}`, readOnly: /"-read-only"|\s-read-only(\s|$)/.test(cmdline), ...(launch ? {launch} : {})});
+      out.push({serial: `emulator-${port}`, avd, instance: `pid:${pid}`, readOnly: /"-read-only"|\s-read-only(\s|$)/.test(cmdline), ...(launch ? {launch} : {}), ...launchedWith(cmdline)});
     }
   }
   return out;
@@ -318,7 +336,28 @@ export type Launch = {
   instance?: string;
 };
 
-export type BootOptions = {wipe?: boolean; headless?: boolean; coldBoot?: boolean; timeoutMs?: number; newInstance?: boolean; noSnapshot?: boolean};
+export type BootOptions = {
+  wipe?: boolean;
+  headless?: boolean;
+  coldBoot?: boolean;
+  timeoutMs?: number;
+  newInstance?: boolean;
+  noSnapshot?: boolean;
+  /** Starts the emulator with audio (by default it runs with `-no-audio`): what `mic` feeds needs it. */
+  audio?: boolean;
+};
+
+/** The emulator's command line for a boot, before pitbox's launch marker. */
+export const bootArgs = (avd: string, opts: BootOptions, readOnly: boolean): string[] => {
+  const args = ['-avd', avd, '-no-boot-anim'];
+  if (!opts.audio) args.push('-no-audio');
+  if (readOnly) args.push('-read-only');
+  if (opts.noSnapshot) args.push('-no-snapshot');
+  else if (opts.coldBoot !== false) args.push('-no-snapshot-load');
+  if (opts.wipe) args.push('-wipe-data');
+  if (opts.headless) args.push('-no-window');
+  return args;
+};
 
 export class AndroidError extends Error {
   readonly hint?: string;
@@ -519,12 +558,7 @@ export class AndroidDriver {
     const emulator = findEmulator();
     if (!emulator) throw new AndroidError('emulator binary not found', 'install the Android Emulator SDK package');
     if (!readOnly) clearStaleAvdLock(avd);
-    const args = ['-avd', avd, '-no-boot-anim', '-no-audio'];
-    if (readOnly) args.push('-read-only');
-    if (opts.noSnapshot) args.push('-no-snapshot');
-    else if (opts.coldBoot !== false) args.push('-no-snapshot-load');
-    if (opts.wipe) args.push('-wipe-data');
-    if (opts.headless) args.push('-no-window');
+    const args = bootArgs(avd, opts, readOnly);
     // A qemu.* property the emulator accepts without a warning; its discovery file repeats the command line.
     const id = randomUUID();
     args.push('-prop', `qemu.pitbox_launch=${id}`);

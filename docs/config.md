@@ -117,6 +117,7 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 | Field | Meaning |
 |---|---|
 | `avd` | default emulator for `boot` |
+| `audio` | `true` boots emulators with audio on, as `boot --audio` (`device action=boot audio=true`) does; default off (`-no-audio`). A microphone `mic` feeds needs it. An emulator of the session's that runs without audio is not restarted: the boot is refused, and the emulator is given back and booted again |
 | `watch` | the Wear OS emulator `device action=pair value=watch` pairs with an Android phone: an AVD name or a serial; without it, a Wear OS emulator the session holds, else the first Wear OS AVD ([wear.md](wear.md)) |
 | `reverse` | extra host ports to forward besides the services' `expose` (React DevTools, for example) |
 | `forward` | how exposed ports reach devices: `reverse` (adb reverse), `relay` (pitbox's runner listens on the device and pipes to the emulator host alias 10.0.2.2), `auto` (default: adb reverse, switching an emulator to the relay when its forwards stop carrying data; remembered per AVD) |

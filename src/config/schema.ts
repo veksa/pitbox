@@ -182,6 +182,8 @@ export const configSchema = z.object({
     .object({
       /** Default emulator for `boot`. */
       avd: z.string().optional(),
+      /** Boot emulators with audio (default off: `-no-audio`); `mic` feeds the microphone of one that has it. */
+      audio: z.boolean().optional(),
       /**
        * The Wear OS emulator `device action=pair value=watch` pairs with an Android phone: an AVD name or a serial.
        * Without it, a Wear OS emulator this session holds, else the first Wear OS AVD.

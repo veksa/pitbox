@@ -1278,7 +1278,7 @@ export class Engine {
    * Boots an emulator for this session: the instance of the AVD it holds, or a new one. When an instance of the AVD
    * runs for another session or with no lease, the new one starts beside it `-read-only`.
    */
-  async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean}) {
+  async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean; audio?: boolean}) {
     // This session's own: an instance of the AVD, or a copy pitbox made of it for this session (`boot` runs at the
     // start of every pass: it must not make a copy each time).
     // Found by this session's leases, in any state: a copy offline for a moment is still this session's.
@@ -1304,7 +1304,7 @@ export class Engine {
       await new Promise(r => setTimeout(r, 1000));
       own = await findOwn();
     }
-    if (own) return this.#answerOwn(own, ownLease!.name);
+    if (own) return this.#answerOwn(a, own, ownLease!.name, opts.audio);
     const warning = bootWarning('android', await this.#runningDevices());
     let launch: Launch | undefined;
     let twin: string | undefined;
@@ -1342,7 +1342,7 @@ export class Engine {
         // Held for seconds per boot (until the new emulator writes its discovery file): a queue of boots waits its
         // turn instead of being refused.
       }, 15 * 60_000);
-      if (mineAlready) return this.#answerOwn(mineAlready, avd);
+      if (mineAlready) return this.#answerOwn(a, mineAlready, avd, opts.audio);
     } catch (e) {
       if (launch) await a.abort(launch);
       if (twin) await this.#deleteCreatedAvd(a, twin);
@@ -1381,8 +1381,13 @@ export class Engine {
     };
   }
 
-  /** A boot's answer about an emulator this session holds already. */
-  async #answerOwn(own: AndroidDevice, name?: string) {
+  /**
+   * A boot's answer about an emulator this session holds already. Asked for audio, one that runs without it is not
+   * taken for it: the boot is refused and says how to start it again with audio.
+   */
+  async #answerOwn(a: AndroidDriver, own: AndroidDevice, name?: string, audio?: boolean) {
+    if (audio && a.running().find(e => e.serial === own.serial && (!own.instance || e.instance === own.instance))?.audio === false)
+      throw new Error(`${own.serial} (${own.avd ?? name ?? 'this session\'s emulator'}) runs without audio: boot audio=true does not restart it\nhint: give it back (device action=release) and boot again with audio=true`);
     this.#leases.claim('android', own.serial, {name: own.avd ?? name, instance: own.instance});
     const forwards = await this.ensureForwards(true).catch(() => []);
     return {serial: own.serial, ms: 0, already: true, avd: own.avd ?? name, forwards, ...(own.state !== 'device' ? {note: `${own.serial} is ${own.state}: still this session's, not replaced`} : {})};
@@ -2207,7 +2212,7 @@ export class Engine {
         const r = await s.boot(name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless')});
         return {...r, platform: 'apple'};
       }
-      return this.#bootEmulator(this.#needAndroid(), name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless'), coldBoot: bool(p, 'coldBoot')});
+      return this.#bootEmulator(this.#needAndroid(), name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless'), coldBoot: bool(p, 'coldBoot'), audio: bool(p, 'audio') ?? this.config.android?.audio});
     },
 
     // Only a device this session holds: another session's device, or one nobody leased, stays up unless forced —

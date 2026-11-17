@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {bundlerProbe, Engine} from './daemon/engine.ts';
-import {AndroidDriver, avdDir, avdLocked, avdStamp, avdTaken, createAvdLike, deleteAvd, insideFolder, killTree, lockPid, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
+import {AndroidDriver, avdDir, avdLocked, avdStamp, avdTaken, bootArgs, createAvdLike, deleteAvd, insideFolder, killTree, launchedWith, lockPid, type AndroidDevice, type Launch} from './drivers/android/driver.ts';
 import {avdHome} from './drivers/android/sdk.ts';
 import type {Simulator} from './drivers/apple/driver.ts';
 import {isCreated, listCreated, recordCreated} from './lease/created.ts';
@@ -80,6 +80,8 @@ class FakeAndroid {
   deletedAvds: string[] = [];
   /** Instances started -read-only (the emulator runs a second instance of an AVD only beside read-only ones). */
   readOnlyIds = new Set<string>();
+  /** Instances started with audio (the others run -no-audio). */
+  audioIds = new Set<string>();
   /** AVDs whose next boot never finishes. */
   hang = new Set<string>();
   /** AVD -> the instance holding its lock while one runs. */
@@ -90,7 +92,7 @@ class FakeAndroid {
   avds = () => this.avdNames.map(name => ({name, kind: 'phone'}));
   /** Discovery files: emulators launched but not listed by adb yet. */
   starting: {serial: string; avd: string; instance: string; readOnly: boolean}[] = [];
-  running = () => [...this.starting, ...this.devs.filter(d => d.avd && d.instance).map(d => ({serial: d.serial, avd: d.avd!, instance: d.instance!, readOnly: this.readOnly(d.instance)}))];
+  running = () => [...this.starting, ...this.devs.filter(d => d.avd && d.instance).map(d => ({serial: d.serial, avd: d.avd!, instance: d.instance!, readOnly: this.readOnly(d.instance), audio: this.audioIds.has(d.instance!)}))];
   readOnly = (instance?: string) => !!instance && this.readOnlyIds.has(instance);
   lockedBy = (avd: string) => this.locks.get(avd) ?? this.devs.find(d => d.avd === avd && !this.readOnly(d.instance))?.instance;
   avdTaken = (name: string) => this.avdNames.includes(name);
@@ -119,6 +121,7 @@ class FakeAndroid {
     const serial = `emulator-${port}`;
     const instance = `pid:${++this.#boots}`;
     if (opts.newInstance) this.readOnlyIds.add(instance);
+    if (opts.audio) this.audioIds.add(instance);
     this.devs.push({serial, state: 'device', avd, emulator: true, instance});
     return {avd, serial, readOnly: !!opts.newInstance} as unknown as Launch;
   };
@@ -383,6 +386,32 @@ describe('emulators', () => {
     expect(await b.methods.release({})).toMatchObject({released: 'Test_Phone_Lease_pitbox_2', gone: true});
     expect(android.deletedAvds).toEqual(['Test_Phone_Lease_pitbox_2']);
     expect(android.devs.map(d => d.serial)).toEqual(['emulator-5554']);
+  });
+
+  it('boots with audio only when asked, and refuses to pass its own silent emulator off as one with audio', async () => {
+    const android = new FakeAndroid();
+    const a = await session('alice', {android});
+    await a.methods.boot({avd: 'Test_Phone_Lease'});
+    expect(android.bootOpts[0]!.audio).toBeUndefined();
+    await expect(a.methods.boot({avd: 'Test_Phone_Lease', audio: true})).rejects.toThrow(/emulator-5554 \(Test_Phone_Lease\) runs without audio.*\nhint: give it back/);
+    await a.methods.release({});
+    expect(await a.methods.boot({avd: 'Test_Phone_Lease', audio: true})).toMatchObject({serial: 'emulator-5554', already: false});
+    expect(android.bootOpts[1]).toMatchObject({audio: true});
+    // Its own emulator with audio is answered as it is, asked with or without.
+    expect(await a.methods.boot({avd: 'Test_Phone_Lease', audio: true})).toMatchObject({already: true});
+    expect(await a.methods.boot({avd: 'Test_Phone_Lease'})).toMatchObject({already: true});
+    // The config's default.
+    const b = await session('bob', {android}, {android: {audio: true}});
+    await b.methods.boot({avd: 'Test_Phone_Lease'});
+    expect(android.bootOpts[2]).toMatchObject({audio: true});
+  });
+
+  it('passes -no-audio unless audio is asked for, and reads it back from the command line', () => {
+    expect(bootArgs('Pixel', {}, false)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-no-audio', '-no-snapshot-load']);
+    expect(bootArgs('Pixel', {audio: true, headless: true}, true)).toEqual(['-avd', 'Pixel', '-no-boot-anim', '-read-only', '-no-snapshot-load', '-no-window']);
+    expect(launchedWith('"/sdk/qemu" "-avd" "Pixel" "-no-audio" "-prop" "qemu.pitbox_launch=x"')).toEqual({audio: false});
+    expect(launchedWith('"/sdk/qemu" "-avd" "Pixel" "-no-boot-anim"')).toEqual({audio: true});
+    expect(launchedWith('')).toEqual({});
   });
 
   it('starts a second -read-only instance beside one that runs -read-only', async () => {
