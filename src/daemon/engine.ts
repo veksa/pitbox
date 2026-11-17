@@ -50,6 +50,7 @@ import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, upda
 import {WearRelay} from '../drivers/android/wearRelay.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
+import {ensureBuild, jsAppInputs, type NativePlatform} from '../native/builds.ts';
 
 type Params = Record<string, unknown>;
 
@@ -2392,6 +2393,21 @@ export class Engine {
       return {deleted, ...(unpaired ? {unpaired} : {}), ...(others ? {others} : {})};
     },
 
+
+    // A native build for the current native inputs: from the cache (any checkout, any session), or built now, one
+    // build per fingerprint on the machine; then installed on the session's device unless install=false.
+    build: async (p: Params) => {
+      const platform = (str(p, 'platform') ?? (this.config.app?.build?.android ? 'android' : 'ios')) as NativePlatform;
+      if (platform !== 'android' && platform !== 'ios') throw new Error('build platform=android|ios');
+      const spec = this.config.app?.build?.[platform];
+      if (!spec) throw new Error(`no ${platform} build: set app.build.${platform} = {command, output} in the config`);
+      const root = this.#loaded.root;
+      const app = (platform === 'android' ? this.config.app?.android : this.config.app?.apple) ?? path.basename(root);
+      const r = await ensureBuild({root, app, platform, spec, inputs: spec.inputs ?? (this.config.devserver ? jsAppInputs(platform) : ['**']), ...(this.config.shell ? {shell: this.config.shell} : {})});
+      if (bool(p, 'install') === false) return r;
+      const installed = (await this.methods.install({apk: r.artifact, device: str(p, 'device'), replace: bool(p, 'replace')})) as {ms: number; serial?: string; udid?: string};
+      return {...r, installed: {on: installed.serial ?? installed.udid, ms: installed.ms}};
+    },
 
     install: async (p: Params) => {
       const file = path.resolve(this.#loaded.root, req(p, 'apk'));

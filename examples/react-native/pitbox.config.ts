@@ -1,7 +1,19 @@
 import {defineConfig} from '@veksa/pitbox';
 
 export default defineConfig({
-  app: {android: 'dev.pitbox.rnexample', apple: 'dev.pitbox.rnexample', scheme: 'pitboxexample-rn'},
+  app: {
+    android: 'dev.pitbox.rnexample',
+    apple: 'dev.pitbox.rnexample',
+    scheme: 'pitboxexample-rn',
+    // `build`: made once per fingerprint of the native inputs (android/ or ios/, package manifests, lock files) and
+    // reused by every checkout and session; a JS edit reuses it, since the debug build takes its JS from the dev server.
+    build: {
+      android: {
+        command: `cd android && ./gradlew assembleDebug -q -PreactNativeArchitectures=${process.arch === 'arm64' ? 'arm64-v8a' : 'x86_64'}`,
+        output: 'android/app/build/outputs/apk/debug/app-debug.apk',
+      },
+    },
+  },
   devserver: {
     adapter: 'metro',
     bytecode: true,

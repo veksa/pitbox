@@ -30,6 +30,7 @@ android
   shutdown [--device d] [--force]   only a device this session holds; --force shuts down another's and names its holder
   device lease [--device d] [--purpose text] · device release [--device d] [--keep]   hold a device for this session · give it back (one pitbox booted shuts down unless --keep)
   install <apk|app> [--replace] --replace uninstalls an app signed with another key first
+  build [android|ios] [--no-install] [--replace]   the app's native build (app.build) for its current native inputs: from the cache every checkout and session shares, or built now (one build per fingerprint, one native build at a time on the machine); then installed on the session's device
   open [package|url] [--relaunch] [--fresh]   web: --relaunch keeps cookies and storage, --fresh starts from a clean profile
   stop-app | clear-app | uninstall [--pkg p]
   apps [filter]
@@ -128,7 +129,7 @@ export const parseArgs = (argv: string[]): Args => {
     } else if (a.startsWith('--')) {
       const [k, v] = a.slice(2).split('=', 2) as [string, string | undefined];
       if (v !== undefined) flags[k] = v;
-      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'audio', 'slim', 'stock', 'replace', 'relaunch', 'fresh', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep', 'keep-daemon'].includes(k)) flags[k] = argv[++i]!;
+      else if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith('--') && !['wipe', 'headless', 'audio', 'slim', 'stock', 'no-install', 'replace', 'relaunch', 'fresh', 'all', 'fix', 'json', 'lan', 'system', 'bounds', 'update', 'force', 'dry-run', 'keep', 'keep-daemon'].includes(k)) flags[k] = argv[++i]!;
       else flags[k] = true;
     } else {
       positional.push(a);
@@ -185,6 +186,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       if (rest[0] === 'unpair') return {method: 'unpair', params: {value: rest[1] ?? 'watch', device}};
       throw new Error('device lease [--device d] [--purpose text] | device release [--device d] [--keep] | device pair watch [<watch name|avd>] [--device phone] | device unpair watch');
     }
+    case 'build':
+      return {method: 'build', params: {...common, platform: rest[0], replace: flags.replace, ...(flags['no-install'] ? {install: false} : {})}};
     case 'install':
       return {method: 'install', params: {...common, apk: rest[0], replace: flags.replace}};
     case 'open':

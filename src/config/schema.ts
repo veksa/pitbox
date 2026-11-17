@@ -115,6 +115,16 @@ export const devserverSchema = z.object({
     .optional(),
 });
 
+const nativeBuildSchema = z
+  .object({
+    command: z.string(),
+    output: z.string(),
+    inputs: z.array(z.string()).optional(),
+    /** Seconds the build may take. Default 1800. */
+    timeout: z.number().positive().optional(),
+  })
+  .strict();
+
 export const configSchema = z.object({
   app: z
     .object({
@@ -134,6 +144,19 @@ export const configSchema = z.object({
        * phone has the phone's package, so `android` is needed only for a watch app of its own.
        */
       watch: z.object({apple: z.string().optional(), android: z.string().optional()}).optional(),
+      /**
+       * Native builds, made once per fingerprint of their native inputs and kept in a cache every checkout and session
+       * of the app shares (`build`): `{android: {command: 'cd android && ./gradlew assembleDebug', output:
+       * 'android/app/build/outputs/apk/debug/app-debug.apk'}, ios: {command: 'xcodebuild … build', output:
+       * 'build/Build/Products/Debug-iphonesimulator/MyApp.app'}}`. `inputs` (globs) defaults to the platform's folder,
+       * manifests, lock files and app config when a dev server serves the JS, else every file git sees.
+       */
+      build: z
+        .object({
+          android: nativeBuildSchema.optional(),
+          ios: nativeBuildSchema.optional(),
+        })
+        .optional(),
     })
     .optional(),
   /** Shell for project commands: `bash` (default; Git Bash on Windows), `sh`, `cmd` or a path. */

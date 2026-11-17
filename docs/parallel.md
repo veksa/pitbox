@@ -274,6 +274,33 @@ takes them off too.
 Not every daemon can go: some are called in a tight loop while they are off. With `sleepd` off, `healthd`,
 `mobiletimerd` and SpringBoard kept 4.5 cores busy for good; such daemons are never disabled, even when listed.
 
+## Native builds
+
+A native build is the slowest step of a pass, and the one parallel work repeats most: every worktree builds the
+same app, and two sessions on JS-only branches build the same native code twice, fighting for the CPU. `build`
+(`app.build` in the config) makes each build once:
+
+- **Fingerprinted.** The build is keyed by a hash of its native inputs: the command and output, the path and
+  content of every input file (as git lists them: tracked and untracked, not ignored). For an app whose JS comes from a dev server the JS is not an input: a JS edit keeps the build.
+- **Shared.** Builds are kept in `~/Library/Caches/pitbox/builds/<app id>/<platform>/<fingerprint>` (an .app is
+  cloned on APFS, costing no space), so every checkout and worktree of the app reuses them; the newest three per
+  platform stay. A fingerprint built before — a branch switched back, an edit undone — is installed at once.
+- **Single flight.** Sessions asking for the same missing fingerprint build it once: the first builds, the others
+  wait and take its result. Native builds of any app take turns on the machine (one `native-build` lock), as
+  several at once only make each slower and starve the devices.
+
+Measured on the React Native example (Android, warm Gradle daemon), `pitbox build android` from the command line:
+
+| Step | Result | Wall time |
+|---|---|---|
+| first build | built (Gradle) | 12.0 s |
+| again, same inputs | reused, installed | 0.24 s |
+| a JS edit (`App.tsx`) | reused | 0.08 s |
+| another worktree of the repository | reused | 0.26 s |
+| a native edit (`MainActivity.kt`) | new fingerprint, built | 1.3 s |
+| the native edit undone | the earlier build reused | 0.08 s |
+| one native edit in two worktrees, built at once | one Gradle run (10.0 s); the other waited 10.1 s and reused it | 10.1 s |
+
 ## Moving from a hand-made lock
 
 Teams that kept one machine-wide lock folder (`mkdir <lock dir>` before booting anything, an `owner` file inside,

@@ -577,6 +577,15 @@ export const formatResult = (method: string, r: unknown): string => {
         (x.note ? `\nnote: ${x.note}` : '') +
         (x.warning ? `\nwarning: ${x.warning}` : '')
       );
+    case 'build': {
+      const ago = (ms: number) => (ms < 90_000 ? `${Math.round(ms / 1000)}s` : ms < 5_400_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 3_600_000)} h`);
+      const what = x.reused
+        ? `reused ${x.platform} build ${x.fingerprint} (built ${ago(Date.now() - (x.builtAt as number))} ago in ${seconds(x.buildMs as number)})`
+        : `built ${x.platform} ${x.fingerprint} in ${seconds(x.buildMs as number)}`;
+      const waited = x.waitedMs ? ` · waited ${seconds(x.waitedMs as number)} for another build` : '';
+      const inst = x.installed as {on: string; ms: number} | undefined;
+      return `${what} · ${x.inputs} native inputs${waited}${inst ? `\ninstalled on ${inst.on} in ${seconds(inst.ms)}` : `\n${x.artifact}`}`;
+    }
     case 'install':
       return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
     case 'open':

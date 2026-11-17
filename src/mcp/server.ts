@@ -143,9 +143,9 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   // Typical answer for downloads: a line per file (name, size, type, path), the last 10.
   tool(
     'app',
-    'The app: open (or a deep link target; relaunch; web: relaunch keeps the profile, fresh starts clean), install <apk|.app> (replace: uninstall first), stop, clear, uninstall, logs, downloads (web: saved files; grep name; timeout s waits for a new one).',
-    {action: z.enum(['open', 'install', 'stop', 'clear', 'uninstall', 'logs', 'downloads']), target: opt.str(), relaunch: opt.bool(), fresh: opt.bool(), apk: opt.str(), replace: opt.bool(), lines: opt.num(), grep: opt.str(), timeout: opt.num(), device},
-    a => ({open: 'open', install: 'install', stop: 'stopApp', clear: 'clearApp', uninstall: 'uninstall', logs: 'appLogs', downloads: 'downloads'})[a.action as string]!,
+    'The app: open (or a deep link target; relaunch; web: relaunch keeps the profile, fresh starts clean), install <apk|.app> (replace: uninstall first), build (platform=android|ios: the native build from app.build for the current native inputs — reused from the cache every checkout and session shares when built before, else built once, one at a time on the machine — then installed unless install=false), stop, clear, uninstall, logs, downloads (web: saved files; grep name; timeout s waits for a new one).',
+    {action: z.enum(['open', 'install', 'build', 'stop', 'clear', 'uninstall', 'logs', 'downloads']), platform: opt.str(), install: opt.bool(), target: opt.str(), relaunch: opt.bool(), fresh: opt.bool(), apk: opt.str(), replace: opt.bool(), lines: opt.num(), grep: opt.str(), timeout: opt.num(), device},
+    a => ({open: 'open', install: 'install', build: 'build', stop: 'stopApp', clear: 'clearApp', uninstall: 'uninstall', logs: 'appLogs', downloads: 'downloads'})[a.action as string]!,
   );
   tool(
     'settings',
