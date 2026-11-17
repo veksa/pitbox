@@ -34,7 +34,7 @@ android
   stop-app | clear-app | uninstall [--pkg p]
   apps [filter]
   app-logs [-n 50] [--grep re] [--level E] [--all]
-  settings fontScale=1.3 dark=true animations=false size=1080x2400 density=420 locale=fr-FR grant=<perm> revoke=<perm>
+  settings fontScale=1.3 dark=true animations=false size=1080x2400 density=420 locale=fr-FR grant=<perm> revoke=<perm> reset=<perm>
   settings emulate="iPhone 15"|reset size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR   a web app (login kept)
   downloads [name-regex] [-n 10] [--wait s]   a web app's downloaded files; --wait waits for a new one
   network full|lte|umts|edge|gsm|offline|online
@@ -57,13 +57,24 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   wear tile add|show|remove <component> | face <package|component> | ambient on|off | home    watches
   widget add <name> [--app <label>] [--size 4x2|small|medium|large|extra large] | widget remove <name> | widget list [app]    home-screen widgets (Android 10+: Launcher3 / Pixel Launcher; iOS simulators: SpringBoard)
   car day|night|auto | drive [m/s] | park | rotary cw|ccw [n]    cars (driving blocks apps not made for it)
-  mic <file.wav>                plays a PCM WAV into an Android emulator's microphone in real time (boot it with --audio)
   xr look yaw[,pitch[,roll]] | move dx,dy,dz | spin yaw,pitch,roll[,ms] | drift dx,dy,dz[,ms] | recenter | env day|night | passthrough 0…1 | options | panel minimize|close|menu|info|spatial-audio|tidy|close-app    XR headsets
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · wait <n>s (a plain pause) · focus · shot [name] [--scale 0.4]
   focusmap [--max 150]           walk the screen with the D-pad: unreachable nodes, focus traps, moves that do not reverse
   visual <name> [--update] [--mask <selector>]   compare the screen with a baseline (stored on first use)
   media [selector]              is it playing? motion and brightness of a region, compared on the device
+
+media (Android emulators boot with --audio for sound; iOS simulators: screen capture, the photo library, permissions)
+  mic <file|tone [hz] [2s] [-12dB]|noise [white|pink|brown] [2s] [-30dB]|silence [2s]> [+ …] [noise=pink|<file> snr=10] [gain=-6dB] [repeat=n gap=1s] [wait=10s] [bg]
+                                into an emulator's microphone in real time, once an app records (any audio file through ffmpeg) · mic stop · mic status
+  capture start [screen|audio] [fps=30] [size=720x1280] [touches] [name=…] · capture stop [transcribe] · capture status
+                                the screen (with the device's sound on an emulator) or the sound alone, to a file
+  capture frames [file] [every=1s|count=6] [width=540] · capture check [file] sound|silence [min=1s max= level=-30 freq=880] | said "words"
+  camera status | image <file> | video <file> | scene wall|table <image>   an emulator's camera (boot --camera image:<file> first)
+  library add <file…>           photos and videos into the gallery (MediaStore on Android, simctl addmedia on iOS)
+  call incoming [number] | end | busy | hold | accept | list   a phone call on an emulator (audio focus is lost while it rings)
+  audio volume [music|ring|alarm|notification|call|system] <n|max|mute|unmute> | ringer normal|silent|vibrate | status
+  settings grant=mic|camera|photos|notifications|location revoke=… reset=…   short names for the permissions behind them
 
 push (no credentials: simctl push on simulators, the app's own FCM service on Android through the connect library)
   push title=… body=… [data='{"k":"v"}'] [badge= sound= category= threadId= collapseId= channel= image= tag= priority=high|normal silent=true]
@@ -234,6 +245,23 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'car':
     case 'mic':
       return {method: cmd, params: {device, value: rest.join(' ')}};
+    case 'camera':
+    case 'library':
+    case 'call':
+    case 'audio':
+      return {method: cmd, params: {device, value: rest.join(' ')}};
+    case 'capture': {
+      // capture start [screen|audio] [fps=30] [size=…] [touches] [name=…] · stop [transcribe] · frames [file] [every=…] · check [file] <expect…>
+      const [sub = 'status', ...args] = rest;
+      const opts = Object.fromEntries(args.filter(x => /^\w+=/.test(x)).map(x => [x.slice(0, x.indexOf('=')), x.slice(x.indexOf('=') + 1)]));
+      const plain = args.filter(x => !/^\w+=/.test(x));
+      if (sub === 'start') return {method: 'capture', params: {device, action: sub, what: plain.includes('audio') ? 'audio' : 'screen', touches: plain.includes('touches') || undefined, ...opts}};
+      if (sub === 'stop') return {method: 'capture', params: {device, action: sub, transcribe: plain.includes('transcribe') || undefined, ...opts}};
+      const file = plain[0] && /\.\w{2,4}$/.test(plain[0]) ? path.resolve(plain[0]) : undefined;
+      if (sub === 'frames') return {method: 'capture', params: {device, action: sub, file, ...opts}};
+      if (sub === 'check') return {method: 'capture', params: {device, action: sub, file, value: args.filter(x => x !== plain[0] || !file).join(' ') || 'sound'}};
+      return {method: 'capture', params: {device, action: sub}};
+    }
     case 'widget':
       // Each word the shell kept together stays one token: `widget add "World clock"`.
       return {method: 'widget', params: {device, value: rest.map(r => (/\s/.test(r) ? JSON.stringify(r) : r)).join(' '), app: flags.app, size: flags.size}};

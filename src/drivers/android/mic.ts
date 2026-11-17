@@ -67,6 +67,23 @@ export const endpointOf = (serial: string): EmulatorEndpoint => {
 };
 
 /**
+ * The apps recording from the microphone now, by package, from the RecordActivityMonitor part of `dumpsys audio`
+ * (`riid 87; active? true` and its `session:… -- pack:<package>` line).
+ */
+export const activeRecorders = (dumpsys: string): string[] => {
+  const start = dumpsys.indexOf('RecordActivityMonitor');
+  if (start < 0) return [];
+  const end = dumpsys.indexOf('Events log', start);
+  const lines = dumpsys.slice(start, end < 0 ? undefined : end).split(/\r?\n/);
+  const out: string[] = [];
+  lines.forEach((l, i) => {
+    if (!/active\? true/.test(l)) return;
+    out.push(/pack:([\w.]+)/.exec(lines[i + 1] ?? '')?.[1] ?? '?');
+  });
+  return out;
+};
+
+/**
  * The packets in runs of `per` (2 s of 100 ms packets), each run its own injectAudio call: emulator 37.2 stops passing
  * one long call's audio on to the guest after a few seconds (its capture fails with I/O errors and hears silence),
  * while calls of a couple of seconds back to back play through.
@@ -79,25 +96,45 @@ export const segments = <T>(parts: T[], per = 20): T[][] => {
 
 /**
  * Plays a WAV into the microphone of emulator `serial`, paced in real time (100 ms packets), and returns when it has
- * played (in calls of 2 s, see `segments`). What the app does not record while it plays is lost, as with a person speaking.
+ * played (in calls of 2 s, see `segments`) or `signal` stopped it. What the app does not record while it plays is lost, as with a person speaking.
+ *
+ * Emulator 37.2 ends its own process when audio is injected while no app records (a null audio forwarder): callers
+ * wait for a recording first (`activeRecorders`), and `listening` is asked before every further call. A recording
+ * that stops while a call plays on is safe.
  */
-export const injectWav = async (serial: string, wav: Buffer): Promise<{seconds: number; ms: number; grpc: number}> => {
+export const injectWav = async (
+  serial: string,
+  wav: Buffer,
+  opts: {signal?: AbortSignal; /** Asked before each call: false ends the sound there (no app records any more). */ listening?: () => Promise<boolean>} = {},
+): Promise<{seconds: number; ms: number; grpc: number; stopped?: boolean; unheard?: boolean}> => {
   const w = parseWav(wav);
   const ep = endpointOf(serial);
   const parts = chunks(w);
   const seconds = w.pcm.length / (w.rate * w.channels * (w.bits / 8));
   const t0 = Date.now();
+  let sent = 0;
   async function* paced(from: number, run: Buffer[]) {
     for (let i = 0; i < run.length; i++) {
-      const wait = t0 + (from + i) * 100 - Date.now();
+      const k = from + i;
+      const wait = t0 + k * 100 - Date.now();
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      if (opts.signal?.aborted) return;
       yield audioPacket(w, run[i]!, Date.now() * 1000);
+      sent = k + 1;
     }
   }
   let from = 0;
+  let unheard = false;
   for (const run of segments(parts)) {
+    if (opts.signal?.aborted) break;
+    // A new call while nothing records would end the emulator (see above).
+    if (from > 0 && opts.listening && !(await opts.listening())) {
+      unheard = true;
+      break;
+    }
     await call(ep, 'injectAudio', paced(from, run), run.length * 100 + 15_000);
     from += run.length;
   }
-  return {seconds: Math.round(seconds * 10) / 10, ms: Date.now() - t0, grpc: ep.port};
+  const stopped = sent < parts.length;
+  return {seconds: Math.round((stopped ? (sent * 100) / 1000 : seconds) * 10) / 10, ms: Date.now() - t0, grpc: ep.port, ...(stopped ? {stopped} : {}), ...(unheard ? {unheard} : {})};
 };

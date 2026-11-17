@@ -902,9 +902,15 @@ export class AndroidDriver {
     return tailLines(r.stdout.replace(/\r/g, ''), opts.lines ?? 50, opts.grep);
   }
 
+  /** A package manager command whose refusal (an unknown permission, one the app does not declare) is an error. */
+  async #pm(serial: string, command: string) {
+    const out = await this.shell(serial, `${command} 2>&1`);
+    if (/Exception|Unknown permission|not a changeable|has not requested/i.test(out)) throw new AndroidError(`${command}: ${out.trim().split('\n')[0]}`, 'the app must declare the permission in its manifest');
+  }
+
   async settings(
     serial: string,
-    s: {fontScale?: number; dark?: boolean; animations?: boolean; size?: string; density?: string; locale?: {pkg: string; locales: string}; grant?: {pkg: string; permission: string}; revoke?: {pkg: string; permission: string}},
+    s: {fontScale?: number; dark?: boolean; animations?: boolean; size?: string; density?: string; locale?: {pkg: string; locales: string}; grant?: {pkg: string; permission: string | string[]}; revoke?: {pkg: string; permission: string | string[]}; reset?: {pkg: string; permission: string | string[]}},
   ): Promise<string[]> {
     const done: string[] = [];
     if (s.fontScale !== undefined) {
@@ -932,13 +938,22 @@ export class AndroidDriver {
       await this.shell(serial, `cmd locale set-app-locales ${s.locale.pkg} --locales ${s.locale.locales}`);
       done.push(`app locale ${s.locale.locales}`);
     }
+    const perms = (p: string | string[]) => (Array.isArray(p) ? p : [p]);
     if (s.grant) {
-      await this.shell(serial, `pm grant ${s.grant.pkg} ${s.grant.permission}`);
-      done.push(`granted ${s.grant.permission}`);
+      for (const p of perms(s.grant.permission)) await this.#pm(serial, `pm grant ${s.grant.pkg} ${p}`);
+      done.push(`granted ${perms(s.grant.permission).join(', ')}`);
     }
     if (s.revoke) {
-      await this.shell(serial, `pm revoke ${s.revoke.pkg} ${s.revoke.permission}`);
-      done.push(`revoked ${s.revoke.permission}`);
+      for (const p of perms(s.revoke.permission)) await this.#pm(serial, `pm revoke ${s.revoke.pkg} ${p}`);
+      done.push(`revoked ${perms(s.revoke.permission).join(', ')}`);
+    }
+    if (s.reset) {
+      // Back to never asked: revoked, and the user-set and user-fixed flags gone, so the app's next request prompts.
+      for (const p of perms(s.reset.permission)) {
+        await this.#pm(serial, `pm revoke ${s.reset.pkg} ${p}`);
+        await this.#pm(serial, `pm clear-permission-flags ${s.reset.pkg} ${p} user-set user-fixed`);
+      }
+      done.push(`reset ${perms(s.reset.permission).join(', ')} (the app asks again)`);
     }
     // A font scale change reaches a running app only after any window change (an Android quirk); nudge it.
     if (s.fontScale !== undefined && !s.size && !s.density) {

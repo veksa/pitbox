@@ -23,7 +23,9 @@ export type FlowHost = {
   /** Where an image taken during a step goes (a held swipe's). */
   shotFile: (name: string) => string;
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
-  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car' | 'widget' | 'mic', value: string) => Promise<unknown>;
+  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car' | 'widget' | 'mic' | 'camera' | 'library' | 'call' | 'audio', value: string) => Promise<unknown>;
+  /** Records the screen or the sound (`start`, `stop`, `frames`), or checks the last recording's sound (`check`). */
+  capture?: (action: string, params: Record<string, string | boolean | undefined>) => Promise<Record<string, unknown>>;
   /** Starts a perf window (`reset`), or ends it with the numbers and their text as `perf` prints it. */
   perf: (reset: boolean, trace?: boolean) => Promise<{data: PerfData; text: string}>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
@@ -79,8 +81,24 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'xr':
     case 'car':
     case 'mic':
+    case 'camera':
+    case 'library':
+    case 'call':
+    case 'audio':
       await host.reshape(s.cmd, words(a));
       return;
+    case 'capture': {
+      if (!host.capture) throw new Error('capture is not available here');
+      const [action = '', ...rest] = a;
+      const opts = Object.fromEntries(rest.filter(x => /^\w+=/.test(x)).map(x => [x.slice(0, x.indexOf('=')), unquote(x.slice(x.indexOf('=') + 1))]));
+      const plain = rest.filter(x => !/^\w+=/.test(x)).map(unquote);
+      const params: Record<string, string | boolean | undefined> =
+        action === 'start' ? {what: plain.includes('audio') ? 'audio' : 'screen', touches: plain.includes('touches') || undefined, ...opts} : action === 'check' ? {value: rest.join(' ')} : {...opts, ...(plain.includes('transcribe') ? {transcribe: true} : {})};
+      const r = await host.capture(action, params);
+      if (action === 'stop') notes.push(`line ${s.line} (${s.text}): ${r.file}${r.audio ? ` · ${r.audio}` : ''}`);
+      if (action === 'frames') notes.push(`line ${s.line} (${s.text}): ${r.frames} frames in ${r.dir}`);
+      return;
+    }
     case 'widget':
       // The tokens as written: a quoted name stays one name, app= and size= stay apart.
       await host.reshape('widget', a.join(' '));
@@ -180,6 +198,13 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
         const r = checkBudgets(data, budgets);
         if (!r.ok) throw new Error(`over budget: ${r.lines.filter(l => !l.includes(' ✓ ')).join('; ')}\n${text}`);
         notes.push(`perf: ${r.lines.join(' · ')}`);
+        return;
+      }
+      if (a[0] === 'sound' || a[0] === 'silence' || a[0] === 'said') {
+        // The sound of the last capture (capture stop came before).
+        if (!host.capture) throw new Error('audio checks are not available here');
+        const r = await host.capture('check', {value: a.join(' ')});
+        notes.push(`line ${s.line} (${s.text}): ${r.audio}`);
         return;
       }
       const ui = await host.ui();

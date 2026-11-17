@@ -20,6 +20,9 @@
 //   tool sql query="select 1" contains "1"
 //   state signed-in              restore a named stand state (device snapshot + backend)
 //   widget add "Clock" app="MyApp" size=4x2 | widget remove "Clock"   (home-screen widgets)
+//   mic speech.wav [noise=pink snr=10] [bg] | mic tone 440 2s | mic stop   (an emulator's microphone, once the app records)
+//   capture start [screen|audio] [fps=30] [touches] | capture stop | expect sound min=1s | expect silence | expect said "hi"
+//   camera image card.png | library add photo.jpg | call incoming | call end | audio volume music max
 //   device Pixel_8               the following steps run on another device (several devices in one flow)
 //   visual home mask id=player   compare with a stored baseline (stored on the first run)
 //   sleep 500
@@ -121,7 +124,7 @@ export const parseFlow =(source: string, params: Record<string, string> = {}): S
       }
     });
 
-export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'press?', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'mic', 'widget', 'wait', 'expect', 'perf', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
+export const STEP_COMMANDS = ['open', 'open!', 'goto', 'as', 'press', 'press?', 'longpress', 'doubletap', 'fill', 'type', 'key', 'touch', 'swipe', 'scroll', 'mouse', 'rotary', 'touchpad', 'posture', 'rotate', 'window', 'wear', 'xr', 'car', 'mic', 'camera', 'library', 'call', 'audio', 'capture', 'widget', 'wait', 'expect', 'perf', 'tool', 'state', 'device', 'visual', 'sleep', 'screenshot', 'run'];
 
 /** Static check before running: unknown commands and missing arguments fail with the line, not mid-run. */
 export const validateFlow = (steps: Step[]): string[] => {
@@ -158,7 +161,14 @@ export const validateFlow = (steps: Step[]): string[] => {
       case 'xr':
       case 'car':
       case 'mic':
+      case 'camera':
+      case 'library':
+      case 'call':
+      case 'audio':
         need(1);
+        break;
+      case 'capture':
+        if (!['start', 'stop', 'frames', 'check'].includes(s.args[0] ?? '')) errors.push(`line ${s.line}: capture start [screen|audio] [fps=…] [size=…] [touches] | capture stop | capture frames [every=…] | capture check <sound|silence|said …>`);
         break;
       case 'widget':
         if (!['add', 'remove', 'list'].includes(s.args[0] ?? '') || (s.args[0] !== 'list' && s.args.length < 2)) errors.push(`line ${s.line}: widget add|remove <name> [app=<label>] [size=…] or widget list [app]`);

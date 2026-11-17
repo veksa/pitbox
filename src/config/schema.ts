@@ -156,6 +156,8 @@ export const configSchema = z.object({
   devserver: devserverSchema.optional(),
   actors: z.record(z.string(), actorSchema).optional(),
   tools: z.record(z.string(), toolSchema).optional(),
+  /** Media checks: `transcribe` is a command that prints what `{file}` (a 16 kHz mono WAV) says — `expect said "…"`. */
+  media: z.object({transcribe: z.string().optional()}).optional(),
   mocks: z
     .object({
       llm: z

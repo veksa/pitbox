@@ -12,8 +12,8 @@ import {DEVICE_PLACEHOLDERS, exposedPorts, type DevicePlaceholder, type ServiceC
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, isUnresolvedLink, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
-import {injectWav} from '../drivers/android/mic.ts';
 import {cameraArg, sameCamera} from '../drivers/android/camera.ts';
+import {MediaCenter, androidPermissions, appleService} from '../media/center.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
@@ -101,7 +101,6 @@ const APPLE_HAS_NO = {
   car: 'car is for Android Automotive: simctl has no CarPlay device to drive',
   wear: 'wear is for Wear OS: on an Apple Watch use rotary for the crown',
   window: 'window is for Android: Apple simulators have no desktop windows',
-  mic: 'mic is for Android emulators: an iOS simulator records from the Mac\'s own microphone, which takes no file',
 } as const;
 
 /**
@@ -130,6 +129,12 @@ export class Engine {
   #mock?: LlmMock;
   #gateway?: PushGateway;
   #pushError?: string;
+  readonly #media = new MediaCenter({
+    target: device => this.#target(device),
+    root: () => this.#loaded.root,
+    stateDir: () => this.#loaded.stateDir,
+    transcribe: () => this.config.media?.transcribe,
+  });
   readonly #pushes = new PushCenter({
     // A push from the gateway (an HTTP request) goes only to a device this session holds: it never takes one.
     target: async (device, opts) => {
@@ -443,6 +448,7 @@ export class Engine {
         return {data: data as PerfData, text: formatResult('perf', data)};
       },
       reshape: (op, value) => this.methods[op]({device, value}),
+      capture: (action, params) => this.methods.capture({device, action, ...params}) as Promise<Record<string, unknown>>,
       // The closures below read `device`, so switching it moves every following step to that device.
       setDevice: async name => {
         if (!(await this.#macTarget(name)) && !(await this.#webTarget(name))) await this.#target(name);
@@ -1776,6 +1782,7 @@ export class Engine {
     this.actors.stopAll();
     await this.#mock?.stop();
     this.#pushes.cancelScheduled();
+    await this.#media.stopAll();
     await this.#gateway?.stop();
     // The apps forget their watch pairing: nothing would relay their messages any more.
     await this.#wear?.close().catch(() => undefined);
@@ -2561,7 +2568,7 @@ export class Engine {
     settings: async (p: Params) => {
       const web = await this.#webTarget(str(p, 'device'));
       if (web) {
-        const unsupported = ['fontScale', 'animations', 'grant', 'revoke'].filter(k => p[k] !== undefined);
+        const unsupported = ['fontScale', 'animations', 'grant', 'revoke', 'reset'].filter(k => p[k] !== undefined);
         if (unsupported.length) throw new Error(`${unsupported.join(', ')}: not for a web app\nhint: a web app takes emulate=<preset>|reset, size=WxH|reset, density=<scale>, touch, mobile, userAgent, dark, locale`);
         const size = str(p, 'size');
         const emulate = str(p, 'emulate');
@@ -2585,8 +2592,9 @@ export class Engine {
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple') {
         const bundleId = str(p, 'pkg') ?? this.#appleApp(t.id);
-        const grant = str(p, 'grant');
-        const revoke = str(p, 'revoke');
+        const grant = str(p, 'grant') ? appleService(req(p, 'grant')) : undefined;
+        const revoke = str(p, 'revoke') ? appleService(req(p, 'revoke')) : undefined;
+        const reset = str(p, 'reset') ? appleService(req(p, 'reset')) : undefined;
         return {
           udid: t.id,
           applied: await t.s.settings(t.id, {
@@ -2598,12 +2606,16 @@ export class Engine {
             locale: str(p, 'locale'),
             grant: grant && bundleId ? {bundleId, service: grant} : undefined,
             revoke: revoke && bundleId ? {bundleId, service: revoke} : undefined,
+            reset: reset && bundleId ? {bundleId, service: reset} : undefined,
           }),
         };
       }
       const {a, id: serial} = t;
       const pkg = str(p, 'pkg') ?? this.#androidApp(serial);
-      const permission = str(p, 'grant') ?? str(p, 'revoke');
+      // A short name (mic, camera, photos, notifications, location) stands for the permissions behind it on this API level.
+      const named = ['grant', 'revoke', 'reset'].map(k => str(p, k)).find(Boolean);
+      const sdk = named ? Number((await a.shell(serial, 'getprop ro.build.version.sdk').catch(() => '34')).trim()) || 34 : 34;
+      const perm = (k: string) => (str(p, k) && pkg ? {pkg, permission: androidPermissions(req(p, k), sdk)} : undefined);
       return {
         serial,
         applied: await a.settings(serial, {
@@ -2613,8 +2625,9 @@ export class Engine {
           size: str(p, 'size'),
           density: str(p, 'density'),
           locale: str(p, 'locale') && pkg ? {pkg, locales: req(p, 'locale')} : undefined,
-          grant: str(p, 'grant') && pkg && permission ? {pkg, permission} : undefined,
-          revoke: str(p, 'revoke') && pkg && permission ? {pkg, permission} : undefined,
+          grant: perm('grant'),
+          revoke: perm('revoke'),
+          reset: perm('reset'),
         }),
       };
     },
@@ -2721,16 +2734,18 @@ export class Engine {
       }
       return this.#reshape(str(p, 'device'), 'xr', async (_a, serial) => xrView(serial, op!, rest.join(',')));
     },
-    // Plays a WAV into the emulator's microphone and answers once it has played (its length, in real time).
-    mic: async (p: Params) => {
-      const file = path.resolve(this.#loaded.root, req(p, 'value'));
-      if (!fs.existsSync(file)) throw new Error(`mic: no file ${file}`);
-      const t = await this.#target(str(p, 'device'));
-      if (t.platform === 'apple') throw new Error(APPLE_HAS_NO.mic);
-      const e = t.a.running().find(x => x.serial === t.id);
-      if (e?.audio === false) throw new Error(`mic: ${t.id} runs without audio (-no-audio): it has no microphone to feed\nhint: give it back (device action=release) and boot again with audio=true`);
-      return {serial: t.id, file: path.basename(file), ...(await injectWav(t.id, fs.readFileSync(file)))};
+    // Sound into an emulator's microphone (a file, a tone, noise, silence; noise mixed in at an SNR), played once an
+    // app records: it answers when it has played, or at once with `bg` (mic stop ends it).
+    mic: async (p: Params) => this.#media.mic(str(p, 'device'), req(p, 'value')),
+    // What the device shows and plays, to a file, and checks on its sound.
+    capture: async (p: Params) => {
+      const {action, device, ...rest} = p;
+      return this.#media.capture(str({device}, 'device'), String(action ?? 'status'), rest as Record<string, string | number | boolean | undefined>);
     },
+    camera: async (p: Params) => this.#media.camera(str(p, 'device'), str(p, 'value') ?? 'status'),
+    library: async (p: Params) => this.#media.library(str(p, 'device'), req(p, 'value')),
+    call: async (p: Params) => this.#media.call(str(p, 'device'), str(p, 'value') ?? 'list'),
+    audio: async (p: Params) => this.#media.audio(str(p, 'device'), str(p, 'value') ?? 'status'),
     car: async (p: Params) => {
       const [op, ...args] = req(p, 'value').split(' ').filter(Boolean);
       return this.#reshape(str(p, 'device'), 'car', (a, serial) => a.car(serial, op!, args));

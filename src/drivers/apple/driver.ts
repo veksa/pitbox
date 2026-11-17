@@ -502,7 +502,7 @@ export class AppleDriver {
 
   async settings(
     udid: string,
-    s: {fontScale?: number; dark?: boolean; animations?: boolean; size?: string; density?: string; locale?: string; grant?: {bundleId: string; service: string}; revoke?: {bundleId: string; service: string}},
+    s: {fontScale?: number; dark?: boolean; animations?: boolean; size?: string; density?: string; locale?: string; grant?: {bundleId: string; service: string}; revoke?: {bundleId: string; service: string}; reset?: {bundleId: string; service: string}},
   ): Promise<string[]> {
     const done: string[] = [];
     if (s.size || s.density) throw new AppleError('a simulator has a fixed screen size', 'boot another device type instead');
@@ -529,10 +529,10 @@ export class AppleDriver {
         done.push('locale reset (relaunch the app)');
       }
     }
-    for (const [action, p] of [['grant', s.grant], ['revoke', s.revoke]] as const) {
+    for (const [action, p] of [['grant', s.grant], ['revoke', s.revoke], ['reset', s.reset]] as const) {
       if (!p) continue;
       await this.#ok(['privacy', udid, action, p.service, p.bundleId], `privacy ${action}`);
-      done.push(`${action === 'grant' ? 'granted' : 'revoked'} ${p.service}`);
+      done.push(`${action === 'grant' ? 'granted' : action === 'revoke' ? 'revoked' : 'reset (the app asks again)'} ${p.service}`);
     }
     return done;
   }
