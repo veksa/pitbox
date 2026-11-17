@@ -400,3 +400,22 @@ describe('apple runner notice', () => {
     expect(runnerNotice({platform: 'visionos'})).toBeUndefined();
   });
 });
+
+describe('apple runner start', () => {
+  it('ends an earlier xcodebuild and terminates a runner app still on the simulator before a new one starts', async () => {
+    const {spawn} = await import('node:child_process');
+    const {RUNNER_BUNDLE_ID, clearStaleRunner} = await import('./drivers/apple/runner.ts');
+    const order: string[] = [];
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+    child.on('exit', () => order.push('xcodebuild ended'));
+    await clearStaleRunner({stop: async (udid: string, bundle: string) => void order.push(`terminate ${bundle} on ${udid}`)}, 'SIM-1', child);
+    expect(order).toEqual(['xcodebuild ended', `terminate ${RUNNER_BUNDLE_ID} on SIM-1`]);
+  });
+
+  it('terminates a runner app left by a daemon that is gone, with no xcodebuild of its own', async () => {
+    const {RUNNER_BUNDLE_ID, clearStaleRunner} = await import('./drivers/apple/runner.ts');
+    const stopped: string[] = [];
+    await clearStaleRunner({stop: async (_: string, bundle: string) => void stopped.push(bundle)}, 'SIM-1');
+    expect(stopped).toEqual([RUNNER_BUNDLE_ID]);
+  });
+});

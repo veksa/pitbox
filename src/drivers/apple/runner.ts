@@ -113,6 +113,28 @@ export const runnerNotice = (info: {platform?: string; animationWaitOff?: boolea
     ? "this Xcode's XCUITest no longer lets pitbox skip its wait for animations: a press into a system menu (or anything that keeps animating) waits a minute and can time out — use the menu's effect through the app, or an older Xcode"
     : undefined;
 
+/** The runner app's bundle id on the simulator (`PRODUCT_BUNDLE_IDENTIFIER` of the UI test target + `.xctrunner`). */
+export const RUNNER_BUNDLE_ID = 'dev.pitbox.runner.xctrunner';
+
+/**
+ * Clears what an earlier runner left on the simulator before a new one starts. `xcodebuild test-without-building`
+ * installs the runner app again and launches it; while a runner of an earlier xcodebuild still runs there (one
+ * stopped a moment ago and still on its way out, one left by a daemon that is gone), the install's termination of
+ * the old process takes the new one with it, and xcodebuild reports "Test crashed with signal kill before
+ * establishing connection" — a start that fails once and works on the next call.
+ */
+export const clearStaleRunner = async (driver: Pick<AppleDriver, 'stop'>, udid: string, child?: ChildProcess): Promise<void> => {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise<void>(r => child.once('exit', () => r()));
+    child.kill();
+    // xcodebuild ends its runner on SIGTERM; one that hangs on to it is killed outright.
+    const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
+    await exited;
+    clearTimeout(timer);
+  }
+  await driver.stop(udid, RUNNER_BUNDLE_ID).catch(() => undefined);
+};
+
 export class AppleRunner {
   readonly udid: string;
   /** Told once with the next action's answer (`DeviceUi`). */
@@ -146,11 +168,13 @@ export class AppleRunner {
   }
 
   async #start() {
-    this.#teardown();
+    const old = this.#child;
+    this.#teardown(false);
     this.#answered = false;
     const sim = (await this.#driver.simulators()).find(s => s.udid === this.udid);
     if (!sim || sim.state !== 'Booted') throw new AppleError(`simulator ${this.udid} is not booted`);
     const {xctestrun} = await buildRunner(sim.kind);
+    await clearStaleRunner(this.#driver, this.udid, old);
     const port = await freePort();
     const child = spawn('xcodebuild', ['test-without-building', '-xctestrun', xctestrun, '-destination', `id=${this.udid}`, '-only-testing:PitboxRunner/RunnerTests/testServe'], {
       env: {...process.env, TEST_RUNNER_PITBOX_PORT: String(port)},
@@ -166,7 +190,8 @@ export class AppleRunner {
     let exited = false;
     child.on('exit', () => {
       exited = true;
-      this.#teardown();
+      // An xcodebuild that ends after a newer one took its place leaves the newer connection alone.
+      if (this.#child === child) this.#teardown();
     });
     const deadline = Date.now() + 180_000;
     while (!this.alive) {
@@ -230,10 +255,11 @@ export class AppleRunner {
     this.#socket = undefined;
   }
 
-  #teardown() {
+  /** Drops the connection and, unless the caller waits for it itself (`clearStaleRunner`), ends xcodebuild. */
+  #teardown(kill = true) {
     this.#socket?.destroy();
     this.#socket = undefined;
-    if (this.#child && this.#child.exitCode === null) this.#child.kill();
+    if (kill && this.#child && this.#child.exitCode === null) this.#child.kill();
     this.#child = undefined;
   }
 
