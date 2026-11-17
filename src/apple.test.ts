@@ -419,3 +419,23 @@ describe('apple runner start', () => {
     expect(stopped).toEqual([RUNNER_BUNDLE_ID]);
   });
 });
+
+describe('apple hardware keys', () => {
+  it('names keys as USB HID usages, modifiers first', async () => {
+    const {hidChord} = await import('./drivers/apple/hid.ts');
+    expect(hidChord(62)).toBe('2c');
+    expect(hidChord(34)).toBe('09');
+    expect(hidChord(19)).toBe('52');
+    expect(hidChord(111)).toBe('29');
+    expect(hidChord(8)).toBe('1e');
+    expect(hidChord(7)).toBe('27');
+    expect(hidChord(34, 0x10000 | 0x30000)).toBe('e3+09');
+    expect(hidChord(31, 0x3000 | 0x41)).toBe('e0+e1+06');
+  });
+
+  it('has no usage for the device buttons a keyboard does not have', async () => {
+    const {hidChord} = await import('./drivers/apple/hid.ts');
+    expect(hidChord(3)).toBeUndefined();
+    expect(hidChord(4)).toBeUndefined();
+  });
+});

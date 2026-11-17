@@ -13,6 +13,7 @@ import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
 import {freePort} from '../../util/net.ts';
 import {run} from '../../util/proc.ts';
 import {AppleError, type AppleDriver, type SimKind} from './driver.ts';
+import {hid, hidChord} from './hid.ts';
 
 /** Must match `runnerVersion` in runners/apple/Runner/Commands.swift. */
 export const RUNNER_VERSION = 1;
@@ -135,14 +136,33 @@ export const clearStaleRunner = async (driver: Pick<AppleDriver, 'stop'>, udid: 
   await driver.stop(udid, RUNNER_BUNDLE_ID).catch(() => undefined);
 };
 
+/** Keys whose meaning the runner keeps on visionOS: home (the Digital Crown), enter and del into a text field. */
+const RUNNER_KEYS = new Set([3, 66, 67]);
+
+/**
+ * The simulator's screen as a downscaled JPEG, taken by simctl from outside the runner (which may be busy holding a
+ * finger down). On visionOS this is the whole view a person sees, the room with every window in it, not one window.
+ */
+export const simulatorShot = async (driver: Pick<AppleDriver, 'screenshot'>, udid: string, file: string, maxSide = 1280): Promise<string> => {
+  const png = `${file}.png`;
+  await driver.screenshot(udid, png);
+  const r = await run('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '70', '-Z', String(maxSide), png, '--out', file], {timeoutMs: 30_000});
+  fs.rmSync(png, {force: true});
+  if (r.code !== 0) throw new AppleError(`screenshot conversion failed: ${r.stderr.trim().split('\n').pop()}`);
+  return file;
+};
+
 export class AppleRunner {
   readonly udid: string;
+  /** XCUITest keeps no finger down between calls: a held swipe is held by the runner and the image taken here. */
+  readonly holdsSwipes = true;
   /** Told once with the next action's answer (`DeviceUi`). */
   readonly notices: string[] = [];
   /** The app the runner reads and drives when it is in front (the system shell otherwise). */
   bundleId?: string;
   readonly #driver: AppleDriver;
   #child?: ChildProcess;
+  #kind?: SimKind;
   #socket?: net.Socket;
   #buffer = '';
   #nextId = 1;
@@ -173,6 +193,7 @@ export class AppleRunner {
     this.#answered = false;
     const sim = (await this.#driver.simulators()).find(s => s.udid === this.udid);
     if (!sim || sim.state !== 'Booted') throw new AppleError(`simulator ${this.udid} is not booted`);
+    this.#kind = sim.kind;
     const {xctestrun} = await buildRunner(sim.kind);
     await clearStaleRunner(this.#driver, this.udid, old);
     const port = await freePort();
@@ -263,7 +284,31 @@ export class AppleRunner {
     this.#child = undefined;
   }
 
+  async #simKind(): Promise<SimKind | undefined> {
+    this.#kind ??= (await this.#driver.simulators()).find(s => s.udid === this.udid)?.kind;
+    return this.#kind;
+  }
+
   async call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args: Record<string, unknown> = {}, timeoutMs = 15_000): Promise<T> {
+    // A key on a headset goes in as the simulator's hardware keyboard, which the GameController framework (where a
+    // visionOS app reads keys for its 3D content) and UIKit both see; XCUITest's typeKey reaches UIKit only.
+    if (cmd === 'key' && !RUNNER_KEYS.has(Number(args.code)) && (await this.#simKind()) === 'xr') {
+      const chord = hidChord(Number(args.code), Number(args.meta ?? 0));
+      if (chord) {
+        await hid(this.udid, ['key', chord]);
+        return {} as T;
+      }
+    }
+    if (cmd === 'swipe' && Number(args.hold) > 0 && typeof args.shot === 'string') {
+      const {shot, ...rest} = args;
+      await this.start();
+      // The runner first finds what is under the start (a snapshot, up to half a second on visionOS), presses, drags
+      // at the swipe's velocity and holds: the image is taken about halfway through the hold.
+      const at = 500 + Number(args.duration ?? 300) + Number(args.hold) / 2;
+      const image = new Promise<string | undefined>(r => setTimeout(r, at)).then(() => simulatorShot(this.#driver, this.udid, shot).catch(() => undefined));
+      const [done, file] = await Promise.all([this.call<T>(cmd, rest, Math.max(timeoutMs, at + Number(args.hold) + 15_000)), image]);
+      return (file ? {...done, shot: file} : done) as T;
+    }
     await this.start();
     const id = this.#nextId++;
     const socket = this.#socket;

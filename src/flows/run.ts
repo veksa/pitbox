@@ -20,6 +20,8 @@ export type FlowHost = {
   setDevice: (name: string) => Promise<void>;
   visual: (name: string, masks: string[]) => Promise<{status: string; score?: number; regions?: number[][]; current?: string}>;
   screenshot: (name?: string, full?: boolean) => Promise<string>;
+  /** Where an image taken during a step goes (a held swipe's). */
+  shotFile: (name: string) => string;
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
   reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car' | 'widget', value: string) => Promise<unknown>;
   /** Starts a perf window (`reset`), or ends it with the numbers and their text as `perf` prints it. */
@@ -142,8 +144,13 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
       await (await host.ui()).touch(a[0] as 'down' | 'move' | 'up', a.slice(1).join(' ') || undefined);
       return;
     case 'swipe': {
-      const ms = a.length > 1 && /^\d+$/.test(a[a.length - 1]!) && !a[0]!.includes(',') ? Number(a[a.length - 1]) : 300;
-      await (await host.ui()).swipe(a[0]!, ms);
+      // `hold=<ms>`: the finger stays down at the end and the screen is taken meanwhile (saved with the run's shots).
+      const held = a.find(x => /^hold=\d+$/.test(x));
+      const b = a.filter(x => x !== held);
+      const ms = b.length > 1 && /^\d+$/.test(b[b.length - 1]!) ? Number(b[b.length - 1]) : 300;
+      const hold = held ? Number(held.slice(5)) : 0;
+      const r = await (await host.ui()).swipe(b[0]!, ms, hold ? {hold, shot: host.shotFile(`held-line-${s.line}`)} : {});
+      if (r.shot) notes.push(`line ${s.line} (${s.text}): shot while held: ${r.shot}`);
       return;
     }
     case 'scroll':

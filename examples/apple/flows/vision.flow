@@ -1,7 +1,8 @@
 # What a headset app has beyond its window: a second window, an ornament on the window's edge with a system menu in
 # it (its items are a platter of their own, which drops taps), a context menu by a long press, and a space around
 # the user with 3D content that names itself for accessibility (XCUITest sees it but cannot press it: it has no
-# activation point).
+# activation point). Keys come from the simulator's hardware keyboard, where the GameController framework reads
+# them, and a slider is dragged and held under the finger while the screen is taken.
 open!
 wait id=title 30
 press id=open_window
@@ -29,6 +30,18 @@ expect text="quality High"
 press id=quality_menu
 press text="Low"
 expect text="quality Low"
+key space
+expect text="key space"
+key f
+expect text="key f"
+key left
+expect text="key left"
+key escape
+expect text="key escape"
+expect text="not scrubbed"
+# The slider (at 16,171 to 316,203 in the main window): its knob follows the drag's length, to the left here.
+swipe 166,187,76,187 300 hold=2000
+expect text="held 2 s"
 key home
 open
 wait id=title 20

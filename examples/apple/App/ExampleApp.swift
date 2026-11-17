@@ -6,6 +6,7 @@ import SwiftUI
 import AVFoundation
 #endif
 #if os(visionOS)
+import GameController
 import RealityKit
 #endif
 
@@ -189,6 +190,42 @@ struct MainView: View {
 }
 
 #if os(visionOS)
+/// The last key a hardware keyboard sent, read as a headset app reads keys for its 3D content (a space has no
+/// focused view to send them to): through the GameController framework.
+@MainActor final class Keys: ObservableObject {
+  static let shared = Keys()
+  @Published var last = "none"
+  private var started = false
+
+  func start() {
+    if started { return }
+    started = true
+    NotificationCenter.default.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { _ in MainActor.assumeIsolated { self.attach() } }
+    attach()
+  }
+
+  private func attach() {
+    GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = { _, _, code, pressed in
+      guard pressed else { return }
+      Task { @MainActor in self.last = Self.name(code) }
+    }
+  }
+
+  private static func name(_ code: GCKeyCode) -> String {
+    switch code {
+    case .spacebar: "space"
+    case .upArrow: "up"
+    case .downArrow: "down"
+    case .leftArrow: "left"
+    case .rightArrow: "right"
+    case .escape: "escape"
+    case .keyF: "f"
+    case .keyC: "c"
+    default: "code \(code.rawValue)"
+    }
+  }
+}
+
 /// A headset's own surfaces: another window, a space with 3D content, and an ornament on the main window's edge.
 struct VisionControls: View {
   @Environment(\.openWindow) private var openWindow
@@ -198,9 +235,20 @@ struct VisionControls: View {
   @State private var space = "no space"
   @State private var ornament = "ornament not pressed"
   @State private var quality = "Auto"
+  @State private var scrub = 0.2
+  @State private var scrubbing: Date?
+  @State private var scrubbed = "not scrubbed"
+  @ObservedObject private var keys = Keys.shared
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
+      // A Mac keyboard in the Simulator window is a hardware keyboard to the app.
+      Text("key \(keys.last)").accessibilityIdentifier("key_result").onAppear { keys.start() }
+      // A scrubber held under the finger: how long it was held says the finger stayed down.
+      Slider(value: $scrub, in: 0...1) { editing in
+        if editing { scrubbing = Date() } else if let since = scrubbing { scrubbed = "held \(Int(Date().timeIntervalSince(since))) s" }
+      }.accessibilityIdentifier("scrub").frame(width: 300)
+      Text(scrubbed).accessibilityIdentifier("scrub_result")
       Button("Open window") { openWindow(id: "second") }.accessibilityIdentifier("open_window")
       Button("Close window") { dismissWindow(id: "second") }.accessibilityIdentifier("close_window")
       Button("Enter space") {

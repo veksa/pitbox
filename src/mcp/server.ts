@@ -164,11 +164,11 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   tool('fill', 'Replace a field\'s text.', {target, text: z.string(), device}, 'fill');
   tool('type', 'Append text to the focused field.', {text: z.string(), device}, 'type');
   tool('touchpad', 'The temple touchpad of AI glasses: forward/back/up/down swipes move focus, tap presses.', {gesture: z.enum(['forward', 'back', 'up', 'down', 'tap']), device}, 'touchpad');
-  tool('key', 'Keys: back home up down left right center enter menu, media/TV (play next channel_up guide …), watch (stem_1), combos (ctrl+c), or keycodes.', {keys: z.array(z.string()), device}, 'uiKey');
+  tool('key', 'Keys: back home up down left right center enter menu, media/TV (play next channel_up guide …), watch (stem_1), combos (ctrl+c), or keycodes. On Vision Pro, keyboard keys (space, arrows, letters, escape, combos) come from the simulator\'s hardware keyboard, as an app\'s GameController reads them; the answer is the usual one line.', {keys: z.array(z.string()), device}, 'uiKey');
   tool(
     'swipe',
-    'Swipe up/down/left/right or "x1,y1,x2,y2" (duration ms = velocity); with until, scroll until the target shows; via=wheel (mouse) or rotary (watch crown) turns steps notches up/down instead.',
-    {direction: z.string(), duration: opt.num(), until: opt.str(), via: z.enum(['wheel', 'rotary']).optional(), steps: opt.num(), target: opt.str(), device},
+    'Swipe up/down/left/right or "x1,y1,x2,y2" (duration ms = velocity); with until, scroll until the target shows; via=wheel (mouse) or rotary (watch crown) turns steps notches up/down instead. hold=ms keeps the finger down at the end and takes the screen halfway through (a scrubber\'s preview under the finger): the answer adds one line, the image\'s path (a JPEG, about 100–300 KB; read it only if needed).',
+    {direction: z.string(), duration: opt.num(), until: opt.str(), via: z.enum(['wheel', 'rotary']).optional(), steps: opt.num(), target: opt.str(), hold: opt.num(), device},
     a => (a.via === 'wheel' ? 'mouse' : a.via === 'rotary' ? 'rotary' : a.until ? 'scroll' : 'swipe'),
     a => (a.via === 'wheel' ? {...a, action: 'wheel'} : a),
   );

@@ -459,6 +459,7 @@ export class Engine {
       signIn: user => runFlow(this.#flowHost(device), this.#loadFlow(this.#needSignIn()), {user}),
       tool: (name, params) => this.methods.tool({name, params}) as Promise<{code: number | null; output: string}>,
       loadFlow: name => this.#loadFlow(name),
+      shotFile: name => this.#shotFile(name),
       visual: async (name, masks) => (await this.ui(device)).visual(variant ? `${name}@${variant}` : name, this.#visualDir(), {masks}),
       state: async name => {
         await this.methods.stateRestore({name, device});
@@ -2741,7 +2742,10 @@ export class Engine {
       return this.#reshape(str(p, 'device'), 'window', (a, serial) => a.window(serial, this.#pkg(p), mode!, rest.join(',') || str(p, 'bounds')));
     },
     touch: async (p: Params) => (await this.ui(str(p, 'device'))).touch(req(p, 'phase') as 'down' | 'move' | 'up', str(p, 'target')),
-    swipe: async (p: Params) => (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300),
+    swipe: async (p: Params) => {
+      const hold = num(p, 'hold');
+      return (await this.ui(str(p, 'device'))).swipe(req(p, 'direction'), num(p, 'duration') ?? 300, hold ? {hold, shot: this.#shotFile(str(p, 'name') ?? `held-${new Date().toISOString().replace(/[:.]/g, '-')}`)} : {});
+    },
     scroll: async (p: Params) => (await this.ui(str(p, 'device'))).scrollUntil(str(p, 'direction') ?? 'down', req(p, 'until'), num(p, 'max') ?? 25),
 
     wait: async (p: Params) => {

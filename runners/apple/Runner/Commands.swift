@@ -647,22 +647,31 @@ final class Commands {
     #else
     let dx = double(req, "x2", 0) - double(req, "x1", 0)
     let dy = double(req, "y2", 0) - double(req, "y1", 0)
+    // A held swipe stays down at its end (a scrubber shows its preview while the finger is there); the host takes
+    // the screen meanwhile, from outside this busy runner.
+    let hold = max(0, double(req, "hold", 0) / 1000)
     #if os(visionOS)
     // A drag between points does not move a slider on visionOS either (and `adjust(toNormalizedSliderPosition:)`
     // fails: a SwiftUI slider there reports no scrubber positions): the drag is made on the slider under the start,
     // from its own coordinates. A visionOS slider follows a pinch-drag by its length, as an indirect one does, so the
-    // knob moves by x2 - x1 wherever the drag starts.
+    // knob moves by x2 - x1 wherever the drag starts — and it starts on the slider's left quarter, because a drag
+    // that starts on its right half never reaches it (the knob stays where it was).
     let start = CGPoint(x: double(req, "x1", 0), y: double(req, "y1", 0))
     if let s = element(at: start, req, where: { $0 == .slider })?.element {
       let f = s.frame
-      let at = { (x: Double, y: Double) in s.coordinate(withNormalizedOffset: CGVector(dx: (x - f.minX) / f.width, dy: (y - f.minY) / f.height)) }
-      let seconds = max(0.05, double(req, "duration", 300) / 1000)
-      let velocity = max(100, (dx * dx + dy * dy).squareRoot() / seconds)
-      at(start.x, start.y).press(forDuration: 0.1, thenDragTo: at(double(req, "x2", 0), double(req, "y2", 0)), withVelocity: XCUIGestureVelocity(CGFloat(velocity)), thenHoldForDuration: 0.1)
+      let from = s.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+      let to = s.coordinate(withNormalizedOffset: CGVector(dx: 0.25 + dx / f.width, dy: 0.5 + dy / f.height))
+      if hold > 0 {
+        let seconds = max(0.05, double(req, "duration", 300) / 1000)
+        from.press(forDuration: 0.3, thenDragTo: to, withVelocity: XCUIGestureVelocity(CGFloat(max(100, (dx * dx + dy * dy).squareRoot() / seconds))), thenHoldForDuration: hold)
+      } else {
+        from.press(forDuration: 0.3, thenDragTo: to)
+      }
       return ["slider": true]
     }
-    // A drag between points does not scroll on visionOS; the scroller under the start swipes itself.
-    if let e = scroller(at: CGPoint(x: double(req, "x1", 0), y: double(req, "y1", 0)), req) {
+    // A drag between points does not scroll on visionOS; the scroller under the start swipes itself (a held swipe
+    // is not a scroll).
+    if hold == 0, let e = scroller(at: CGPoint(x: double(req, "x1", 0), y: double(req, "y1", 0)), req) {
       if abs(dy) >= abs(dx) { dy < 0 ? e.swipeUp(velocity: .slow) : e.swipeDown(velocity: .slow) } else { dx < 0 ? e.swipeLeft(velocity: .slow) : e.swipeRight(velocity: .slow) }
       return [:]
     }
@@ -671,7 +680,7 @@ final class Commands {
     let to = coordinate(req, x: "x2", y: "y2")
     let seconds = max(0.05, double(req, "duration", 300) / 1000)
     let velocity = max(100, (dx * dx + dy * dy).squareRoot() / seconds)
-    from.press(forDuration: 0.03, thenDragTo: to, withVelocity: XCUIGestureVelocity(CGFloat(velocity)), thenHoldForDuration: 0)
+    from.press(forDuration: 0.03, thenDragTo: to, withVelocity: XCUIGestureVelocity(CGFloat(velocity)), thenHoldForDuration: hold)
     return [:]
     #endif
   }

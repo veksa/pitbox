@@ -15,7 +15,7 @@ const LATE_EFFECT_MS = 600;
 /** A screen whose short side is below this (in press coordinates) is a watch's: its screenshot is not downscaled. */
 const SMALL_SCREEN = 500;
 
-export type ActResult = {action: string; target?: string; /** The flow step that repeats the action, when it differs from what the action was given. */ step?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
+export type ActResult = {action: string; target?: string; /** An image of the screen taken during the action (a held swipe). */ shot?: string; /** The flow step that repeats the action, when it differs from what the action was given. */ step?: string; /** A hint when the action did something unexpected. */ note?: string; diff: SnapshotDiff; idle: boolean; ms: number; trace?: string; phases?: Record<string, number>; crashes?: AppEvent[]};
 
 export type UiHooks = {
   /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
@@ -42,6 +42,12 @@ export type UiRunner = {
   stop(): Promise<void>;
   /** What the runner changed on its own since the last action (a Mac app's followed window closed), told in its note. */
   notices?: string[];
+  /**
+   * Holds a swipe at its end itself and takes the screen image meanwhile (`swipe` with `hold` and `shot`), for a
+   * runner that cannot keep a finger down between calls (XCUITest): the image comes from outside the runner, which
+   * is busy holding.
+   */
+  holdsSwipes?: boolean;
 };
 
 /** Crashes of the app under test, collected in the background. */
@@ -638,7 +644,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.last = undefined;
   }
 
-  async swipe(spec: string, durationMs = 300): Promise<ActResult> {
+  async swipe(spec: string, durationMs = 300, opts: {hold?: number; shot?: string} = {}): Promise<ActResult> {
     const t0 = this.#begin();
     const before = this.last ?? (await this.snapshot());
     this.#front(before);
@@ -655,9 +661,41 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const coords = dirs[spec] ?? (spec.split(/[\s,]+/).map(Number) as [number, number, number, number]);
     if (coords.length !== 4 || coords.some(n => !Number.isFinite(n))) throw new Error('swipe up|down|left|right or "x1,y1,x2,y2"');
     const [x1, y1, x2, y2] = coords.map(Math.round) as [number, number, number, number];
-    await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
-    this.record(`swipe ${spec}${durationMs !== 300 ? ` ${durationMs}` : ''}`);
-    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
+    const hold = Math.max(0, Math.round(opts.hold ?? 0));
+    let shot: string | undefined;
+    if (hold > 0) shot = await this.#heldSwipe(x1, y1, x2, y2, durationMs, hold, opts.shot);
+    else await this.runner.call('swipe', {x1, y1, x2, y2, duration: durationMs}, durationMs + 10_000);
+    this.record(`swipe ${spec}${durationMs !== 300 || hold ? ` ${durationMs}` : ''}${hold ? ` hold=${hold}` : ''}`);
+    const note = hold && !shot && opts.shot ? 'no image of the held finger: the screen could not be taken while the runner held it' : undefined;
+    return {action: 'swipe', target: spec, ...(await this.#settle(before)), ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(shot ? {shot} : {}), ...(await this.#end(t0, note))};
+  }
+
+  /**
+   * A swipe that stops at its end with the finger still down for `hold` ms, and the screen as it is then (a
+   * scrubber's preview under the finger, a drag's drop target), taken halfway through the hold. A runner that keeps
+   * a finger between calls does it as `touch` down, move and up; one that cannot (XCUITest) holds by itself while
+   * the image is taken outside it.
+   */
+  async #heldSwipe(x1: number, y1: number, x2: number, y2: number, durationMs: number, hold: number, file?: string): Promise<string | undefined> {
+    if (this.runner.holdsSwipes) {
+      const r = await this.runner.call<{shot?: string}>('swipe', {x1, y1, x2, y2, duration: durationMs, hold, shot: file}, durationMs + hold + 20_000);
+      return r.shot;
+    }
+    await this.runner.call('touch', {phase: 'down', x: x1, y: y1});
+    try {
+      // Through points on the way, so a control that follows the finger (a slider) sees a drag, not a jump.
+      const steps = Math.max(1, Math.round(durationMs / 50));
+      for (let i = 1; i <= steps; i++) {
+        await this.runner.call('touch', {phase: 'move', x: Math.round(x1 + ((x2 - x1) * i) / steps), y: Math.round(y1 + ((y2 - y1) * i) / steps)});
+        await new Promise(r => setTimeout(r, durationMs / steps));
+      }
+      await new Promise(r => setTimeout(r, hold / 2));
+      const shot = file ? (await this.screenshot(file)).file : undefined;
+      await new Promise(r => setTimeout(r, hold / 2));
+      return shot;
+    } finally {
+      await this.runner.call('touch', {phase: 'up', x: x2, y: y2}).catch(() => undefined);
+    }
   }
 
   /**

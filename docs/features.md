@@ -27,8 +27,13 @@ compact text.
 - **Apple simulators** — iPhone, foldable iPhone, iPad, Apple TV, Apple Watch and Vision Pro, through `simctl`
   and an XCUITest runner built on the Mac on first use. A Mac can serve its simulators to pitbox on another
   machine (`pitbox serve-devices`). On Vision Pro: windows, ornaments, attachments, system menus (an item the
-  menu drops is pressed again) and sliders (a swipe drags them by its length); a touch on a space's 3D content
-  reaches no window and is an error, not a silent tap.
+  menu drops is pressed again), sliders (a swipe drags them by its length, and `hold` keeps the finger down at the
+  end) and keys from the simulator's hardware keyboard (`space`, arrows, letters, `escape`, combinations: what an
+  app reads through GameController, which XCUITest's own keys never reach). Out of reach, because the simulator
+  gives a test no way in: a tap, double tap or pinch-drag on a space's 3D content (XCUITest sees the entity but
+  it has no activation point, a tap at its coordinates reaches no window and is reported as an error, and the
+  simulator's pointer messages arrive without a target), and game controllers (the simulator accepts a gamepad
+  message, and no app receives it).
 - **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots,
   selectors, actions, checks and flows as on a phone, page errors reported with the action that caused them.
   One flow can switch between a web app and a phone. A phone in the browser — a Playwright device preset or a

@@ -36,10 +36,12 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
 - **Jump, do not walk:** `goto route=…` opens a screen by deep link; `as user=…` signs in;
   `state action=restore name=…` brings back a saved device + backend state in seconds.
 - **Gestures:** `touch` holds a finger across calls (inspect a scrubber while it is held); `swipe` takes a
-  duration for velocity, and with `until` scrolls to a target; `press kind=doubletap` is a real double tap.
+  duration for velocity, and with `until` scrolls to a target; `swipe hold=<ms>` keeps the finger down at the end
+  and takes the screen meanwhile (the answer adds one line, the image's path); `press kind=doubletap` is a real
+  double tap.
 - **Apple simulators:** the same tools. `device` takes a simulator name or udid, `install` a `.app` from a
   simulator build. The first UI call builds and starts the XCUITest runner (about 15 s once, then cached).
-  XCUITest cannot hold a finger between calls (`touch`), and `network`, `perf`, display size and animations
+  XCUITest cannot hold a finger between calls (`touch`; a held `swipe` can), and `network`, `perf`, display size and animations
   are reported as unsupported. iOS has no back key: `key back` does what a person does instead — presses the
   navigation bar's back button, or swipes in from the left edge when there is none — and its note says which.
   Apple TV has no touch: drive it with `key`. On iPhone and iPad simulators

@@ -48,7 +48,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   snapshot [--system]           the screen as short lines with refs (@e12)
   press|longpress|doubletap <@ref | id=… | text=… | label=… | words | x,y>
   fill <selector> <text> · type <text> · key back|home|up|down|left|right|center|enter|…|<keycode> …
-  swipe up|down|left|right|x1,y1,x2,y2 [ms] · scroll down until <selector>
+  swipe up|down|left|right|x1,y1,x2,y2 [ms] [--hold ms] · scroll down until <selector>   --hold: the finger stays down at the end, the screen is taken meanwhile
   mouse right|hover <selector> · mouse wheel up|down [steps] [selector]    tablets, desktops, headsets
   rotary up|down [steps]        a watch crown or bezel
   touchpad forward|back|up|down|tap    the temple touchpad of AI glasses (moves focus)
@@ -210,7 +210,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'touch':
       return {method: 'touch', params: {device, phase: rest[0], target: rest.slice(1).join(' ') || undefined}};
     case 'swipe':
-      return {method: 'swipe', params: {device, direction: rest[0], duration: rest[1]}};
+      return {method: 'swipe', params: {device, direction: rest[0], duration: rest[1], hold: flags.hold}};
     case 'mouse': {
       // mouse right|hover <target> · mouse wheel up|down [steps] [target]
       if (rest[0] === 'wheel') {
