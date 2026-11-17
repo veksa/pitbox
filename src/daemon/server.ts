@@ -154,8 +154,11 @@ const start = async (configFile: string | undefined, project: {file: string; sta
 `));
   process.on('unhandledRejection', e => process.stderr.write(`${stamp()} unhandled rejection: ${(e as Error)?.stack ?? e}
 `));
-  process.on('exit', code => process.stderr.write(`${stamp()} daemon exiting with ${code}
-`));
+  process.on('exit', code => {
+    engine.restoreMicInputSync();
+    process.stderr.write(`${stamp()} daemon exiting with ${code}
+`);
+  });
   process.on('SIGINT', () => void shutdown(0));
   process.on('SIGTERM', () => void shutdown(0));
   process.stdout.write(`pitbox daemon ${process.pid} on 127.0.0.1:${address.port} for ${root}\n`);

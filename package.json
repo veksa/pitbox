@@ -26,6 +26,7 @@
     "dist",
     "docs",
     "runners/android/pitbox-runner.apk",
+    "runners/apple/Audio",
     "runners/apple/Fold",
     "runners/apple/Hid",
     "runners/apple/Host",

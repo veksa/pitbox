@@ -27,7 +27,14 @@ export type SoundSpec = {
 export type MicCommand =
   | {op: 'stop'}
   | {op: 'status'}
-  | {op: 'play'; spec: SoundSpec; /** Answer at once and play on; `mic stop` ends it. */ bg: boolean; /** Seconds to wait for the app to start recording. */ wait?: number};
+  | {op: 'wait'}
+  | {
+      op: 'play';
+      spec: SoundSpec;
+      /** Answer at once and play on; `mic stop` ends it. */ bg: boolean;
+      /** Seconds to wait for the app to start recording. */ wait?: number;
+      /** iOS: switch the Mac's input even while another app records from it. */ force?: boolean;
+    };
 
 const COLORS = ['white', 'pink', 'brown'];
 const isSecs = (t: string) => /^\d+(\.\d+)?(ms|s|m)$/.test(t);
@@ -68,20 +75,23 @@ export const parsePart = (words: string[]): SoundPart => {
 };
 
 /**
- * A `mic` value: `stop`, `status`, or a sound — parts joined with `+` and options anywhere as `key=value`:
+ * A `mic` value: `stop`, `status`, `wait` (until the sound in the background has played), or a sound — parts joined with `+` and options anywhere as `key=value`:
  * `noise=pink|white|brown|<file>` with `snr=<dB>`, `gain=<dB>`, `repeat=<n>`, `gap=<secs>`, `bg` (answer at once),
- * `wait=<secs>` (for the app to start recording).
+ * `wait=<secs>` (for the app to start recording), `force` (iOS: switch the Mac's input although another app records
+ * from it).
  */
 export const parseMic = (value: string): MicCommand => {
   const tokens = value.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 1 && (tokens[0] === 'stop' || tokens[0] === 'status')) return {op: tokens[0]};
+  if (tokens.length === 1 && (tokens[0] === 'stop' || tokens[0] === 'status' || tokens[0] === 'wait')) return {op: tokens[0]};
   const spec: SoundSpec = {parts: []};
   let bg = false;
+  let force = false;
   let wait: number | undefined;
   const plain: string[] = [];
   for (const t of tokens) {
     const eq = t.indexOf('=');
     if (t === 'bg' || t === '&') bg = true;
+    else if (t === 'force') force = true;
     else if (eq > 0) {
       const k = t.slice(0, eq);
       const v = t.slice(eq + 1);
@@ -92,7 +102,7 @@ export const parseMic = (value: string): MicCommand => {
       else if (k === 'gap') spec.gap = parseSecs(v);
       else if (k === 'wait') wait = parseSecs(v);
       else if (k === 'bg') bg = v !== 'false';
-      else throw new Error(`mic: unknown option ${k} (noise, snr, gain, repeat, gap, wait, bg)`);
+      else throw new Error(`mic: unknown option ${k} (noise, snr, gain, repeat, gap, wait, bg, force)`);
     } else plain.push(t);
   }
   const groups: string[][] = [[]];
@@ -103,7 +113,7 @@ export const parseMic = (value: string): MicCommand => {
   spec.parts = groups.filter(g => g.length).map(parsePart);
   if (!spec.parts.length) throw new Error('mic: nothing to play (a file, tone, noise or silence)');
   if (spec.snr !== undefined && !spec.noise) spec.noise = 'white';
-  return {op: 'play', spec, bg, wait};
+  return {op: 'play', spec, bg, wait, ...(force ? {force} : {})};
 };
 
 /** The sound as PCM at `rate` Hz mono: files read (through ffmpeg unless a WAV), parts joined, noise mixed in. */

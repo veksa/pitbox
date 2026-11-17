@@ -65,8 +65,8 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   media [selector]              is it playing? motion and brightness of a region, compared on the device
 
 media (Android emulators boot with --audio for sound; iOS simulators: screen capture, the photo library, permissions)
-  mic <file|tone [hz] [2s] [-12dB]|noise [white|pink|brown] [2s] [-30dB]|silence [2s]> [+ …] [noise=pink|<file> snr=10] [gain=-6dB] [repeat=n gap=1s] [wait=10s] [bg]
-                                into an emulator's microphone in real time, once an app records (any audio file through ffmpeg) · mic stop · mic status
+  mic <file|tone [hz] [2s] [-12dB]|noise [white|pink|brown] [2s] [-30dB]|silence [2s]> [+ …] [noise=pink|<file> snr=10] [gain=-6dB] [repeat=n gap=1s] [wait=10s] [bg] [force]
+                                into an emulator's microphone, or a simulator's through the Mac's loopback input (BlackHole), in real time once an app records (any audio file through ffmpeg) · mic wait · mic stop · mic status
   capture start [screen|audio] [fps=30] [size=720x1280] [touches] [name=…] · capture stop [transcribe] · capture status
                                 the screen (with the device's sound on an emulator) or the sound alone, to a file
   capture frames [file] [every=1s|count=6] [width=540] · capture check [file] sound|silence [min=1s max= level=-30 freq=880] | said "words"
@@ -443,6 +443,16 @@ export const main = async () => {
   }
   const {method, params} = toCall(args);
   const client = await connect({config});
+  // Ctrl-C on a sound that plays ends it in the daemon too (on iOS that puts the Mac's input back), not only here.
+  if (method === 'mic' && micPlaysHere(String((params as {value?: string}).value ?? ''))) {
+    process.once('SIGINT', () => {
+      void client
+        .call('mic', {device: (params as {device?: string}).device, value: 'stop'})
+        .then(r => process.stdout.write(`${formatResult('mic', r)}\n`))
+        .catch(() => undefined)
+        .finally(() => process.exit(130));
+    });
+  }
   const result = await client.call(method, params);
   process.stdout.write(`${args.flags.json ? JSON.stringify(result, null, 2) : formatResult(method, result)}\n`);
   if (failed(method, result)) process.exitCode = 1;
@@ -453,6 +463,12 @@ export const main = async () => {
     if (r.lines.length) process.stdout.write(`${r.lines.join('\n')}\n`);
     if (r.failed) process.exitCode = 1;
   }
+};
+
+/** Whether a `mic` value plays in the foreground (the command waits for it), so Ctrl-C should stop it. */
+export const micPlaysHere = (value: string): boolean => {
+  const v = value.trim();
+  return !!v && !/^(stop|status)$/.test(v) && !/(^|\s)(bg|bg=true|&)(\s|$)/.test(v);
 };
 
 /** A verdict that failed exits non-zero, so a script or a shell `&&` sees it. */

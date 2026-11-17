@@ -134,6 +134,7 @@ export class Engine {
     root: () => this.#loaded.root,
     stateDir: () => this.#loaded.stateDir,
     transcribe: () => this.config.media?.transcribe,
+    loopback: () => this.config.media?.loopback,
   });
   readonly #pushes = new PushCenter({
     // A push from the gateway (an HTTP request) goes only to a device this session holds: it never takes one.
@@ -1743,6 +1744,8 @@ export class Engine {
   }
 
   startWatching() {
+    // A daemon that died while an iOS simulator's sound played left the Mac's input on the loopback: put it back.
+    void this.#media.recoverInput().catch(() => undefined);
     const tick = async () => {
       try {
         await this.refresh();
@@ -1776,6 +1779,11 @@ export class Engine {
    * on a simulator does not lose it to a restart, a signal or a version swap. Only `release` (an explicit
    * `pitbox daemon stop`) gives them back, shutting down those this daemon booted.
    */
+  /** The Mac's input put back if an iOS simulator's sound still holds it: the last thing a daemon does as it exits. */
+  restoreMicInputSync() {
+    this.#media.restoreInputSync();
+  }
+
   async stopAll(opts: {release?: boolean} = {}) {
     if (this.#watchTimer) clearTimeout(this.#watchTimer);
     if (this.#beatTimer) clearTimeout(this.#beatTimer);

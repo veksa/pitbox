@@ -16,7 +16,9 @@ import {swapFeed} from '../drivers/android/camera.ts';
 import {runShell} from '../util/proc.ts';
 import {audioOf, extractFrames, ffmpegPath, probeDuration, reencode, NO_FFMPEG} from './ffmpeg.ts';
 import {analyze, convert, decodeWav, describe, dominantFreq, encodeWav, parseDb, parseHz, parseSecs, seconds, type AudioReport, type Pcm} from './pcm.ts';
-import {describeSound, parseMic, renderSound} from './sound.ts';
+import {describeSound, parseMic, renderSound, type MicCommand} from './sound.ts';
+import {DEFAULT_LOOPBACK, InputSwitch, inSimulator, noLoopback, outputIndex, playTo, switchAudio, type HostInput, type Recorder, type Restored} from './loopback.ts';
+import {RemoteApple} from '../remote/appleRemote.ts';
 
 export type MediaTarget = {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices};
 
@@ -26,12 +28,20 @@ export type MediaDeps = {
   stateDir: () => string;
   /** A command that prints what a WAV says (`{file}` is its path): the transcript hook. */
   transcribe?: () => string | undefined;
+  /** The Mac's loopback audio device that feeds an iOS simulator's microphone (default BlackHole 2ch). */
+  loopback?: () => string | undefined;
+  /** Seams for tests: the Mac's inputs, who records on the Mac, and where the sound goes. */
+  hostInput?: () => HostInput;
+  /** Where the input to put back is written while it is switched (default ~/.pitbox/mic-input.json). */
+  inputFile?: () => string;
+  macRecorders?: () => Promise<(Recorder & {command: string})[]>;
+  playTo?: typeof playTo;
+  outputIndex?: typeof outputIndex;
 };
 
 /** Why each platform cannot do something, said the same way everywhere. */
 export const CANNOT = {
-  appleMic:
-    'an iOS simulator records from the Mac\'s own input device, so no file goes in through simctl\nhint: route the sound through a loopback input (BlackHole or similar: install it, pick it as the Mac\'s input, and allow the microphone for Simulator in System Settings › Privacy & Security › Microphone), then play the file to that device; or test the app\'s audio code with a file input in a unit test',
+  appleMic: 'an iOS simulator on another Mac records from that Mac\'s input device: mic switches only this Mac\'s input to its loopback\nhint: run pitbox on the Mac the simulator runs on',
   appleAudioOut: 'an iOS simulator plays through the Mac\'s output device and simctl captures no sound\nhint: route the Mac\'s output into a loopback device (BlackHole or similar) and record that, or assert on the app\'s own player state',
   appleCamera: 'an iOS simulator has no camera: AVCaptureDevice finds none and simctl has no camera service\nhint: give the app pictures through the photo library (library add <file>), or behind a test seam in the app',
   appleCall: 'an iOS simulator has no phone: nothing places or ends a call\nhint: drive the interruption from the app side (AVAudioSession interruption notifications in a test)',
@@ -135,6 +145,9 @@ export class MediaCenter {
   readonly #captures = new Map<string, Capture>();
   readonly #last = new Map<string, Last>();
   readonly #lastCall = new Map<string, string>();
+  #input?: InputSwitch;
+  /** The simulator whose sound plays through the Mac's input now: one at a time, as the Mac has one input. */
+  #hostMic?: string;
 
   constructor(deps: MediaDeps) {
     this.#d = deps;
@@ -157,9 +170,10 @@ export class MediaCenter {
   async mic(device: string | undefined, value: string): Promise<Record<string, unknown>> {
     const cmd = parseMic(value);
     const t = await this.#d.target(device);
-    if (t.platform === 'apple') throw new Error(CANNOT.appleMic);
+    if (t.platform === 'apple') return this.#appleMic(t.id, t.s, cmd);
     const serial = t.id;
     const playing = this.#mics.get(serial);
+    if (cmd.op === 'wait') return {serial, ...(await this.#micWait(serial, playing))};
     if (cmd.op === 'status') {
       const err = this.#micErrors.get(serial);
       if (!playing) return {serial, mic: 'idle', ...(err ? {last: err} : {})};
@@ -220,6 +234,166 @@ export class MediaCenter {
     const end = Date.now() + ms;
     for (;;) {
       const now = activeRecorders(await a.shell(serial, 'dumpsys audio', 10_000).catch(() => ''));
+      if (now.length || signal.aborted || Date.now() >= end) return now;
+      await wait(250);
+    }
+  }
+
+  // ---- mic on iOS: the Mac's input switched to a loopback for the length of the sound -------------------------------
+
+  #inputSwitch(): InputSwitch {
+    this.#input ??= new InputSwitch(this.#d.hostInput?.() ?? switchAudio(), this.#d.inputFile ? {file: this.#d.inputFile()} : {});
+    return this.#input;
+  }
+
+  /** Waits until the sound playing on `id` (in the background) has played; fails when it failed. */
+  async #micWait(id: string, playing: Mic | undefined): Promise<Record<string, unknown>> {
+    const fail = () => {
+      const err = this.#micErrors.get(id);
+      if (err) throw new Error(err);
+    };
+    if (!playing) {
+      fail();
+      return {mic: 'idle'};
+    }
+    const r = await playing.done.catch((e: Error) => {
+      throw e;
+    });
+    fail();
+    return {mic: `played ${playing.label}`, ...(r && typeof r === 'object' && !(r instanceof Map) ? (r as object) : {})};
+  }
+
+  /** An input a pitbox that died mid-sound left on the loopback, put back (at daemon start). */
+  async recoverInput(): Promise<Restored | undefined> {
+    if (process.platform !== 'darwin' && !this.#d.hostInput) return undefined;
+    const sw = this.#inputSwitch();
+    if (!sw.state() || this.#hostMic) return undefined;
+    return sw.recover();
+  }
+
+  /** The input put back now, without awaiting: from the daemon's exit handler, after everything else. */
+  restoreInputSync() {
+    this.#input?.endSync();
+  }
+
+  async #appleMic(udid: string, s: AppleDevices, cmd: MicCommand): Promise<Record<string, unknown>> {
+    const playing = this.#mics.get(udid);
+    if (cmd.op === 'wait') return {udid, ...(await this.#micWait(udid, playing))};
+    if (cmd.op === 'status') {
+      const err = this.#micErrors.get(udid);
+      if (!playing) return {udid, mic: 'idle', ...(err ? {last: err} : {})};
+      return {udid, mic: `playing ${playing.label}`, at: `${((Date.now() - playing.started) / 1000).toFixed(1)}s of ${playing.secs.toFixed(1)}s`, ...(playing.heardBy ? {heardBy: playing.heardBy.join(', ')} : {})};
+    }
+    if (cmd.op === 'stop') {
+      if (!playing) return {udid, mic: 'idle'};
+      playing.abort.abort();
+      const r = (await playing.done.catch(() => undefined)) as {input?: string} | undefined;
+      return {udid, mic: `stopped ${playing.label}`, after: `${((Date.now() - playing.started) / 1000).toFixed(1)}s`, ...(r?.input ? {input: r.input} : {})};
+    }
+    if (s instanceof RemoteApple) throw new Error(CANNOT.appleMic);
+    // The Mac has one input: a sound for any simulator replaces the one playing (its input is put back first).
+    const before = this.#hostMic ? this.#mics.get(this.#hostMic) : undefined;
+    if (before) {
+      before.abort.abort();
+      await before.done.catch(() => undefined);
+    }
+    const loopback = this.#d.loopback?.() ?? DEFAULT_LOOPBACK;
+    const host = this.#d.hostInput?.() ?? switchAudio();
+    const inputs = await host.inputs();
+    const loop = inputs.find(d => d.name === loopback);
+    if (!loop) throw new Error(noLoopback(loopback, inputs.map(d => d.name)));
+    const index = await (this.#d.outputIndex ?? outputIndex)(loop.uid, loopback);
+    const pcm = await renderSound(cmd.spec, {rate: 48000, root: this.#d.root()});
+    const wav = encodeWav(pcm);
+    const label = describeSound(cmd.spec);
+    const recorders = async () => {
+      try {
+        return await (this.#d.macRecorders ?? (async () => (await import('../drivers/apple/audioTool.ts')).macRecorders()))();
+      } catch {
+        return undefined;
+      }
+    };
+    // Another app recording from the Mac's input (a call, a dictation) would hear the sound instead of its microphone.
+    const current = await host.current();
+    if (!cmd.force && current && current.name !== loopback) {
+      const others = ((await recorders()) ?? []).filter(r => r.devices.includes(current.uid) && !inSimulator(r.command, udid));
+      if (others.length)
+        throw new Error(
+          `mic: ${others.map(r => r.bundle ?? (path.basename(r.command) || String(r.pid))).join(', ')} record${others.length > 1 ? '' : 's'} from the Mac's input (${current.name}) now: switching it to ${loopback} would feed them the sound instead of their microphone\nhint: wait until that recording ends (a call?), or add force to switch anyway`,
+        );
+    }
+    const abort = new AbortController();
+    const waitMs = (cmd.wait ?? (cmd.bg ? 60 : 10)) * 1000;
+    const mic: Mic = {label, secs: seconds(pcm), started: Date.now(), abort, done: Promise.resolve()};
+    const sw = this.#inputSwitch();
+    const play = async () => {
+      const t0 = Date.now();
+      const {previous, switched} = await sw.begin(loopback);
+      const out: Record<string, unknown> = {};
+      try {
+        // The app records from the loopback once the input is switched: wait for it, as a person waits to speak.
+        const heardBy = await this.#macListeners(udid, loop.uid, waitMs, abort.signal, recorders);
+        if (abort.signal.aborted) return Object.assign(out, {stopped: true, waitedMs: Date.now() - t0});
+        // A simulator's app keeps the input it started recording from: one that started before the switch hears the
+        // Mac's own microphone, never the loopback.
+        const early = heardBy && !heardBy.length ? ((await recorders()) ?? []).filter(r => inSimulator(r.command, udid) && r.devices.length && !r.devices.includes(loop.uid)) : [];
+        if (early.length)
+          throw new Error(
+            `mic: ${early.map(r => r.bundle ?? path.basename(r.command)).join(', ')} on ${udid} records from ${early[0]!.devices.join(', ')}, not ${loopback}: a simulator's app keeps the input it started recording from, so nothing was played\nhint: start the sound before the recording: mic <sound> bg, then start the app's recording (mic wait waits for it to finish)`,
+          );
+        if (heardBy && !heardBy.length)
+          throw new Error(
+            `mic: no app on ${udid} recorded from ${loopback} within ${waitMs / 1000}s, so nothing was played\nhint: start the app's recording first (or give mic wait=<secs>, or bg to play when it starts); the Mac must allow the microphone to Simulator (System Settings › Privacy & Security › Microphone)`,
+          );
+        if (heardBy) mic.heardBy = heardBy;
+        mic.started = Date.now();
+        const r = await (this.#d.playTo ?? playTo)(wav, index, {signal: abort.signal, timeoutMs: mic.secs * 1000 + 15_000});
+        return Object.assign(out, {
+          seconds: Math.round(((Date.now() - mic.started) / 1000) * 10) / 10,
+          waitedMs: mic.started - t0,
+          ...(heardBy ? {heardBy: heardBy.join(', ')} : {note: 'could not tell whether the app records (the Mac audio helper did not run): played at once'}),
+          ...(r.stopped ? {stopped: true} : {}),
+          ...(r.timedOut ? {timedOut: true} : {}),
+        });
+      } finally {
+        const restored: Restored | undefined = switched ? await sw.end().catch(e => ({input: 'unknown', note: (e as Error).message.split('\n')[0]})) : {input: previous};
+        if (restored) Object.assign(out, {input: restored.input, ...(restored.note ? {inputNote: restored.note} : {})});
+      }
+    };
+    this.#micErrors.delete(udid);
+    this.#hostMic = udid;
+    const forget = () => {
+      if (this.#mics.get(udid) === mic) this.#mics.delete(udid);
+      if (this.#hostMic === udid && !this.#mics.has(udid)) this.#hostMic = undefined;
+    };
+    this.#mics.set(udid, mic);
+    if (!cmd.bg) {
+      mic.done = play();
+      try {
+        return {udid, sound: label, ...((await mic.done) as object)};
+      } finally {
+        forget();
+      }
+    }
+    mic.done = play()
+      .catch(err => {
+        this.#micErrors.set(udid, (err as Error).message.split('\n')[0]!);
+        return undefined;
+      })
+      .finally(forget);
+    return {udid, sound: label, secs: Math.round(mic.secs * 10) / 10, input: `${loopback} while it plays`, background: `plays as soon as an app records (waits up to ${waitMs / 1000}s); mic stop ends it, mic status tells where it is`};
+  }
+
+  /**
+   * The apps of simulator `udid` recording from the device `uid`, waited for up to `ms`; undefined when that cannot be
+   * told (the helper did not run), and the sound then plays at once.
+   */
+  async #macListeners(udid: string, uid: string, ms: number, signal: AbortSignal, recorders: () => Promise<(Recorder & {command: string})[] | undefined>): Promise<string[] | undefined> {
+    const end = Date.now() + ms;
+    for (;;) {
+      const all = await recorders();
+      if (!all) return undefined;
+      const now = all.filter(r => r.devices.includes(uid) && inSimulator(r.command, udid)).map(r => r.bundle ?? path.basename(r.command));
       if (now.length || signal.aborted || Date.now() >= end) return now;
       await wait(250);
     }
@@ -581,6 +755,10 @@ export class MediaCenter {
   /** Ends what runs in the background: microphone sounds and captures (their touches setting restored). */
   async stopAll() {
     for (const m of this.#mics.values()) m.abort.abort();
+    // A sound on an iOS simulator puts the Mac's input back as it ends: wait for that (a few seconds at most).
+    const host = this.#hostMic ? this.#mics.get(this.#hostMic) : undefined;
+    if (host) await Promise.race([host.done.catch(() => undefined), wait(5000)]);
+    this.#input?.endSync();
     for (const [id, c] of this.#captures) {
       this.#captures.delete(id);
       await (c.audio ? c.audio.stop() : c.stop()).catch(() => undefined);

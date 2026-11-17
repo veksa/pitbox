@@ -20,7 +20,7 @@
 //   tool sql query="select 1" contains "1"
 //   state signed-in              restore a named stand state (device snapshot + backend)
 //   widget add "Clock" app="MyApp" size=4x2 | widget remove "Clock"   (home-screen widgets)
-//   mic speech.wav [noise=pink snr=10] [bg] | mic tone 440 2s | mic stop   (an emulator's microphone, once the app records)
+//   mic speech.wav [noise=pink snr=10] [bg] | mic tone 440 2s | mic wait | mic stop   (an emulator's microphone, or a simulator's through the Mac's loopback input, once the app records)
 //   capture start [screen|audio] [fps=30] [touches] | capture stop | expect sound min=1s | expect silence | expect said "hi"
 //   camera image card.png | library add photo.jpg | call incoming | call end | audio volume music max
 //   device Pixel_8               the following steps run on another device (several devices in one flow)
