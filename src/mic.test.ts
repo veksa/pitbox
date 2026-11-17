@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {audioPacket, chunks, endpointOf, parseWav} from './drivers/android/mic.ts';
+import {audioPacket, chunks, endpointOf, parseWav, segments} from './drivers/android/mic.ts';
 import {parseFlow, validateFlow} from './flows/flow.ts';
 import {parseArgs, toCall} from './cli.ts';
 
@@ -53,6 +53,13 @@ describe('mic', () => {
     }
     expect(v).toBe(1_700_000_000_000_000n);
     expect(p.subarray(p.length - 4).toString('hex')).toBe('1a020102');
+  });
+
+  it('plays a long file as calls of 2 s: one long call stops reaching the guest after a few seconds', () => {
+    const runs = segments(Array.from({length: 45}, (_, i) => i));
+    expect(runs.map(r => r.length)).toEqual([20, 20, 5]);
+    expect(runs.flat()).toEqual(Array.from({length: 45}, (_, i) => i));
+    expect(segments([])).toEqual([]);
   });
 
   it('feeds only emulators', () => {

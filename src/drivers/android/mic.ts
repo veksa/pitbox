@@ -43,8 +43,7 @@ const bytes = (n: number, v: Buffer) => Buffer.concat([field(n, 2), varint(v.len
 
 /**
  * An AudioPacket: AudioFormat {samplingRate, channels (0 mono, 1 stereo), format (0 u8, 1 s16), mode 1 real time}, the
- * capture time in microseconds and the samples. The time matters: packets without one stop reaching the microphone
- * after a few seconds.
+ * capture time in microseconds and the samples.
  */
 export const audioPacket = (w: Pick<Wav, 'rate' | 'channels' | 'bits'>, audio: Buffer, timestampUs: number): Buffer =>
   Buffer.concat([bytes(1, Buffer.concat([num(1, w.rate), num(2, w.channels - 1), num(3, w.bits === 16 ? 1 : 0), num(4, 1)])), num(2, timestampUs), bytes(3, audio)]);
@@ -68,8 +67,19 @@ export const endpointOf = (serial: string): EmulatorEndpoint => {
 };
 
 /**
+ * The packets in runs of `per` (2 s of 100 ms packets), each run its own injectAudio call: emulator 37.2 stops passing
+ * one long call's audio on to the guest after a few seconds (its capture fails with I/O errors and hears silence),
+ * while calls of a couple of seconds back to back play through.
+ */
+export const segments = <T>(parts: T[], per = 20): T[][] => {
+  const out: T[][] = [];
+  for (let at = 0; at < parts.length; at += per) out.push(parts.slice(at, at + per));
+  return out;
+};
+
+/**
  * Plays a WAV into the microphone of emulator `serial`, paced in real time (100 ms packets), and returns when it has
- * played. What the app does not record while it plays is lost, as with a person speaking.
+ * played (in calls of 2 s, see `segments`). What the app does not record while it plays is lost, as with a person speaking.
  */
 export const injectWav = async (serial: string, wav: Buffer): Promise<{seconds: number; ms: number; grpc: number}> => {
   const w = parseWav(wav);
@@ -77,13 +87,17 @@ export const injectWav = async (serial: string, wav: Buffer): Promise<{seconds: 
   const parts = chunks(w);
   const seconds = w.pcm.length / (w.rate * w.channels * (w.bits / 8));
   const t0 = Date.now();
-  async function* paced() {
-    for (let k = 0; k < parts.length; k++) {
-      const wait = t0 + k * 100 - Date.now();
+  async function* paced(from: number, run: Buffer[]) {
+    for (let i = 0; i < run.length; i++) {
+      const wait = t0 + (from + i) * 100 - Date.now();
       if (wait > 0) await new Promise(r => setTimeout(r, wait));
-      yield audioPacket(w, parts[k]!, Date.now() * 1000);
+      yield audioPacket(w, run[i]!, Date.now() * 1000);
     }
   }
-  await call(ep, 'injectAudio', paced(), Math.round(seconds * 1000) + 15_000);
+  let from = 0;
+  for (const run of segments(parts)) {
+    await call(ep, 'injectAudio', paced(from, run), run.length * 100 + 15_000);
+    from += run.length;
+  }
   return {seconds: Math.round(seconds * 10) / 10, ms: Date.now() - t0, grpc: ep.port};
 };
