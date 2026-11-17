@@ -12,6 +12,7 @@ import type {DoctorContext, Finding, Rule} from './types.ts';
 import {allowCleartextInDebug, cleartextOf, detectProject} from '../init/project.ts';
 import {listLeases} from '../lease/lease.ts';
 import {leaseWarnings} from '../lease/reap.ts';
+import {describeSlim, packageNames, slim, slimList} from '../drivers/android/slim.ts';
 
 /** Who listens on a TCP port: `pid name`, best effort. */
 export const portOwner = async (port: number): Promise<string | undefined> => {
@@ -262,6 +263,33 @@ const animations: Rule = {
           fix: async () => (await ctx.android!.settings(d.serial, {animations: false})).join(', '),
         });
       }
+    }
+    return findings;
+  },
+};
+
+/**
+ * A slim emulator (`android.slim`, default on) keeps the image's background apps off. One booted outside pitbox, or
+ * whose slimming failed, runs them all: more RAM and CPU on the Mac, more swapping in the guest.
+ */
+const emulatorSlim: Rule = {
+  id: 'emulator-slim',
+  title: 'emulators run without the background apps they do not need',
+  check: async ctx => {
+    if (!ctx.android || ctx.config.android?.slim === false) return [];
+    const opts = typeof ctx.config.android?.slim === 'object' ? ctx.config.android.slim : {};
+    const want = new Set(slimList(opts));
+    const findings: Finding[] = [];
+    for (const d of (await ownDevices(ctx)).filter(x => x.emulator)) {
+      const on = packageNames(await ctx.android.shell(d.serial, 'pm list packages -e').catch(() => '')).filter(p => want.has(p));
+      if (!on.length) continue;
+      findings.push({
+        rule: 'emulator-slim',
+        severity: 'info',
+        message: `${d.avd ?? d.serial}: ${on.length} background apps on (${on.slice(0, 3).join(', ')}${on.length > 3 ? ', …' : ''})`,
+        hint: 'off saves RAM and idle CPU; once per AVD (android.slim: false or {keep: [...]} keeps them)',
+        fix: async () => describeSlim(await slim((c, t) => ctx.android!.shell(d.serial, c, t), opts)),
+      });
     }
     return findings;
   },
@@ -541,4 +569,4 @@ export const deviceLeases: Rule = {
     })),
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock, deviceLeases];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, emulatorSlim, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock, deviceLeases];

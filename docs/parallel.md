@@ -213,6 +213,37 @@ still refused, and a lease of a daemon that is gone is taken over once its grace
    for you and leaves the rest; `stand action=down` also stops the project's daemon with its browsers, never
    another project's.
 
+## Slim devices
+
+More devices fit on one machine, and each answers faster, when they run without what an app under test never
+reaches. pitbox boots devices slim by default; `boot --stock` (`device action=boot slim=false`) or `slim: false` in
+the config boots them as the image ships.
+
+**Android emulators** (`android.slim`). The boot disables the image's background apps — YouTube and YouTube Music,
+Maps, Gmail, Photos, Calendar, Messages, Drive, the Google app, Android System Intelligence, Digital Wellbeing,
+Android Auto, TalkBack and the other accessibility services, the clock, feedback and diagnostics — with
+`pm disable-user`, which persists in the AVD: the first slim boot does it, later boots find them off and spend two
+shell calls on checking. Play services, the Play Store, Chrome and WebView, the launcher, the keyboard, the camera,
+contacts and the dialer stay on. A headless emulator renders on the computer's GPU (`-gpu host`); without it, it
+draws every frame on the CPU (`lavapipe`). What pitbox disabled is listed on the device
+(`/data/local/tmp/pitbox-slim`); a stock boot enables exactly those again, never an app disabled by hand. An app
+enabled again stays stopped (no boot broadcasts) until something starts it; a wipe brings back the image as shipped.
+
+Measured on an Apple M-series Mac, an API 36 Google APIs phone image, 2 GB of guest RAM, headless; each figure the
+median of three boots after the first (stock and slim from the same freshly wiped AVD), 60 s after the boot:
+
+| | Stock | Slim |
+|---|---|---|
+| Boot to `sys.boot_completed` | 15.0 s | 12.9 s |
+| Settings cold start (`am start -W`, median of 5) | 207 ms | 117 ms |
+| App processes running | 46 | 28 |
+| Guest swap in use | 583 MB | 227 MB |
+| Emulator CPU while idle | 0.15 cores | 0.11 cores |
+| Emulator footprint on the Mac | 2.7 GB | 2.9 GB |
+
+The footprint does not drop: what the apps no longer take, the GPU's buffers take. The gain is speed (boot,
+app starts, every frame), less swapping inside the guest and less CPU.
+
 ## Moving from a hand-made lock
 
 Teams that kept one machine-wide lock folder (`mkdir <lock dir>` before booting anything, an `owner` file inside,

@@ -13,6 +13,7 @@ import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, isUnresolvedLink, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {cameraArg, sameCamera} from '../drivers/android/camera.ts';
+import {describeSlim, slim, unslim} from '../drivers/android/slim.ts';
 import {MediaCenter, androidPermissions, appleService} from '../media/center.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
@@ -1288,7 +1289,7 @@ export class Engine {
    * Boots an emulator for this session: the instance of the AVD it holds, or a new one. When an instance of the AVD
    * runs for another session or with no lease, the new one starts beside it `-read-only`.
    */
-  async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean; audio?: boolean; camera?: string}) {
+  async #bootEmulator(a: AndroidDriver, avd: string, opts: {wipe?: boolean; headless?: boolean; coldBoot?: boolean; audio?: boolean; camera?: string; slim?: boolean; gpu?: string}) {
     // This session's own: an instance of the AVD, or a copy pitbox made of it for this session (`boot` runs at the
     // start of every pass: it must not make a copy each time).
     // Found by this session's leases, in any state: a copy offline for a moment is still this session's.
@@ -1380,15 +1381,36 @@ export class Engine {
       if (twin) await this.#deleteCreatedAvd(a, twin);
       throw new Error(`${(e as Error).message.split('\n')[0]} — the emulator this boot started was shut down again; boot again`);
     }
+    const slimmed = await this.#slimEmulator(a, r.serial, opts.slim);
     const forwards = await this.ensureForwards(true).catch(() => []);
     return {
       ...r,
       avd: name,
       forwards,
+      ...(slimmed ? {slim: slimmed} : {}),
       ...(why ? {instead: twin ? `${why}; created ${twin} instead` : `${why}; started another instance`} : {}),
       ...(r.readOnly ? {note: 'a second instance of the AVD (-read-only): what changes on it is gone when it shuts down'} : {}),
       ...(warning ? {warning} : {}),
     };
+  }
+
+  /**
+   * Slims an emulator this session just booted (`android.slim`, default on; `slim` of the boot wins), or makes a
+   * stock one of it: what pitbox disabled comes back. The boot's answer says what was done; a failure is said too,
+   * never thrown — the emulator is up and usable either way.
+   */
+  async #slimEmulator(a: AndroidDriver, serial: string, want?: boolean): Promise<string | undefined> {
+    const cfg = this.config.android?.slim;
+    const sh = (c: string, t?: number) => a.shell(serial, c, t);
+    try {
+      if (!(want ?? cfg !== false)) {
+        const back = await unslim(sh);
+        return back.length ? `stock: ${back.length} background apps on again` : undefined;
+      }
+      return describeSlim(await slim(sh, typeof cfg === 'object' ? cfg : {}));
+    } catch (e) {
+      return `failed: ${(e as Error).message.split('\n')[0]}`;
+    }
   }
 
   /**
@@ -2239,6 +2261,8 @@ export class Engine {
         headless: bool(p, 'headless'),
         coldBoot: bool(p, 'coldBoot'),
         audio: bool(p, 'audio') ?? this.config.android?.audio,
+        slim: bool(p, 'slim'),
+        ...((bool(p, 'slim') ?? this.config.android?.slim !== false) && bool(p, 'headless') ? {gpu: 'host'} : {}),
         ...(camera ? {camera: cameraArg(camera, {root: this.#loaded.root, stateDir: this.#loaded.stateDir, avd: name})} : {}),
       });
     },

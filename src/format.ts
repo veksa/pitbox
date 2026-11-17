@@ -573,6 +573,7 @@ export const formatResult = (method: string, r: unknown): string => {
       return (
         (x.already ? `${x.avd ?? x.name} already running as ${x.serial ?? x.udid}` : `${x.avd ?? x.name} booted as ${x.serial ?? x.udid} in ${seconds(x.ms as number)}`) +
         (x.instead ? `\ninstead: ${x.instead}` : '') +
+        (x.slim ? `\nslim: ${x.slim}` : '') +
         (x.note ? `\nnote: ${x.note}` : '') +
         (x.warning ? `\nwarning: ${x.warning}` : '')
       );

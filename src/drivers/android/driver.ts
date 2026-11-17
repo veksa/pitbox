@@ -351,6 +351,8 @@ export type BootOptions = {
   audio?: boolean;
   /** The back camera: `emulated`, `virtualscene`, `webcam0`, `none`, `imagefile:<path>`, `videofile:<path>` (`-camera-back`). */
   camera?: string;
+  /** The renderer (`-gpu`): `host` draws on the computer's GPU; without it a headless emulator draws on the CPU. */
+  gpu?: string;
 };
 
 /** The emulator's command line for a boot, before pitbox's launch marker. */
@@ -363,6 +365,7 @@ export const bootArgs = (avd: string, opts: BootOptions, readOnly: boolean): str
   if (opts.wipe) args.push('-wipe-data');
   if (opts.headless) args.push('-no-window');
   if (opts.camera) args.push('-camera-back', opts.camera);
+  if (opts.gpu) args.push('-gpu', opts.gpu);
   return args;
 };
 

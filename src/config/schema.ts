@@ -200,6 +200,12 @@ export const configSchema = z.object({
        * Without it, a Wear OS emulator this session holds, else the first Wear OS AVD.
        */
       watch: z.string().optional(),
+      /**
+       * Slim emulators (default true): a boot disables the image's background apps an app under test does not need
+       * (YouTube, Maps, Gmail, the Google app, assistants…) once per AVD, and a headless one renders on the Mac's GPU.
+       * `false` boots stock and enables again what pitbox disabled. `{keep: [...], disable: [...]}` tunes the list.
+       */
+      slim: z.union([z.boolean(), z.object({keep: z.array(z.string()).optional(), disable: z.array(z.string()).optional()}).strict()]).optional(),
       /** Extra host ports to forward besides the services' `expose`. */
       reverse: z.array(z.number().int().positive()).optional(),
       /**
