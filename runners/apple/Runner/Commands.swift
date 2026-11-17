@@ -701,8 +701,10 @@ final class Commands {
     var field = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
     #if os(iOS)
     // XCUITest no longer waits for the app before it types (`Quiescence`), so the runner does: a screen still being
-    // built (a JS reload) takes the focus from a field typed into meanwhile.
+    // built (a JS reload) takes the focus from a field typed into meanwhile. The host types right after its tap
+    // (`waitsForFocus`): the field can take the focus a moment later.
     Quiescence.beforeEvent(a)
+    if !field.exists { _ = field.waitForExistence(timeout: 1.5) }
     #endif
     // visionOS does not report keyboard focus: the field the host aimed at, by its bounds. Typing into the
     // element focuses it.

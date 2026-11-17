@@ -48,6 +48,11 @@ export type UiRunner = {
    * is busy holding.
    */
   holdsSwipes?: boolean;
+  /**
+   * `text` waits by itself for the field to take keyboard focus (an iOS runner), so a fill types right after its tap
+   * instead of first waiting for the screen to go quiet while the keyboard slides in.
+   */
+  waitsForFocus?: boolean;
 };
 
 /** Crashes of the app under test, collected in the background. */
@@ -472,7 +477,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const {snap, target} = await this.#target(selector);
     this.#front(snap);
     await this.runner.call('tap', {x: target.x, y: target.y});
-    await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
+    if (!this.runner.waitsForFocus) await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
     const editable = target.node && (target.node.f ?? '').includes('e');
     const args = {text, ...(editable ? {bounds: target.node!.b} : {})};
     let r = await this.runner.call<{set: boolean}>('text', args);

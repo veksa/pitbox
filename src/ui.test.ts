@@ -716,6 +716,35 @@ describe('a wait whose first read starts the runner', () => {
   }, 15_000);
 });
 
+describe('a fill', () => {
+  const run = async (waitsForFocus: boolean) => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const calls: string[] = [];
+    const field: UiNode = {p: -1, w: 0, c: 'TextField', b: [0, 100, 400, 140], id: 'name', f: 'e'};
+    const runner = {
+      waitsForFocus,
+      call: async (cmd: string) => {
+        if (cmd === 'tap' || cmd === 'idle' || cmd === 'text') calls.push(cmd);
+        if (cmd === 'tree') return {windows: [{type: 'app', title: '', pkg: 'com.example.app'}], nodes: [field]};
+        if (cmd === 'info') return {width: 400, height: 500};
+        if (cmd === 'text') return {set: true};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    await new DeviceUi('sim', runner as never).fill('id=name', 'Ada');
+    return calls.slice(0, calls.indexOf('text') + 1);
+  };
+
+  it('types right after its tap on a runner that waits for the focus itself', async () => {
+    expect(await run(true)).toEqual(['tap', 'text']);
+  });
+
+  it('waits for a quiet screen between its tap and the text on other runners', async () => {
+    expect(await run(false)).toEqual(['tap', 'idle', 'text']);
+  });
+});
+
 describe('a keyboard over the target', () => {
   it('is waited out when it was fullscreen and the app comes back a moment later', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

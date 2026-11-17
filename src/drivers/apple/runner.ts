@@ -156,6 +156,10 @@ export class AppleRunner {
   readonly udid: string;
   /** XCUITest keeps no finger down between calls: a held swipe is held by the runner and the image taken here. */
   readonly holdsSwipes = true;
+  /** On iOS `text` waits for the field to take keyboard focus itself (`DeviceUi.fill`). */
+  get waitsForFocus() {
+    return this.#kind === 'phone' || this.#kind === 'tablet' || this.#kind === 'foldable';
+  }
   /** Told once with the next action's answer (`DeviceUi`). */
   readonly notices: string[] = [];
   /** The app the runner reads and drives when it is in front (the system shell otherwise). */
