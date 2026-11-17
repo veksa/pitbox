@@ -879,7 +879,7 @@ export class Engine {
    * it): a shut-down simulator of the same model and runtime that nobody holds, or a new one (`<name> (pitbox N)`,
    * deleted again when the session gives it back).
    */
-  async #bootSimulator(s: AppleDriver, name: string, opts: {wipe?: boolean; headless?: boolean}) {
+  async #bootSimulator(s: AppleDriver, name: string, opts: {wipe?: boolean; headless?: boolean; slim?: boolean}) {
     const sims = await s.simulators();
     const want = pickSimulator(sims, name);
     if (!want) return {...(await s.boot(name, opts)), platform: 'apple'};
@@ -923,7 +923,9 @@ export class Engine {
     const warning = starting ? bootWarning('apple', await this.#runningDevices()) : undefined;
     this.#booting.add(pick.udid);
     try {
-      const r = await s.boot(pick.udid, opts);
+      const cfg = this.config.apple?.slim;
+      const slim = (opts.slim ?? cfg !== false) ? (typeof cfg === 'object' ? cfg : true) : false;
+      const r = await s.boot(pick.udid, {...opts, slim});
       // The boot pitbox made, on the lease: only while the simulator still runs it may a release or the reaper shut
       // it down (not one booted again later by hand or by Xcode on the same udid).
       if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) await this.#markAppleBoot(pick.udid);
@@ -2251,7 +2253,7 @@ export class Engine {
       const s = this.apple;
       // Without an Android SDK an unknown name is a simulator's, so the answer lists the simulators there are.
       if (s && !(a?.avds().some(x => x.name === name)) && (!a || pickSimulator(await s.simulators(), name))) {
-        if (this.#isLocalApple(s)) return this.#bootSimulator(s, name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless')});
+        if (this.#isLocalApple(s)) return this.#bootSimulator(s, name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless'), slim: bool(p, 'slim')});
         const r = await s.boot(name, {wipe: bool(p, 'wipe'), headless: bool(p, 'headless')});
         return {...r, platform: 'apple'};
       }

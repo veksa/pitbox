@@ -9,6 +9,8 @@ import {parseStartDate} from '../../lease/lease.ts';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
+import {keepsOverrides, notDisabled, simSlimList, slimSimulator, unslimSimulator, type SimSlimOptions} from './slim.ts';
+
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
 
 export type Simulator = {udid: string; name: string; state: string; runtime: string; os: string; kind: SimKind; available: boolean; deviceType?: string};
@@ -238,7 +240,11 @@ export class AppleDriver {
     throw new AppleError('several simulators booted', `pass a device: ${booted.map(s => s.udid).join(', ')}`);
   }
 
-  async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number} = {}): Promise<{udid: string; name: string; ms: number; already: boolean; note?: string}> {
+  /**
+   * Boots a simulator. `slim` (iPhone and iPad on iOS 18.5+, booted from shut down): `true` or the list's options
+   * slim it, `false` puts back what pitbox disabled; the answer's `slim` says what was done.
+   */
+  async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number; slim?: boolean | SimSlimOptions} = {}): Promise<{udid: string; name: string; ms: number; already: boolean; note?: string; slim?: string}> {
     this.forgetList();
     const t0 = Date.now();
     const sims = await this.simulators();
@@ -252,14 +258,33 @@ export class AppleDriver {
       if (sim.state === 'Booted') await this.simctl(['shutdown', sim.udid], {timeoutMs: 60_000});
       await this.#ok(['erase', sim.udid], 'erase', 120_000);
     }
+    // Overrides are read when the simulator starts: written now, while it is shut down, they cost no extra boot.
+    const slimmable = opts.slim !== undefined && ['phone', 'tablet', 'foldable'].includes(sim.kind) && keepsOverrides(sim.runtime);
+    let slim: string | undefined;
+    let labels: string[] = [];
+    if (slimmable && opts.slim === false) {
+      const back = unslimSimulator(sim.udid);
+      if (back) slim = `stock: ${back} background services on again`;
+    } else if (slimmable) {
+      const o = opts.slim === true ? {} : (opts.slim as SimSlimOptions);
+      const s = slimSimulator(sim.udid, o);
+      if (s.error) slim = `failed: ${s.error}`;
+      else labels = simSlimList(o);
+    }
     const r = await this.simctl(['boot', sim.udid], {timeoutMs: 120_000});
     if (r.code !== 0 && !/current state: Booted/i.test(r.stderr)) throw new AppleError(`boot failed: ${r.stderr.trim().split('\n').pop()}`);
     const timeoutMs = opts.timeoutMs ?? 240_000;
     const status = await this.simctl(['bootstatus', sim.udid, '-b'], {timeoutMs});
     if (status.timedOut) throw new AppleError(`${sim.name} did not finish booting in ${Math.round(timeoutMs / 1000)}s`, 'try `boot --wipe`');
     this.forgetList();
+    if (labels.length) {
+      // Read back from launchd: a runtime that ignored the overrides is said, not taken for slim.
+      const printed = await this.simctl(['spawn', sim.udid, 'launchctl', 'print-disabled', 'system'], {timeoutMs: 30_000});
+      const missed = notDisabled(printed.stdout, labels);
+      slim = missed.length === labels.length ? `failed: launchd ignored the overrides (${sim.os})` : `${labels.length - missed.length} background services off${missed.length ? `; still on: ${missed.slice(0, 3).join(', ')}${missed.length > 3 ? ', …' : ''}` : ''}`;
+    }
     const note = opts.headless ? undefined : await this.#showWindow(sim.udid);
-    return {udid: sim.udid, name: sim.name, ms: Date.now() - t0, already: false, ...(note ? {note} : {})};
+    return {udid: sim.udid, name: sim.name, ms: Date.now() - t0, already: false, ...(note ? {note} : {}), ...(slim ? {slim} : {})};
   }
 
   /** Brings up Simulator.app on the device; the simulator itself runs without it. */

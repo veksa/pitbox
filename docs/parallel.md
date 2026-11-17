@@ -244,6 +244,29 @@ median of three boots after the first (stock and slim from the same freshly wipe
 The footprint does not drop: what the apps no longer take, the GPU's buffers take. The gain is speed (boot,
 app starts, every frame), less swapping inside the guest and less CPU.
 
+**iOS simulators** (`apple.slim`; iPhone and iPad on iOS 18.5 and later). launchd_sim reads its disable
+overrides from a file on the Mac when the simulator starts
+(`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`, kept across an erase). pitbox writes
+them there while the simulator is shut down, just before its boot, so slimming costs no extra boot: Siri and Apple
+Intelligence, Spotlight, Mail, Screen Time and Family, the Health app, Home, Fitness, News, Weather, Game Center,
+lock screen posters, ads, experiments and diagnostics. SpringBoard and the keyboard, notifications and push, widgets
+and Live Activities, location, privacy prompts, the photo library, accessibility (the UI runner reads through it),
+universal links, keychain, contacts, calendars and reminders, HealthKit, Wallet and StoreKit stay. Each label's
+earlier value is kept beside the file (`pitbox-slim.json`); a stock boot puts exactly those back. After the boot
+pitbox reads the state back from launchd (`launchctl print-disabled system`) and says how many are off.
+
+Measured on the same Mac, an iPhone 17 simulator on iOS 27.2, headless; the median of three boots after the first,
+60 s after the boot, summed over every process under the simulator's `launchd_sim`:
+
+| | Stock | Slim |
+|---|---|---|
+| Processes | 207 | 130 |
+| Footprint (phys_footprint, what Activity Monitor shows) | 8.5 GB | 4.7 GB |
+| Settings launch (`simctl launch`, median of 5) | 108 ms | 108 ms |
+
+A simulator that has booted before comes up in under two seconds either way; the gain is memory: about twice as
+many simulators fit before the Mac starts swapping.
+
 ## Moving from a hand-made lock
 
 Teams that kept one machine-wide lock folder (`mkdir <lock dir>` before booting anything, an `owner` file inside,

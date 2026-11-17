@@ -26,7 +26,7 @@ stand
 
 android
   devices [clean [--all]]       online devices with who holds each, idle AVDs and simulators · clean deletes the shut-down simulators and AVDs pitbox created for this project's sessions (--all: also those an older pitbox recorded without a project)
-  boot [avd|simulator] [--wipe] [--headless] [--audio] [--camera c] [--stock]   leased to this session; a device another session holds is not touched: a free one of the same model, or a new instance, is booted instead · --audio: an emulator with audio on (default -no-audio), for mic · --camera emulated|virtualscene|none|webcam0|image:<file>|video:<file>: its back camera · --stock: no slimming (what pitbox disabled comes back; default slim: android.slim)
+  boot [avd|simulator] [--wipe] [--headless] [--audio] [--camera c] [--stock]   leased to this session; a device another session holds is not touched: a free one of the same model, or a new instance, is booted instead · --audio: an emulator with audio on (default -no-audio), for mic · --camera emulated|virtualscene|none|webcam0|image:<file>|video:<file>: its back camera · --stock: no slimming (what pitbox disabled comes back; default slim: android.slim, apple.slim)
   shutdown [--device d] [--force]   only a device this session holds; --force shuts down another's and names its holder
   device lease [--device d] [--purpose text] · device release [--device d] [--keep]   hold a device for this session · give it back (one pitbox booted shuts down unless --keep)
   install <apk|app> [--replace] --replace uninstalls an app signed with another key first
