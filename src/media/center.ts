@@ -330,9 +330,10 @@ export class MediaCenter {
       notes,
       post: fps ? {fps} : undefined,
       stop: async () => {
+        // SIGINT lets screenrecord finish its MP4; the file is whole once the process is gone.
         await a.shell(serial, 'pkill -INT screenrecord').catch(() => undefined);
-        await endChild(child, 'SIGTERM', 15_000);
-        await wait(500);
+        for (let i = 0; i < 40 && (await a.shell(serial, 'pidof screenrecord').catch(() => '')).trim(); i++) await wait(250);
+        await endChild(child, 'SIGTERM', 5_000);
         await a.adb(['pull', remote, file], serial, {timeoutMs: 120_000});
         await a.shell(serial, `rm -f ${remote}`).catch(() => undefined);
         await untouch();
