@@ -122,6 +122,9 @@ final class Commands {
           return [:]
         }
       }
+      #if os(iOS)
+      Quiescence.beforeEvent(front(req).0)
+      #endif
       let c = coordinate(req)
       let started = Date()
       if cmd == "tap" { c.tap() } else if cmd == "doubletap" { c.doubleTap() } else { c.press(forDuration: double(req, "hold", 800) / 1000) }
@@ -676,6 +679,9 @@ final class Commands {
       return [:]
     }
     #endif
+    #if os(iOS)
+    Quiescence.beforeEvent(front(req).0)
+    #endif
     let from = coordinate(req, x: "x1", y: "y1")
     let to = coordinate(req, x: "x2", y: "y2")
     let seconds = max(0.05, double(req, "duration", 300) / 1000)
@@ -689,6 +695,11 @@ final class Commands {
     let (a, _) = front(req)
     let text = req["text"] as? String ?? ""
     var field = a.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
+    #if os(iOS)
+    // XCUITest no longer waits for the app before it types (`Quiescence`), so the runner does: a screen still being
+    // built (a JS reload) takes the focus from a field typed into meanwhile.
+    Quiescence.beforeEvent(a)
+    #endif
     // visionOS does not report keyboard focus: the field the host aimed at, by its bounds. Typing into the
     // element focuses it.
     if !field.exists, let b = rects(req["bounds"].map { [$0] }).first {
@@ -706,6 +717,11 @@ final class Commands {
       }
     }
     guard field.exists else { return ["set": false] }
+    return try Quiescence.waiting { try type(text, into: field, req) }
+  }
+
+  /// Types into a field that has the keyboard focus: what it held first goes, unless the text is appended.
+  private func type(_ text: String, into field: XCUIElement, _ req: [String: Any]) throws -> [String: Any] {
     if !(req["append"] as? Bool ?? false) { try clear(field) }
     let before = req["append"] as? Bool ?? false ? ((field.value as? String) ?? "") : ""
     if field.elementType == .secureTextField {

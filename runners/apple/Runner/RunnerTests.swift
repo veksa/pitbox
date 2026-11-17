@@ -16,6 +16,7 @@ final class RunnerTests: XCTestCase {
     NSLog("pitbox: starting on port %d", Int(port))
     let server = try Server(port: port)
     NSLog("pitbox=ready port=%d", Int(port))
+    Quiescence.skip()
     let commands = Commands()
     server.serve { commands.handle($0) }
     NSLog("pitbox: stopped")
