@@ -112,8 +112,8 @@ const frame = (msg: Buffer) => {
   return Buffer.concat([head, msg]);
 };
 
-/** One call: a unary request, or a client stream of `messages` (each already encoded). */
-export const call = (ep: EmulatorEndpoint, method: string, messages: Buffer[], timeoutMs = 10_000): Promise<Buffer> =>
+/** One call: a unary request, or a client stream of `messages` (each already encoded; an async source is sent as it yields). */
+export const call = (ep: EmulatorEndpoint, method: string, messages: Buffer[] | AsyncIterable<Buffer>, timeoutMs = 10_000): Promise<Buffer> =>
   new Promise((resolve, reject) => {
     const client = http2.connect(`http://127.0.0.1:${ep.port}`);
     const fail = (e: Error) => {
@@ -154,6 +154,21 @@ export const call = (ep: EmulatorEndpoint, method: string, messages: Buffer[], t
       clearTimeout(timer);
       fail(e);
     });
-    for (const m of messages) req.write(frame(m));
-    req.end();
+    if (Array.isArray(messages)) {
+      for (const m of messages) req.write(frame(m));
+      req.end();
+      return;
+    }
+    void (async () => {
+      try {
+        for await (const m of messages) {
+          if (req.closed) return;
+          req.write(frame(m));
+        }
+        req.end();
+      } catch (e) {
+        req.close();
+        fail(e as Error);
+      }
+    })();
   });

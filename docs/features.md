@@ -52,7 +52,8 @@ compact text.
 - **What only some devices have** — fold and unfold a foldable (`posture`), rotate, run the app in a freeform
   window and resize it, a mouse (right click, hover, wheel) and keyboard shortcuts for tablets and desktops; a
   watch's crown, buttons, tiles, watch face and ambient state; an XR headset's view (turn, move, recenter) and
-  panel controls; the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
+  panel controls; speech into an emulator's microphone from a WAV (`mic`, on an emulator booted with `--audio`);
+  the temple touchpad of AI glasses; a car's day-night mode, driving restrictions and rotary
   controller; TV remote and media keys; the app's home-screen widgets added, removed and listed on phones and
   tablets (`widget`: Android 10 to 16 on Launcher3 and Pixel Launcher, iOS and iPadOS simulators).
 - **Watch pairing** — an Apple Watch simulator paired with the session's iPhone simulator in one call (`device

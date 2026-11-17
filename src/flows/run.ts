@@ -23,7 +23,7 @@ export type FlowHost = {
   /** Where an image taken during a step goes (a held swipe's). */
   shotFile: (name: string) => string;
   /** Folds, rotates or re-windows the device (Android): posture, rotate, window. */
-  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car' | 'widget', value: string) => Promise<unknown>;
+  reshape: (op: 'posture' | 'rotate' | 'window' | 'wear' | 'xr' | 'car' | 'widget' | 'mic', value: string) => Promise<unknown>;
   /** Starts a perf window (`reset`), or ends it with the numbers and their text as `perf` prints it. */
   perf: (reset: boolean, trace?: boolean) => Promise<{data: PerfData; text: string}>;
   /** JS errors the app reported since `since`: a passing flow still mentions them. */
@@ -78,6 +78,7 @@ const runStep = async (host: FlowHost, s: Step, notes: string[], depth: number, 
     case 'wear':
     case 'xr':
     case 'car':
+    case 'mic':
       await host.reshape(s.cmd, words(a));
       return;
     case 'widget':

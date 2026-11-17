@@ -57,6 +57,7 @@ ui (through the on-device runner; every action waits for the UI to settle and pr
   wear tile add|show|remove <component> | face <package|component> | ambient on|off | home    watches
   widget add <name> [--app <label>] [--size 4x2|small|medium|large|extra large] | widget remove <name> | widget list [app]    home-screen widgets (Android 10+: Launcher3 / Pixel Launcher; iOS simulators: SpringBoard)
   car day|night|auto | drive [m/s] | park | rotary cw|ccw [n]    cars (driving blocks apps not made for it)
+  mic <file.wav>                plays a PCM WAV into an Android emulator's microphone in real time (boot it with --audio)
   xr look yaw[,pitch[,roll]] | move dx,dy,dz | spin yaw,pitch,roll[,ms] | drift dx,dy,dz[,ms] | recenter | env day|night | passthrough 0…1 | options | panel minimize|close|menu|info|spatial-audio|tidy|close-app    XR headsets
   touch down <target> · touch move <target> · touch up   a finger held between calls (inspect mid-drag)
   wait [gone] <selector> [--timeout s] · wait <n>s (a plain pause) · focus · shot [name] [--scale 0.4]
@@ -231,6 +232,7 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'wear':
     case 'xr':
     case 'car':
+    case 'mic':
       return {method: cmd, params: {device, value: rest.join(' ')}};
     case 'widget':
       // Each word the shell kept together stays one token: `widget add "World clock"`.

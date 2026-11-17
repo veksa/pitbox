@@ -12,6 +12,7 @@ import {DEVICE_PLACEHOLDERS, exposedPorts, type DevicePlaceholder, type ServiceC
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
 import {AndroidDriver, isUnresolvedLink, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
+import {injectWav} from '../drivers/android/mic.ts';
 import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.ts';
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
@@ -99,6 +100,7 @@ const APPLE_HAS_NO = {
   car: 'car is for Android Automotive: simctl has no CarPlay device to drive',
   wear: 'wear is for Wear OS: on an Apple Watch use rotary for the crown',
   window: 'window is for Android: Apple simulators have no desktop windows',
+  mic: 'mic is for Android emulators: an iOS simulator records from the Mac\'s own microphone, which takes no file',
 } as const;
 
 /**
@@ -2707,6 +2709,16 @@ export class Engine {
         return {serial: ui.serial, op: `panel ${what}`, ...(turned ? {value: turned} : {})};
       }
       return this.#reshape(str(p, 'device'), 'xr', async (_a, serial) => xrView(serial, op!, rest.join(',')));
+    },
+    // Plays a WAV into the emulator's microphone and answers once it has played (its length, in real time).
+    mic: async (p: Params) => {
+      const file = path.resolve(this.#loaded.root, req(p, 'value'));
+      if (!fs.existsSync(file)) throw new Error(`mic: no file ${file}`);
+      const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple') throw new Error(APPLE_HAS_NO.mic);
+      const e = t.a.running().find(x => x.serial === t.id);
+      if (e?.audio === false) throw new Error(`mic: ${t.id} runs without audio (-no-audio): it has no microphone to feed\nhint: give it back (device action=release) and boot again with audio=true`);
+      return {serial: t.id, file: path.basename(file), ...(await injectWav(t.id, fs.readFileSync(file)))};
     },
     car: async (p: Params) => {
       const [op, ...args] = req(p, 'value').split(' ').filter(Boolean);

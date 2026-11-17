@@ -96,6 +96,7 @@ locales.
 | `xr panel minimize|close|menu|info|spatial-audio|tidy|close-app` | an XR headset: the controls of the app's panel — its caption and the caption's menu |
 | `xr spin yaw,pitch,roll[,ms]` · `xr drift dx,dy,dz[,ms]` | an XR emulator's head in motion: turning at degrees a second or moving at metres a second for `ms` (default 1000), then still — what the app sees during a turn or a step |
 | `xr env day|night` · `xr passthrough 0…1` · `xr options` | an XR emulator's surroundings: the living room by day or by night, how much of it shows through, the current setting |
+| `mic <file.wav>` | an Android emulator's microphone: plays a PCM WAV (8 or 16 bits, mono or stereo, up to 48 kHz) into it in real time, through the emulator's control channel, and goes on when it has played — an app that records hears it as if spoken. The emulator must run with audio (`boot --audio`, or `android.audio` in the config); the path is from the project root. An iOS simulator records from the Mac's own microphone and takes no file |
 | `car day|night|auto` · `car drive [m/s]` · `car park` · `car rotary cw|ccw [n]` | a car: the cabin's day-night mode, driving (the system blocks apps not made for it, as in a moving car), parking, the rotary controller |
 | `window freeform [x,y,w,h]` · `window resize x,y,w,h` · `window fullscreen` | the app as a desktop-style window, resized, or fullscreen again (switching mode relaunches the app; freeform windows stay enabled in the device's settings) |
 
