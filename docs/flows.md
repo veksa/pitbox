@@ -96,7 +96,12 @@ locales.
 | `xr panel minimize|close|menu|info|spatial-audio|tidy|close-app` | an XR headset: the controls of the app's panel — its caption and the caption's menu |
 | `xr spin yaw,pitch,roll[,ms]` · `xr drift dx,dy,dz[,ms]` | an XR emulator's head in motion: turning at degrees a second or moving at metres a second for `ms` (default 1000), then still — what the app sees during a turn or a step |
 | `xr env day|night` · `xr passthrough 0…1` · `xr options` | an XR emulator's surroundings: the living room by day or by night, how much of it shows through, the current setting |
-| `mic <file.wav>` | an Android emulator's microphone: plays a PCM WAV (8 or 16 bits, mono or stereo, up to 48 kHz) into it in real time, through the emulator's control channel, and goes on when it has played — an app that records hears it as if spoken. The emulator must run with audio (`boot --audio`, or `android.audio` in the config); the path is from the project root. An iOS simulator records from the Mac's own microphone and takes no file |
+| `mic <sound> [noise=…] [snr=<dB>] [gain=<dB>] [repeat=<n>] [gap=<s>] [bg]` · `mic stop` | an Android emulator's microphone: a file (WAV, or any audio through ffmpeg), `tone <Hz> <secs> [<dB>]`, `noise white\|pink\|brown <secs> [<dB>]` or `silence <secs>`, parts joined with `+`, noise mixed in at an SNR — played in real time once the app records, and the flow goes on when it has played (`bg`: at once, while it plays). The emulator must run with audio (`boot --audio`). An iOS simulator records from the Mac's microphone and takes no file ([media.md](media.md)) |
+| `camera image\|video <file>` · `camera scene wall\|table <img>` | an Android emulator booted with `camera=image:…`/`video:…` shows another picture or clip the next time the app opens the camera; `scene` hangs a poster in the virtual room. iOS simulators have no camera |
+| `library add <file>…` | photos, videos or audio into the device's gallery (Android: pushed and scanned into MediaStore; iOS: `simctl addmedia`) |
+| `call incoming [number]` · `call end\|busy\|hold\|accept` | an Android emulator's phone rings, is answered, held or hung up — what a playing or recording app does when a call takes audio focus |
+| `audio volume <stream> <n\|max\|mute\|unmute>` · `audio ringer normal\|silent\|vibrate` | an Android device's volumes and ringer mode |
+| `capture start [screen\|audio] [fps=<n>] [size=WxH] [touches] [name=…]` · `capture stop [transcribe]` · `capture frames [count=<n>\|every=<s>] [width=<px>]` | records the screen (with the emulator's sound when it runs with audio) or only what the app plays, around the steps between; `frames` takes JPEGs out of the last recording to look at ([media.md](media.md)) |
 | `car day|night|auto` · `car drive [m/s]` · `car park` · `car rotary cw|ccw [n]` | a car: the cabin's day-night mode, driving (the system blocks apps not made for it, as in a moving car), parking, the rotary controller |
 | `window freeform [x,y,w,h]` · `window resize x,y,w,h` · `window fullscreen` | the app as a desktop-style window, resized, or fullscreen again (switching mode relaunches the app; freeform windows stay enabled in the device's settings) |
 
@@ -135,6 +140,9 @@ Every action waits for the UI to settle before the next step.
 | `expect focus <selector>` | the target has input focus (TV, keyboard) |
 | `expect playing [selector]` | the region (or screen) moves between frames and is not black; tried a few times while a player starts |
 | `expect paused [selector]` | nothing moves in the region |
+| `expect sound [min=<s>] [max=<s>] [level=<dBFS>] [freq=<Hz>]` | the last `capture` (audio, or a screen recording with sound) has sound: at least or at most so many seconds of it, at least that loud, its strongest frequency within 3 % |
+| `expect silence` | the last capture has no sound louder than -50 dBFS |
+| `expect said "words"` | the transcript of the last capture (`media.transcribe` in the config) contains the words, case aside |
 | `visual <name> [mask <selector>]…` | the screen matches the stored baseline `<name>`; the first run stores it. Masked targets (a video, a clock) are blanked on both sides |
 | `perf [trace]` | always passes; starts measuring frames, the JS thread, React commits and the JS heap; `trace` adds the platform's trace (Android) |
 | `expect perf <budget>…` | every budget holds over the window since `perf`, like `janky<5 p90<=20ms js<300 commits<=3 rendering<16 heap<2 allocated<20 renders:Row<=40`, and with `perf trace` `slice<16` (the longest slice on the app's main thread). Units: `%` (janky), ms (`s` converts), MB (memory, heap growth, allocated). A metric this device or app cannot measure fails the step. On failure the step shows the broken budgets and the whole perf report |

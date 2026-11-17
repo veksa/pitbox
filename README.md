@@ -22,6 +22,8 @@ extra reach inside the app.
 - **Push notifications with no credentials** — `push` on simulators and emulators, through the app's own FCM
   client on Android; a one-line verdict from the system UI, `push tap` to open it, and a gateway that takes the
   APNs and FCM requests of the project's server.
+- **Media** — sound into the microphone, what the app plays captured and checked, screen recordings around a
+  flow, the camera fed a picture or a clip, the gallery, phone calls and permissions.
 - **Parallel sessions** — every device is leased to the session that drives it: another session's simulator is
   never shut down or driven, and `boot` gives each session a device of its own.
 - **Inside a React Native app with no app code** — fresh code or stale, the network log and rules, the
@@ -76,6 +78,7 @@ export default defineConfig({
 | [Config](docs/config.md) | every field of `pitbox.config.ts` |
 | [Flows](docs/flows.md) | the flow language: steps, selectors, recording |
 | [Push notifications](docs/push.md) | `push` on simulators and emulators, the stand's push gateway, recipes |
+| [Media](docs/media.md) | microphone, sound out, screen recording, camera, gallery, calls; what each platform can do |
 | [Wear OS pairing](docs/wear.md) | a phone and a Wear OS emulator paired through pitbox's Data Layer stand-in |
 | [Using pitbox from an agent](docs/agents.md) | how an agent gets the most out of the tools |
 | [Working in parallel](docs/parallel.md) | device leases: several sessions on one machine, each on its own device |
