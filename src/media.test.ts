@@ -193,8 +193,8 @@ describe('audio capture', () => {
 describe('ffmpeg arguments', () => {
   it('decodes to raw PCM, takes frames, joins and resizes', () => {
     expect(decodeArgs('in.m4a', 48000, 1)).toEqual(['-i', 'in.m4a', '-vn', '-ac', '1', '-ar', '48000', '-f', 's16le', '-acodec', 'pcm_s16le', '-']);
-    expect(framesArgs('v.webm', '/o', {every: 2})).toEqual(['-i', 'v.webm', '-vf', "fps=0.5,scale='min(540,iw)':-2", '-q:v', '4', path.join('/o', 'frame-%03d.jpg')]);
-    expect(framesArgs('v.webm', '/o', {count: 4, duration: 8, width: 300})).toContain("fps=0.5,scale='min(300,iw)':-2");
+    expect(framesArgs('v.webm', '/o', {every: 2})).toEqual(['-i', 'v.webm', '-vf', "fps=0.5,scale='min(540,iw)':-2,format=yuvj420p", '-q:v', '4', path.join('/o', 'frame-%03d.jpg')]);
+    expect(framesArgs('v.webm', '/o', {count: 4, duration: 8, width: 300})).toContain("fps=0.5,scale='min(300,iw)':-2,format=yuvj420p");
     expect(framesArgs('v.webm', '/o', {count: 4, duration: 8})).toContain('-frames:v');
     expect(muxArgs('v.mov', 'a.wav', 'o.mp4', 0.25)).toEqual(['-y', '-i', 'v.mov', '-itsoffset', '0.250', '-i', 'a.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'o.mp4']);
     expect(reencodeArgs('i.mov', 'o.mp4', {fps: 15, size: '540'})).toEqual(['-y', '-i', 'i.mov', '-vf', 'fps=15,scale=540:-2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-c:a', 'copy', 'o.mp4']);

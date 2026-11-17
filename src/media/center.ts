@@ -256,7 +256,7 @@ export class MediaCenter {
     const size = typeof o.size === 'string' ? o.size : undefined;
     if (fps !== undefined && !(fps >= 1 && fps <= 60)) throw new Error('capture: fps is 1…60');
     if (size && !/^\d+(x\d+)?$/.test(size)) throw new Error('capture: size is WxH or a width (720x1280, 720)');
-    const name = typeof o.name === 'string' ? o.name.replace(/[^\w.-]/g, '_') : `${stamp()}-${t.id.slice(0, 24).replace(/[^\w-]/g, '_')}`;
+    const name = typeof o.name === 'string' ? o.name.replace(/[^\w.-]/g, '_') : `${stamp()}-${(t.id.length > 16 ? t.id.slice(0, 8) : t.id).replace(/[^\w-]/g, '_')}`;
     const notes: string[] = [];
     if (what === 'audio') {
       if (t.platform === 'apple') throw new Error(CANNOT.appleAudioOut);
@@ -366,12 +366,15 @@ export class MediaCenter {
       pcm = ffmpegPath() ? await audioOf(file).catch(() => undefined) : undefined;
       if (!ffmpegPath()) c.notes.push(`no audio check: ${NO_FFMPEG}`);
     }
-    const secs = c.kind === 'audio' ? seconds(pcm!) : ((ffmpegPath() ? await probeDuration(file).catch(() => undefined) : undefined) ?? wall);
+    const probed = c.kind === 'screen' && ffmpegPath() ? await probeDuration(file).catch(() => undefined) : undefined;
+    // The simulator writes a frame only when the screen changes: a still end leaves the file shorter than the capture.
+    if (probed !== undefined && probed < wall - 1) c.notes.push(`the file lasts ${probed.toFixed(1)}s: the screen stood still after that (frames are written only on change)`);
+    const secs = c.kind === 'audio' ? seconds(pcm!) : (probed !== undefined && probed < wall - 1 ? probed : wall);
     const report = pcm ? analyze(pcm) : undefined;
     this.#last.set(t.id, {file, pcm, report, secs});
     const out: Record<string, unknown> = {device: t.id, file, secs: Math.round(secs * 10) / 10, bytes: fs.statSync(file).size};
     if (report) out.audio = describe(report);
-    else if (c.kind === 'screen' && pcm === undefined && ffmpegPath()) out.audio = 'none';
+    else if (c.kind === 'screen' && pcm === undefined && ffmpegPath()) out.audio = 'no audio track';
     if (c.notes.length) out.notes = c.notes;
     if (o.transcribe) out.said = await this.#transcribe(t.id);
     return out;

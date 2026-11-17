@@ -54,15 +54,21 @@ export const readAudio = async (file: string, want: {rate: number; channels: num
  */
 export const framesArgs = (video: string, outDir: string, o: {every?: number; count?: number; duration?: number; width?: number}): string[] => {
   const rate = o.count && o.duration ? o.count / o.duration : 1 / (o.every ?? 1);
-  const filters = [`fps=${Number(rate.toFixed(4))}`, `scale='min(${o.width ?? 540},iw)':-2`];
+  const filters = [`fps=${Number(rate.toFixed(4))}`, `scale='min(${o.width ?? 540},iw)':-2`, 'format=yuvj420p'];
   return ['-i', video, '-vf', filters.join(','), ...(o.count ? ['-frames:v', String(o.count)] : []), '-q:v', '4', path.join(outDir, 'frame-%03d.jpg')];
 };
 
 export const extractFrames = async (video: string, outDir: string, o: {every?: number; count?: number; width?: number}): Promise<string[]> => {
   fs.mkdirSync(outDir, {recursive: true});
   const duration = o.count ? await probeDuration(video) : undefined;
-  await ffmpeg(['-y', ...framesArgs(video, outDir, {...o, duration})], 'frames');
-  return fs.readdirSync(outDir).filter(f => /^frame-\d+\.jpg$/.test(f)).sort().map(f => path.join(outDir, f));
+  const list = () => fs.readdirSync(outDir).filter(f => /^frame-\d+\.jpg$/.test(f)).sort().map(f => path.join(outDir, f));
+  // A recording of a screen that stood still can hold a single frame (the simulator writes frames only on change):
+  // the rate filter then gives nothing, and the one frame there is comes out alone.
+  const r = await ffmpeg(['-y', ...framesArgs(video, outDir, {...o, duration})], 'frames').catch((e: Error) => e);
+  if (list().length) return list();
+  await ffmpeg(['-y', '-i', video, '-vf', `scale='min(${o.width ?? 540},iw)':-2`, '-frames:v', '1', '-q:v', '4', path.join(outDir, 'frame-001.jpg')], 'frames');
+  if (!list().length && r instanceof Error) throw r;
+  return list();
 };
 
 /** Seconds of a media file, from ffmpeg's own reading of it (no ffprobe needed). */
