@@ -930,6 +930,10 @@ export class Engine {
       // The boot pitbox made, on the lease: only while the simulator still runs it may a release or the reaper shut
       // it down (not one booted again later by hand or by Xcode on the same udid).
       if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) await this.#markAppleBoot(pick.udid);
+      // The UI runner takes 15–20 s to start (xcodebuild test-without-building): started now, it is up by the time
+      // the agent has installed and opened its app, instead of holding up the first action. A failure here is
+      // said by that action, which starts it again.
+      if (!r.already) void this.ui(pick.udid).then(u => (u.runner as {start?: () => Promise<void>}).start?.()).catch(() => undefined);
       return {
         ...r,
         platform: 'apple',
