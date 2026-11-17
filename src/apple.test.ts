@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
-import {runnerNotice, sourceHash} from './drivers/apple/runner.ts';
+import {AppleRunner, runnerNotice, sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
@@ -437,5 +437,18 @@ describe('apple hardware keys', () => {
     const {hidChord} = await import('./drivers/apple/hid.ts');
     expect(hidChord(3)).toBeUndefined();
     expect(hidChord(4)).toBeUndefined();
+  });
+});
+
+describe('ui runner start', () => {
+  it('a runner given back while it starts (started at boot) never starts xcodebuild, which would boot the simulator again', async () => {
+    let listed!: () => void;
+    const gate = new Promise<void>(r => (listed = r));
+    const driver = {simulators: async () => (await gate, [{udid: 'U1', name: 'iPhone 17', state: 'Shutdown', kind: 'phone'}])};
+    const runner = new AppleRunner(driver as never, 'U1', 'com.example.app');
+    const started = runner.start();
+    await runner.stop();
+    listed();
+    await expect(started).rejects.toThrow(/stopped while it started/);
   });
 });

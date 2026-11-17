@@ -192,11 +192,14 @@ export class AppleRunner {
     this.#teardown(false);
     this.#answered = false;
     const sim = (await this.#driver.simulators()).find(s => s.udid === this.udid);
+    if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
     if (!sim || sim.state !== 'Booted') throw new AppleError(`simulator ${this.udid} is not booted`);
     this.#kind = sim.kind;
     const {xctestrun} = await buildRunner(sim.kind);
     await clearStaleRunner(this.#driver, this.udid, old);
     const port = await freePort();
+    // xcodebuild boots a shut-down destination: a runner stopped meanwhile (the simulator given back) never starts.
+    if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
     const child = spawn('xcodebuild', ['test-without-building', '-xctestrun', xctestrun, '-destination', `id=${this.udid}`, '-only-testing:PitboxRunner/RunnerTests/testServe'], {
       env: {...process.env, TEST_RUNNER_PITBOX_PORT: String(port)},
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -216,6 +219,10 @@ export class AppleRunner {
     });
     const deadline = Date.now() + 180_000;
     while (!this.alive) {
+      if (this.#stopped) {
+        this.#teardown();
+        throw new AppleError(`runner for ${this.udid} was stopped while it started`);
+      }
       if (exited) throw new AppleError(`runner exited before it answered: ${output.trim().split('\n').filter(l => /error|fail/i.test(l)).slice(-3).join(' ') || output.trim().split('\n').slice(-2).join(' ')}`);
       if (Date.now() > deadline) {
         this.#teardown();
@@ -332,7 +339,11 @@ export class AppleRunner {
     });
   }
 
+  /** Given back: a start still under way (one begun at boot) ends instead of booting the simulator again. */
+  #stopped = false;
+
   async stop() {
+    this.#stopped = true;
     if (this.alive) await this.call('shutdown', {}, 3000).catch(() => undefined);
     this.#teardown();
   }
