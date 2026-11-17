@@ -178,8 +178,15 @@ if (remoteSim) {
   } catch (e) {
     checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
   } finally {
+    // Given back through the remote Mac, whose session booted and holds it: this project's daemon holds no lease on
+    // it and would leave it running, unleased, and the React Native section would then boot a copy beside it. The
+    // daemon with the wrong token goes first.
     far(['daemon', 'stop']);
-    if (!wasBooted) pitbox(['shutdown', '--device', remoteSim.udid], {timeout: 120_000});
+    if (!wasBooted) {
+      const back = far(['shutdown', '--device', remoteSim.udid], {timeout: 120_000});
+      checks.push({name: 'the simulator is given back through the remote Mac', ok: back.code === 0, ...(back.code === 0 ? {} : {note: back.out.split('\n')[0]})});
+    }
+    far(['daemon', 'stop']);
     host.kill();
     fs.rmSync(dir, {recursive: true, force: true});
   }
