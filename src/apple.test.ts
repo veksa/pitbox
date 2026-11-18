@@ -144,6 +144,30 @@ describe('apple driver', () => {
     expect(await w.since(Date.now(), ['com.example.app'])).toEqual([]);
   });
 
+  it('does not ask the simulator whether the app runs when its window is on screen after the action', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    let asked = 0;
+    const driver = {
+      simctl: async () => (asked++, {stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}),
+      simulators: async () => [{udid: 'AAA', kind: 'phone'}],
+    };
+    const saved = AppleCrashWatcher.waitMs;
+    AppleCrashWatcher.waitMs = {quick: 100, long: 100};
+    try {
+      const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+      w.begin(['com.example.app']);
+      expect(await w.since(Date.now(), ['com.example.app'])).toEqual([]);
+      expect(asked).toBe(0);
+      // Gone from the screen: asked, and with no process and no report, said to have stopped.
+      w.begin(['com.example.app']);
+      const [e] = await w.since(Date.now(), ['com.apple.springboard']);
+      expect(asked).toBe(1);
+      expect(e?.summary).toMatch(/stopped running during the action/);
+    } finally {
+      AppleCrashWatcher.waitMs = saved;
+    }
+  });
+
   it('waits for the report of a crash that came after the last action when a flow failed', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
     const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
