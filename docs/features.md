@@ -95,8 +95,8 @@ compact text.
 - `app_tree` — the React tree from inside the app.
 - Crashes, ANRs and JS errors come back with the step they happened in; JS stacks are mapped to source files
   and lines by the bundler, bytecode included. A simulator app's crash is read from the Mac's crash report, found
-  by what is in it (macOS rewrites and touches old reports); macOS saves no new report of an app while it keeps 25
-  of it in `~/Library/Logs/DiagnosticReports`, and then the answer says so at once — the app stopped, how many
+  by what is in it (macOS rewrites and touches old reports); macOS saves almost no new report of an app while it keeps
+  25 of it in `~/Library/Logs/DiagnosticReports`, and then the answer says so within a few seconds — the app stopped, how many
   reports are kept, where to remove old ones — instead of waiting for a report that never comes.
 
 ## Media

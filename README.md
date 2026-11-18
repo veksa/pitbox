@@ -72,7 +72,7 @@ without it. Details and method: [slim devices, warm templates and native builds]
 | UI runner start, to the first snapshot | 14.1 s | 3.4 s |
 | … after a daemon restart (the running runner is taken over) | 14.1 s | 0.24 s |
 | Relaunch of the app and the first snapshot after it | 2.49 s | 1.78 s |
-| A crash macOS saves no report of (it keeps 25 per app): the answer | after a 60 s wait | at once |
+| A crash macOS saves no report of (it keeps 25 per app): the answer | after a 60 s wait | within 4 s |
 
 **Android UI actions** (the Android example on an API 36 phone emulator; median of five, each call through the
 daemon):
