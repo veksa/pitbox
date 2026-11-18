@@ -949,8 +949,9 @@ export class Engine {
       if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) await this.#markAppleBoot(pick.udid);
       // The UI runner takes 15–20 s to start (xcodebuild test-without-building): started now, it is up by the time
       // the agent has installed and opened its app, instead of holding up the first action. A failure here is
-      // said by that action, which starts it again.
-      if (!r.already) void this.ui(pick.udid).then(u => (u.runner as {start?: () => Promise<void>}).start?.()).catch(() => undefined);
+      // said by that action, which starts it again. Only on this Mac's own simulators: a stand-in driver (a test's)
+      // would start a real xcodebuild against a simulator that does not exist.
+      if (!r.already && s instanceof AppleDriver) void this.ui(pick.udid).then(u => (u.runner as {start?: () => Promise<void>}).start?.()).catch(() => undefined);
       return {
         ...r,
         platform: 'apple',

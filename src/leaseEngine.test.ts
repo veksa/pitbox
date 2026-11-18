@@ -257,6 +257,19 @@ describe('simulators', () => {
     expect(apple.sims.find(s => s.udid === 'U1')?.state).toBe('Booted');
   });
 
+  it('starts no ui runner (a real xcodebuild) at the boot of a stand-in simulator', async () => {
+    const {AppleRunner} = await import('./drivers/apple/runner.ts');
+    const start = vi.spyOn(AppleRunner.prototype, 'start');
+    try {
+      const a = await session('alice', {apple: new FakeApple([{}])});
+      expect(await a.methods.boot({avd: 'iPhone 17'})).toMatchObject({udid: 'U1', already: false});
+      await new Promise(r => setTimeout(r, 50));
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      start.mockRestore();
+    }
+  });
+
   it('leaves a simulator that runs with no lease alone and takes an idle twin', async () => {
     const apple = new FakeApple([{state: 'Booted'}, {}]);
     const b = await session('bob', {apple});
