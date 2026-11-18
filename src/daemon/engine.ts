@@ -2524,7 +2524,10 @@ export class Engine {
       const root = this.#loaded.root;
       const app = (platform === 'android' ? this.config.app?.android : this.config.app?.apple) ?? path.basename(root);
       const toolchain = platform === 'ios' ? await this.#xcodeVersion() : '';
-      const r = await ensureBuild({root, app, platform, spec, inputs: buildInputs(spec, platform, !!this.config.devserver), toolchain, ...(this.config.shell ? {shell: this.config.shell} : {})});
+      // The caller's environment (the CLI's or the MCP server's) gives the declared variables their values; the
+      // daemon's own environment is that of whichever session started it.
+      const callerEnv = p.env && typeof p.env === 'object' ? (p.env as Record<string, string>) : undefined;
+      const r = await ensureBuild({root, app, platform, spec, inputs: buildInputs(spec, platform, !!this.config.devserver), toolchain, ...(callerEnv ? {callerEnv} : {}), ...(this.config.shell ? {shell: this.config.shell} : {})});
       if (bool(p, 'install') === false) return r;
       const installed = (await this.methods.install({apk: r.artifact, device: str(p, 'device'), replace: bool(p, 'replace')})) as {ms: number; serial?: string; udid?: string};
       return {...r, installed: {on: installed.serial ?? installed.udid, ms: installed.ms}};

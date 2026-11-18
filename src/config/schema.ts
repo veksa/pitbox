@@ -122,6 +122,10 @@ const nativeBuildSchema = z
     inputs: z.array(z.string()).optional(),
     /** Seconds the build may take. Default 1800. */
     timeout: z.number().positive().optional(),
+    /** Environment variables that are inputs (names or globs on names): their values are in the fingerprint. */
+    env: z.array(z.string()).optional(),
+    /** Files or folders outside what git lists (absolute, `~/…`, ignored, `$NAME` of `env`) whose content is an input. */
+    files: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -150,7 +154,7 @@ export const configSchema = z.object({
        * 'android/app/build/outputs/apk/debug/app-debug.apk'}, ios: {command: 'xcodebuild … build', output:
        * 'build/Build/Products/Debug-iphonesimulator/MyApp.app'}}`. `inputs` (globs; `!glob` excludes) defaults to the
        * platform's folder, manifests, lock files and app config when a dev server serves the JS, else every file git
-       * sees.
+       * sees. `env` and `files` add variables and files git does not list.
        */
       build: z
         .object({

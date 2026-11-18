@@ -7,6 +7,10 @@
 // For an app with a JS dev server (React Native and the like) the JS is not a native input: the debug build loads it
 // from the dev server, so a JS-only change reuses the build. The default inputs are then the platform's folder, the
 // package manifests and lock files and the app's config; a native app takes every file git sees.
+//
+// Beyond the files git sees, a build may declare environment variables (`env`) and files outside the checkout or
+// ignored by git (`files`) as inputs: a variant of the build (a probe, an architecture, a config preset) is then a
+// fingerprint of its own.
 
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
@@ -27,6 +31,17 @@ export type NativeBuildSpec = {
   inputs?: string[];
   /** Seconds the build may take. Default 1800. */
   timeout?: number;
+  /**
+   * Environment variables that are inputs of the build: names, or globs on names (`APP_*`). Their values are in the
+   * fingerprint (an unset name and an empty one differ), and the build runs with the caller's values of them.
+   */
+  env?: string[];
+  /**
+   * Files or folders read by the build that git does not list: absolute, `~/…`, relative to the root (ignored files),
+   * or `$NAME…` with `NAME` a variable of `env`. Their content is in the fingerprint; a missing one counts as absent,
+   * a `$NAME` that points at nothing is an error.
+   */
+  files?: string[];
 };
 
 const MANIFESTS = ['package.json', 'yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'app.json', 'app.config.*', 'eas.json', 'react-native.config.js', 'patches/**', '.yarnrc.yml'];
@@ -91,13 +106,73 @@ export const listFiles = (root: string): string[] => {
   }
 };
 
-export type Fingerprint = {hash: string; files: number; ms: number};
+export type Fingerprint = {hash: string; files: number; ms: number; variant?: string};
+
+const GLOB_CHARS = /[*?{]/;
+const envMatcher = (patterns: string[]) => {
+  const res = patterns.filter(p => GLOB_CHARS.test(p)).map(globRe);
+  const names = new Set(patterns.filter(p => !GLOB_CHARS.test(p)));
+  return (name: string) => names.has(name) || res.some(r => r.test(name));
+};
+
+/**
+ * The environment a build runs with: the daemon's own, with the declared variables taken from the caller's
+ * environment when one is given — set as the caller has them, unset when the caller has not.
+ */
+export const buildEnv = (spec: Pick<NativeBuildSpec, 'env'>, base: NodeJS.ProcessEnv, caller?: Record<string, string | undefined>): NodeJS.ProcessEnv => {
+  if (!caller || !spec.env?.length) return base;
+  const declared = envMatcher(spec.env);
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) if (!declared(k)) env[k] = v;
+  for (const [k, v] of Object.entries(caller)) if (declared(k) && typeof v === 'string') env[k] = v;
+  return env;
+};
+
+/** The declared variables as fingerprint entries, sorted: `NAME=value`, or `NAME` unset for a plain name not set. */
+export const envEntries = (patterns: string[], env: NodeJS.ProcessEnv): string[] => {
+  const declared = envMatcher(patterns);
+  const out = new Map<string, string>();
+  for (const p of patterns) if (!GLOB_CHARS.test(p)) out.set(p, env[p] === undefined ? `${p}\0unset` : `${p}=${env[p]}`);
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && declared(k)) out.set(k, `${k}=${v}`);
+  return [...out.keys()].sort().map(k => out.get(k)!);
+};
+
+/** Where a declared file is: `~` is the home folder, `$NAME` a declared variable, a relative path is under the root. */
+export const resolveBuildFile = (entry: string, root: string, env: NodeJS.ProcessEnv, declaredEnv: string[] = []): string | undefined => {
+  const v = /^\$(?:\{(\w+)\}|(\w+))(.*)$/.exec(entry);
+  if (v) {
+    const name = (v[1] ?? v[2])!;
+    if (!envMatcher(declaredEnv)(name)) throw new BuildError(`build files: ${entry} names $${name}, which is not in the build's env`);
+    const value = env[name];
+    if (!value) return undefined;
+    const file = path.resolve(root, `${value}${v[3]}`);
+    if (!fs.existsSync(file)) throw new BuildError(`build files: $${name} points at ${file}, which does not exist`);
+    return file;
+  }
+  if (entry === '~' || entry.startsWith('~/')) return path.join(os.homedir(), entry.slice(1));
+  return path.resolve(root, entry);
+};
+
+const walkFiles = (dir: string): string[] => {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const e of fs.readdirSync(path.join(dir, rel), {withFileTypes: true}).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (e.name === '.git' || e.name === '.DS_Store') continue;
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(r);
+      else if (e.isFile()) out.push(r);
+    }
+  };
+  walk('');
+  return out;
+};
 
 /**
  * The fingerprint of a build: its command and output, the toolchain, and the path and content of every input file.
- * A file listed by git but gone from the disk (deleted, not yet staged) counts as absent.
+ * A file listed by git but gone from the disk (deleted, not yet staged) counts as absent. Declared variables and
+ * files are added after them, so a build that declares none keeps the fingerprint it had before they existed.
  */
-export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[], toolchain = ''): Fingerprint => {
+export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[], toolchain = '', env: NodeJS.ProcessEnv = process.env): Fingerprint => {
   const t0 = Date.now();
   const res = inputs.filter(g => !g.startsWith('!')).map(globRe);
   const not = inputs.filter(g => g.startsWith('!')).map(g => globRe(g.slice(1)));
@@ -118,7 +193,28 @@ export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[
     h.update(body);
     n++;
   }
-  return {hash: h.digest('hex').slice(0, 16), files: n, ms: Date.now() - t0};
+  let variant: string | undefined;
+  if (spec.env?.length) {
+    const entries = envEntries(spec.env, env);
+    h.update(`\0env\0${entries.join('\0')}\0`);
+    variant = crypto.createHash('sha256').update(entries.join('\0')).digest('hex').slice(0, 8);
+  }
+  for (const entry of spec.files ?? []) {
+    h.update(`\0file\0${entry}\0`);
+    const file = resolveBuildFile(entry, root, env, spec.env);
+    const st = file ? fs.statSync(file, {throwIfNoEntry: false}) : undefined;
+    if (!file || !st) {
+      h.update('absent\0');
+      continue;
+    }
+    for (const rel of st.isDirectory() ? walkFiles(file) : ['']) {
+      const body = fs.readFileSync(rel ? path.join(file, rel) : file);
+      h.update(`${rel}\0${body.length}\0`);
+      h.update(body);
+      n++;
+    }
+  }
+  return {hash: h.digest('hex').slice(0, 16), files: n, ms: Date.now() - t0, ...(variant ? {variant} : {})};
 };
 
 /** Where an app's builds for a platform are kept: by the app's id, so every checkout of it shares them. */
@@ -128,7 +224,7 @@ export const buildsDir = (app: string, platform: NativePlatform, cacheRoot = pat
 const DONE = 'build.json';
 export const KEEP_BUILDS = 3;
 
-type Done = {builtAt: number; ms: number; command: string; artifact: string};
+type Done = {builtAt: number; ms: number; command: string; artifact: string; variant?: string};
 
 const readDone = (dir: string): Done | undefined => {
   try {
@@ -179,6 +275,8 @@ export type BuildResult = {
   /** Ms waited for another process building the same fingerprint, or for the machine's build slot. */
   waitedMs?: number;
   inputs: number;
+  /** The variant, a hash of the declared variables' values, when the build declares any. */
+  variant?: string;
 };
 
 export class BuildError extends Error {}
@@ -187,9 +285,11 @@ export class BuildError extends Error {}
  * The build of `spec` for its current inputs: from the cache, or built now. Builds of one fingerprint are single
  * flight across processes; native builds of any app take turns on the machine (`native-build` lock).
  */
-export const ensureBuild = async (o: {root: string; app: string; platform: NativePlatform; spec: NativeBuildSpec; inputs: string[]; toolchain?: string; cacheRoot?: string; shell?: string}): Promise<BuildResult> => {
+export const ensureBuild = async (o: {root: string; app: string; platform: NativePlatform; spec: NativeBuildSpec; inputs: string[]; toolchain?: string; cacheRoot?: string; shell?: string; callerEnv?: Record<string, string | undefined>}): Promise<BuildResult> => {
   const t0 = Date.now();
-  const fp = fingerprint(o.root, o.spec, o.inputs, o.toolchain);
+  const env = buildEnv(o.spec, process.env, o.callerEnv);
+  const fp = fingerprint(o.root, o.spec, o.inputs, o.toolchain, env);
+  const variant = fp.variant ? {variant: fp.variant} : {};
   const dir = buildsDir(o.app, o.platform, o.cacheRoot);
   const slot = path.join(dir, fp.hash);
   const name = path.basename(o.spec.output);
@@ -197,7 +297,7 @@ export const ensureBuild = async (o: {root: string; app: string; platform: Nativ
     const done = readDone(slot);
     if (!done || !fs.existsSync(path.join(slot, name))) return undefined;
     fs.utimesSync(path.join(slot, DONE), new Date(), new Date());
-    return {platform: o.platform, fingerprint: fp.hash, reused: true, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs: done.ms, inputs: fp.files, ...(waitedMs ? {waitedMs} : {})};
+    return {platform: o.platform, fingerprint: fp.hash, reused: true, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs: done.ms, inputs: fp.files, ...variant, ...(waitedMs ? {waitedMs} : {})};
   };
   const cached = hit();
   if (cached) return cached;
@@ -216,7 +316,7 @@ export const ensureBuild = async (o: {root: string; app: string; platform: Nativ
         async () => {
           const waitedMs = Date.now() - tWait;
           const tb = Date.now();
-          const r = await runShell(o.spec.command, {cwd: o.root, timeoutMs, ...(o.shell ? {shell: o.shell} : {})});
+          const r = await runShell(o.spec.command, {cwd: o.root, env, timeoutMs, ...(o.shell ? {shell: o.shell} : {})});
           const buildMs = Date.now() - tb;
           if (r.code !== 0) {
             const tail = `${r.stdout}\n${r.stderr}`.trim().split(/\r?\n/).filter(l => l.trim()).slice(-8).join('\n');
@@ -229,13 +329,13 @@ export const ensureBuild = async (o: {root: string; app: string; platform: Nativ
           fs.rmSync(tmp, {recursive: true, force: true});
           fs.mkdirSync(tmp, {recursive: true});
           copy(out, path.join(tmp, name));
-          const done: Done = {builtAt: Date.now(), ms: buildMs, command: o.spec.command, artifact: name};
+          const done: Done = {builtAt: Date.now(), ms: buildMs, command: o.spec.command, artifact: name, ...variant};
           fs.writeFileSync(path.join(tmp, DONE), JSON.stringify(done));
           fs.rmSync(slot, {recursive: true, force: true});
           fs.renameSync(tmp, slot);
           // A build that rewrites its own inputs (`pod install` updating Podfile.lock, codegen into a tracked file)
           // is kept under the fingerprint it leaves as well: the next request asks for that one.
-          const after = fingerprint(o.root, o.spec, o.inputs, o.toolchain).hash;
+          const after = fingerprint(o.root, o.spec, o.inputs, o.toolchain, env).hash;
           if (after !== fp.hash) {
             const again = path.join(dir, after);
             const tmp2 = `${again}.tmp-${process.pid}`;
@@ -247,7 +347,7 @@ export const ensureBuild = async (o: {root: string; app: string; platform: Nativ
             fs.renameSync(tmp2, again);
           }
           gcBuilds(dir, fp.hash);
-          return {platform: o.platform, fingerprint: fp.hash, reused: false, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs, inputs: fp.files, ...(waitedMs > 1000 ? {waitedMs} : {})};
+          return {platform: o.platform, fingerprint: fp.hash, reused: false, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs, inputs: fp.files, ...variant, ...(waitedMs > 1000 ? {waitedMs} : {})};
         },
         timeoutMs + 60 * 60_000,
       );

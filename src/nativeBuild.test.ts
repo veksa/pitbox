@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {BuildError, buildInputs, buildsDir, ensureBuild, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
+import {BuildError, buildEnv, buildInputs, buildsDir, ensureBuild, envEntries, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
 
 let root: string;
 let cache: string;
@@ -142,5 +142,105 @@ describe('native build cache', () => {
     const dir = buildsDir('com.example.app', 'android', cache);
     expect(fs.readdirSync(dir)).toHaveLength(3);
     expect(gcBuilds(dir, 'none', 1)).toHaveLength(2);
+  });
+
+  it('the build runs with the caller\'s values of the declared variables, unset when the caller has none', async () => {
+    const s = {command: `mkdir -p out; printf "%s/%s" "\${APP_PROBE-unset}" "\${HOME:+home}" > out/app.apk`, output: 'out/app.apk', env: ['APP_PROBE']};
+    const run = (callerEnv: Record<string, string>) => ensureBuild({root, app: 'com.example.app', platform: 'android', spec: s, inputs: ['**'], cacheRoot: cache, callerEnv});
+    process.env.APP_PROBE = 'daemon';
+    try {
+      expect(fs.readFileSync((await run({})).artifact, 'utf8')).toBe('unset/home');
+      expect(fs.readFileSync((await run({APP_PROBE: ''})).artifact, 'utf8')).toBe('/home');
+      expect(fs.readFileSync((await run({APP_PROBE: '1'})).artifact, 'utf8')).toBe('1/home');
+    } finally {
+      delete process.env.APP_PROBE;
+    }
+  });
+});
+
+describe('native build variables, exclusions and outside files', () => {
+  const fp = (over: object = {}, env: NodeJS.ProcessEnv = {}, inputs = ['**']) => fingerprint(root, {...spec(), ...over}, inputs, '', env).hash;
+
+  it('a build that declares nothing keeps its fingerprint, whatever the environment', () => {
+    const a = fp({}, {APP_PROBE: '1'});
+    expect(fp({}, {})).toBe(a);
+    expect(fp({env: [], files: []}, {APP_X: '2'})).toBe(a);
+    expect(fingerprint(root, spec(), ['**']).variant).toBeUndefined();
+  });
+
+  it('declared variables are inputs: names and globs, unset differs from empty', () => {
+    const e = {env: ['APP_PROBE', 'APP_PUBLIC_*']};
+    const unset = fp(e, {});
+    const empty = fp(e, {APP_PROBE: ''});
+    const one = fp(e, {APP_PROBE: '1'});
+    expect(new Set([unset, empty, one]).size).toBe(3);
+    expect(fp(e, {APP_PROBE: '1', OTHER: 'x'})).toBe(one);
+    expect(fp(e, {APP_PROBE: '1', APP_PUBLIC_URL: 'a'})).not.toBe(one);
+    expect(fp(e, {APP_PROBE: '1', APP_PUBLIC_URL: 'b'})).not.toBe(fp(e, {APP_PROBE: '1', APP_PUBLIC_URL: 'a'}));
+    expect(fp(e, {APP_PROBE: '1', APP_PUBLIC_URL: ''})).not.toBe(one);
+    expect(envEntries(['B', 'A_*'], {A_2: 'x', A_1: 'y', B: 'z', C: 'w'})).toEqual(['A_1=y', 'A_2=x', 'B=z']);
+  });
+
+  it('the build environment takes the declared variables from the caller only', () => {
+    const env = buildEnv({env: ['APP_*']}, {PATH: '/bin', APP_A: 'daemon', APP_B: 'daemon'}, {APP_A: 'caller', OTHER: 'x'});
+    expect(env).toEqual({PATH: '/bin', APP_A: 'caller'});
+    expect(buildEnv({}, {PATH: '/bin'}, {APP_A: 'x'})).toEqual({PATH: '/bin'});
+  });
+
+  it('declared files outside the checkout or ignored count by content; a missing one counts as absent', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-preset-'));
+    try {
+      const preset = path.join(outside, 'preset.json');
+      const files = {files: [preset, 'local/secret.env']};
+      const missing = fp(files);
+      fs.writeFileSync(preset, '{"a":1}');
+      const one = fp(files);
+      expect(one).not.toBe(missing);
+      fs.writeFileSync(preset, '{"a":2}');
+      const two = fp(files);
+      expect(two).not.toBe(one);
+      // An ignored file (no git here: listed by the walk too, so excluded from the globs to stand for one).
+      write('local/secret.env', 'A=1');
+      const withLocal = fp(files, {}, ['**', '!local/**']);
+      write('local/secret.env', 'A=2');
+      expect(fp(files, {}, ['**', '!local/**'])).not.toBe(withLocal);
+      // A folder counts by every file in it.
+      const folder = {files: [outside]};
+      const f1 = fp(folder);
+      fs.writeFileSync(path.join(outside, 'more.txt'), 'x');
+      expect(fp(folder)).not.toBe(f1);
+    } finally {
+      fs.rmSync(outside, {recursive: true, force: true});
+    }
+  });
+
+  it('a file named by a declared variable: unset adds nothing, a path to nothing is an error', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-preset-'));
+    try {
+      const preset = path.join(outside, 'preset.json');
+      fs.writeFileSync(preset, '1');
+      const s = {env: ['APP_PRESET'], files: ['$APP_PRESET']};
+      const a = fp(s, {APP_PRESET: preset});
+      fs.writeFileSync(preset, '2');
+      expect(fp(s, {APP_PRESET: preset})).not.toBe(a);
+      expect(fp(s, {})).not.toBe(a);
+      expect(() => fp(s, {APP_PRESET: path.join(outside, 'none.json')})).toThrow(/APP_PRESET points at .*none.json/);
+      expect(() => fp({files: ['$APP_PRESET']}, {APP_PRESET: preset})).toThrow(/not in the build's env/);
+      expect(() => fp({env: ['APP_DIR'], files: ['${APP_DIR}/preset.json']}, {APP_DIR: outside})).not.toThrow();
+    } finally {
+      fs.rmSync(outside, {recursive: true, force: true});
+    }
+  });
+
+  it('~ is the home folder', () => {
+    const home = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const a = fp({files: ['~/local.json']});
+      write('local.json', 'x');
+      expect(fp({files: ['~/local.json']})).not.toBe(a);
+    } finally {
+      process.env.HOME = home;
+    }
   });
 });

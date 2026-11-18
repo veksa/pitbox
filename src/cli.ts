@@ -187,7 +187,8 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       throw new Error('device lease [--device d] [--purpose text] | device release [--device d] [--keep] | device pair watch [<watch name|avd>] [--device phone] | device unpair watch');
     }
     case 'build':
-      return {method: 'build', params: {...common, platform: rest[0], replace: flags.replace, ...(flags['no-install'] ? {install: false} : {})}};
+      // The build's declared variables take their values from this shell, not from the daemon's environment.
+      return {method: 'build', params: {...common, platform: rest[0], replace: flags.replace, env: {...process.env}, ...(flags['no-install'] ? {install: false} : {})}};
     case 'install':
       return {method: 'install', params: {...common, apk: rest[0], replace: flags.replace}};
     case 'open':
