@@ -79,7 +79,9 @@ compact text.
   it would type a new line); system sheets that cover the app (permission requests, the save
   password offer) are named in snapshots and failed waits; a button of an iOS permission request is tapped once
   its alert stops animating in (the system drops a tap before, and the alert then outlives even a relaunch of the
-  app), and one that stays on screen after the press is pressed again and said, or the press fails; React Native's
+  app), and one that stays on screen after the press is pressed again and said, or the press fails; a field a
+  fill's tap left without focus is tapped once more, and a field that dropped typed keys is typed again key by key,
+  both said in the note; React Native's
   warnings toast is kept away in apps on pitbox's dev server and closed elsewhere when it covers the target.
 - **Fast on busy screens** — taps on a screen with a playing video take milliseconds (the platform's
   wait-for-animations is skipped). On iOS the runner skips XCUITest's wait for the app around every event and
