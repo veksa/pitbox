@@ -39,11 +39,14 @@ enum Events {
     return path
   }
 
+  /// `UIInterfaceOrientation.portrait`, spelled out: the type is unavailable on tvOS, where the runner builds too.
+  private static let portrait = 1
+
   /// The app's interface orientation, which the record turns points with; portrait when XCUITest does not say.
   private static func orientation(of app: XCUIApplication) -> Int {
-    guard app.responds(to: NSSelectorFromString("interfaceOrientation")) else { return UIInterfaceOrientation.portrait.rawValue }
+    guard app.responds(to: NSSelectorFromString("interfaceOrientation")) else { return portrait }
     let value = (app.value(forKey: "interfaceOrientation") as? NSNumber)?.intValue ?? 0
-    return value == 0 ? UIInterfaceOrientation.portrait.rawValue : value
+    return value == 0 ? portrait : value
   }
 
   /// `count` taps at a point of the app's screen (two: a double tap), each held `hold` seconds (a long press). False
