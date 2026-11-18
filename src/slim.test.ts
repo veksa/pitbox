@@ -161,7 +161,8 @@ const stubShell = (sdk: number, settings: Record<string, string> = {}) => {
   return {shell, get, log, done: () => fs.rmSync(dir, {recursive: true, force: true})};
 };
 
-describe('slim tuning', () => {
+// The tuning script runs in the device's POSIX shell; the stubs need one with POSIX paths, which Windows lacks.
+describe.skipIf(process.platform === 'win32')('slim tuning', () => {
   it('turns background dexopt, flag sync and the spell checker off; stock puts the setting back', async () => {
     const d = stubShell(36, {'secure spell_checker_enabled': '1'});
     expect(await tune(d.shell)).toEqual({off: ['background dexopt', 'flag sync', 'spell check'], failed: []});
