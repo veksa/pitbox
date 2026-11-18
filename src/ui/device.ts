@@ -561,7 +561,24 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     let r = await this.runner.call<{set: boolean; retyped?: boolean}>('text', args);
     // The tap brought up a fullscreen keyboard, which hides the field's window: with the keyboard gone the field
     // keeps its focus and takes the text.
-    if (!r.set && (await this.snapshot()).windows.some(w => w.type === 'ime')) {
+    let note: string | undefined;
+    const after = r.set ? undefined : await this.snapshot();
+    if (after && editable && !after.windows.some(w => w.type === 'ime')) {
+      // An editable field that took no focus and no keyboard up: the tap did not reach it (the system dropped the
+      // touch). Tapped once more where the field is now, then typed into.
+      let again: ReturnType<typeof resolveTarget> | undefined;
+      try {
+        again = resolveTarget(after, selector);
+      } catch {
+        again = undefined;
+      }
+      if (again?.node && (again.node.f ?? '').includes('e')) {
+        await this.runner.call('tap', {x: again.x, y: again.y});
+        if (!this.runner.waitsForFocus) await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
+        r = await this.runner.call<{set: boolean; retyped?: boolean}>('text', {text, bounds: again.node.b});
+        if (r.set) note = 'the field did not take the first tap: tapped again';
+      }
+    } else if (after?.windows.some(w => w.type === 'ime')) {
       // The layout may have moved with the keyboard: the field where it is now, or the one with input focus.
       const now = await this.#hideKeyboard(selector);
       let node: UiNode | undefined;
@@ -593,7 +610,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     this.#typed = !ime(this.last);
     // The field dropped keys typed in one go and the runner typed it all again key by key: said, as a controlled
     // input then renders about twice per key (a render budget over the fill counts them).
-    const note = r.retyped ? 'the field dropped keys typed in one go: cleared and typed again key by key' : undefined;
+    if (r.retyped) note = [note, 'the field dropped keys typed in one go: cleared and typed again key by key'].filter(Boolean).join('; ');
     return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0, note))};
   }
 

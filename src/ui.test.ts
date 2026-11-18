@@ -1461,3 +1461,27 @@ describe('a fill the field dropped keys of', () => {
     expect(r.note).toMatch(/dropped keys typed in one go: cleared and typed again key by key/);
   });
 });
+
+describe('a fill whose tap the field did not take', () => {
+  it('taps the field once more and types, said in the note, instead of failing the fill', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const name: UiNode = {p: -1, w: 0, c: 'TextField', b: [0, 0, 400, 50], id: 'name', f: 'cfe'};
+    let taps = 0;
+    const runner = {
+      waitsForFocus: true,
+      call: async (cmd: string) => {
+        if (cmd === 'tap') taps++;
+        if (cmd === 'tree') return {windows: app, nodes: [name]};
+        if (cmd === 'info') return {width: 400, height: 900};
+        // The first tap was dropped: no field has the focus until the second.
+        if (cmd === 'text') return {set: taps >= 2};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).fill('id=name', 'Ada');
+    expect(taps).toBe(2);
+    expect(r.note).toMatch(/did not take the first tap: tapped again/);
+  });
+});
