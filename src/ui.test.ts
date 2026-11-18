@@ -1392,3 +1392,52 @@ describe('the outcome a recorded press is checked by', () => {
     expect(ui.recording).toEqual(['press id=apply', 'expect text="Code applied"']);
   }, 30_000);
 });
+
+describe("a button of the shell's alert", () => {
+  const withAlert: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}, {type: 'app', title: 'Allow?', pkg: 'com.apple.springboard'}];
+  const appOnly: UiWindow[] = [withAlert[0]!];
+  const camera: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 0, 400, 50], id: 'camera', t: 'Camera', f: 'c'};
+  const deny: UiNode = {p: -1, w: 1, c: 'Button', b: [50, 400, 190, 450], id: 'kTCCServiceCamera-deny-button', t: 'Don’t Allow', f: 'c'};
+  /** A shell whose alert drops the first `drops` taps on its button (the alert still animating in) and closes `closeMs` after one that takes. */
+  const shell = (drops: number, closeMs = 0) => {
+    let closedAt = Infinity;
+    const taps: string[] = [];
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(String(args.window));
+          if (taps.length > drops) closedAt = Date.now() + closeMs;
+        }
+        if (cmd === 'tree') return Date.now() >= closedAt ? {windows: appOnly, nodes: [camera]} : {windows: withAlert, nodes: [camera, deny]};
+        if (cmd === 'info') return {width: 400, height: 900};
+        if (cmd === 'idle') await new Promise(r => setTimeout(r, Number(args.quiet ?? 0)));
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    return {runner, taps};
+  };
+
+  it('that stays after the press did not take it, and is pressed once more, said in the note', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const {runner, taps} = shell(1);
+    const r = await new DeviceUi('dev', runner as never).press('id=kTCCServiceCamera-deny-button');
+    expect(taps).toEqual(['com.apple.springboard', 'com.apple.springboard']);
+    expect(r.note).toMatch(/did not take the first tap: pressed again/);
+  });
+
+  it('is not pressed again while its alert is only on its way out', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const {runner, taps} = shell(0, 700);
+    const r = await new DeviceUi('dev', runner as never).press('id=kTCCServiceCamera-deny-button');
+    expect(taps).toHaveLength(1);
+    expect(r.note ?? '').not.toMatch(/pressed again/);
+  });
+
+  it('fails the press when the alert stays after the second press too, instead of passing it', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const {runner, taps} = shell(5);
+    await expect(new DeviceUi('dev', runner as never).press('id=kTCCServiceCamera-deny-button')).rejects.toThrow(/alert stayed after two presses/);
+    expect(taps).toHaveLength(2);
+  });
+});

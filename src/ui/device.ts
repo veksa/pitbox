@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {backButton, buildSnapshot, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, shellAlertButtonStays, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
@@ -27,6 +27,8 @@ const QUIET_MS = 120;
 const FOLLOW_MS = 1200;
 /** Between two looks at the screen while it is watched for a late effect or followed until it stands still. */
 const LOOK_MS = 80;
+/** How long a button of the shell's alert that was pressed may stay on screen (its alert closing) before the press counts as dropped. */
+const ALERT_GONE_MS = 1000;
 
 /** The same lines, each with its node where it was: a screen that has stopped moving. */
 const sameScreen = (a: Snapshot, b: Snapshot) =>
@@ -499,6 +501,28 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         settled = await this.#settle(snap);
         note = 'the first tap only closed the keyboard or took the focus off the field: pressed again';
       } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
+    }
+    // A button of the shell's alert closes it. One still there a moment after the press did not take the tap (the
+    // shell drops a touch while its alert animates in): pressed once more, and said, rather than passing a press that
+    // left the alert over the app, where it outlives even a relaunch and takes every later tap.
+    if (kind === 'tap' && target.node && this.last && shellAlertButtonStays(snap, target.node, this.last)) {
+      const stays = async () => {
+        const end = Date.now() + ALERT_GONE_MS;
+        let now = this.last!;
+        while (shellAlertButtonStays(snap, target.node!, now) && Date.now() < end) {
+          await new Promise(r => setTimeout(r, LOOK_MS));
+          now = await this.snapshot();
+        }
+        return shellAlertButtonStays(snap, target.node!, now) ? now : undefined;
+      };
+      const still = await stays();
+      if (still) {
+        const again = resolveTarget(still, selector);
+        await this.runner.call(kind, {x: again.x, y: again.y, ...aim(again.node, still)});
+        settled = await this.#settle(snap);
+        if (await stays()) throw new Error(`"${selector}" is a button of the system alert, and the alert stayed after two presses: it takes no tap there`);
+        note = [note, "the system alert's button did not take the first tap: pressed again"].filter(Boolean).join('; ');
+      }
     }
     // What the press did, as the check that follows it in a recorded flow and in the step the answer shows.
     if ((this.recording || this.#step) && this.last) {

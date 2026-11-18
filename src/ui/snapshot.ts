@@ -33,6 +33,14 @@ const SHELL_ALERT = /^com\.apple\.(springboard|RealityNotifications)$/;
 const MODAL = /^(Alert|Sheet)$/;
 const SCROLL_BAR = /^(Vertical|Horizontal) scroll bar, (\d+) pages?$/;
 
+/**
+ * Whether `n`, a node of `before`, is a button of the shell's alert (an Apple runner's permission request, "Open in
+ * …?") that `after` still shows. Every such button closes its alert: one still there did not take the tap.
+ */
+export const shellAlertButtonStays = (before: Pick<Snapshot, 'windows'>, n: UiNode, after: Pick<Snapshot, 'windows' | 'nodes'>): boolean =>
+  SHELL_ALERT.test(before.windows[n.w]?.pkg ?? '') &&
+  after.nodes.some(m => SHELL_ALERT.test(after.windows[m.w]?.pkg ?? '') && m.c === n.c && m.id === n.id && m.t === n.t && m.d === n.d);
+
 /** The question of a runtime permission request over the app ("Allow MyApp to send you notifications?"), if any. */
 export const permissionPrompt = (snap: Pick<Snapshot, 'windows' | 'nodes'>): string | undefined => {
   const w = snap.windows.findIndex(x => PERMISSION_APP.test(x.pkg));
