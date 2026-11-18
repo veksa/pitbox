@@ -116,7 +116,8 @@ export const rnChecks = ({rn, device, rnDir, platform}) => {
   rn(['js', 'clear']);
 
   // The trace of the last action: the app stamped its request with a traceparent, the stand logged its id.
-  steps('open!\nwait id=title 90\npress id=fetch\nwait text~="hello from the stand" 10');
+  // The flow's answer is shown: a trace that misses is told apart from a flow that never pressed.
+  head(steps('open!\nwait id=title 90\npress id=fetch\nwait text~="hello from the stand" 10').out, 4);
   const trace = rn(['trace']);
   head(trace.out, 3);
   check('the trace of an action reaches the stand log', /^trace [0-9a-f]{32}/.test(trace.out) && /GET \/hello trace=[0-9a-f]{32}/.test(trace.out));
