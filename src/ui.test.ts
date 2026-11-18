@@ -655,6 +655,33 @@ describe('a press whose effect comes late', () => {
     expect(taps).toEqual(['200,150', '200,350']);
   }, 15_000);
 
+  it('lets the next step tap the target it brings only once that stops sliding in', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let shownAt = Infinity;
+    const taps: string[] = [];
+    // An alert that shows up 900 ms after the press and slides in for 300 ms more.
+    const alert = (): UiNode => {
+      const y = 800 - Math.round(500 * Math.min(1, (Date.now() - shownAt) / 300));
+      return {p: -1, w: 0, c: 'Button', b: [0, y, 400, y + 100], id: 'deny', f: 'c'};
+    };
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(`${args.x},${args.y}`);
+          if (shownAt === Infinity) shownAt = Date.now() + 900;
+        }
+        if (cmd === 'tree') return {windows: app, nodes: Date.now() >= shownAt ? [save, alert()] : [save]};
+        if (cmd === 'info') return {width: 400, height: 1000};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    await ui.press('id=save');
+    await ui.press('id=deny');
+    expect(taps).toEqual(['200,150', '200,350']);
+  }, 15_000);
+
   it('is watched for again after the requests the press started end', async () => {
     const {DeviceUi} = await import('./ui/device.ts');
     let shownAt = Infinity;

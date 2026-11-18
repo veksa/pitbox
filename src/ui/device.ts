@@ -314,8 +314,9 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     } catch (e) {
       // A field that takes focus on launch brings up a keyboard by itself, a fullscreen one on a watch, which
       // hides the app a moment after it looked ready: a miss waits a second for one before it fails.
-      // The same second covers the late effect of the step before (a screen it opens after a request, after its
-      // own watch for one ended): a target that shows up meanwhile is taken.
+      // The same second covers the late effect of the step before (a screen it opens after a request, a system
+      // alert, after its own watch for one ended): a target that shows up meanwhile is taken once the screen it
+      // came with stands still — a button of an alert still sliding in drops the tap.
       if (ref || imeShown) {
         if (!imeShown) throw e;
       } else {
@@ -331,6 +332,18 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
           }
         }
         if (!imeShown && !target) throw e;
+        if (target) {
+          await this.runner.call('idle', {quiet: QUIET_MS, timeout: 1000}, 6000);
+          const still = Date.now() + FOLLOW_MS;
+          for (;;) {
+            await new Promise(r => setTimeout(r, LOOK_MS));
+            const next = await this.snapshot();
+            const same = sameScreen(next, snap);
+            snap = next;
+            if (same || Date.now() > still) break;
+          }
+          target = resolveTarget(snap, selector);
+        }
       }
     }
     const coveredIn = async (s: Snapshot, t: typeof target) => {
