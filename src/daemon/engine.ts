@@ -10,6 +10,7 @@ import path from 'node:path';
 import {loadConfig, resolveFrom, type LoadedConfig} from '../config/load.ts';
 import {DEVICE_PLACEHOLDERS, exposedPorts, type DevicePlaceholder, type ServiceConfig} from '../config/schema.ts';
 import {DEVSERVER, DevServer} from '../devserver/devserver.ts';
+import {HOT_REGISTER_MS, HOT_ROUND_MS, hotSettleWait} from '../devserver/proxy.ts';
 import {AndroidDriver, isUnresolvedLink, type AndroidDevice, type Launch, type NetworkProfile} from '../drivers/android/driver.ts';
 import {XR_PANEL, xrView} from '../drivers/android/formfactor.ts';
 import {cameraArg, sameCamera} from '../drivers/android/camera.ts';
@@ -404,6 +405,16 @@ export class Engine {
       // up. Waited out once, on the first pointer action after a launch; later ones (a playing video never stops
       // animating) do not wait.
       beforePointer: async () => {
+        // An app on the dev server: a round of hot updates just ended (or one may follow its registration) puts
+        // React Native's "Refreshing…" view over it for a moment, and a touch then reaches no control.
+        const proxy = this.#dev?.proxy;
+        if (proxy && (t?.platform === 'apple' || t?.platform === 'android')) {
+          const platform = t.platform === 'apple' ? 'ios' : 'android';
+          const end = Date.now() + HOT_REGISTER_MS + HOT_ROUND_MS;
+          for (let wait = hotSettleWait(proxy.hotClients(), Date.now(), platform); wait > 0 && Date.now() < end; wait = hotSettleWait(proxy.hotClients(), Date.now(), platform)) {
+            await new Promise(r => setTimeout(r, Math.min(wait, end - Date.now())));
+          }
+        }
         const at = this.#launchedAt.get(id);
         if (at === undefined) return;
         this.#launchedAt.delete(id);

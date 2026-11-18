@@ -5,7 +5,7 @@
 import http from 'node:http';
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {WebSocket as WsClient, WebSocketServer, type WebSocket} from 'ws';
-import {DevProxy} from './devserver/proxy.ts';
+import {DevProxy, HOT_REGISTER_MS, HOT_ROUND_MS, hotSettleWait, type HotClient} from './devserver/proxy.ts';
 import {freePort} from './util/net.ts';
 
 const until = async (ok: () => boolean, ms = 2000) => {
@@ -62,6 +62,8 @@ describe('hot updates through the proxy', () => {
     round([{type: 'update-start', body: {isInitialUpdate: true}}, {type: 'update', body: {isInitialUpdate: true, added: [], modified: [], deleted: []}}, {type: 'update-done', body: {}}, {type: 'bundle-registered'}]);
     await until(() => seen.length === 4);
     expect(proxy.hotClients()[0]).toMatchObject({platform: 'android', eager: true, registered: true, updates: 0, inRound: false});
+    // What a touch waits on: when the app registered and when the round ended.
+    expect(proxy.hotClients()[0]).toMatchObject({registeredAt: expect.any(Number), roundEndedAt: expect.any(Number)});
 
     round([{type: 'update-start', body: {isInitialUpdate: false}}, {type: 'update', body: {isInitialUpdate: false, added: [], modified: [[1, 'code']], deleted: []}}, {type: 'update-done', body: {}}]);
     await until(() => seen.length === 7);
@@ -94,5 +96,29 @@ describe('hot updates through the proxy', () => {
     await until(() => got.length === 1);
     expect(got[0]).toEqual({type: 'register-entrypoints', entryPoints: ['http://localhost:8081/index.bundle?platform=android&lazy=true']});
     app.close();
+  });
+});
+
+describe('a touch on an app on the dev server', () => {
+  const client = (o: Partial<HotClient>): HotClient => ({id: 1, platform: 'ios', connectedAt: 0, registered: true, updates: 0, inRound: false, ...o});
+
+  it('waits for a round of hot updates to end and its "Refreshing…" view to go, and for a round that follows a registration', () => {
+    const now = 10_000;
+    expect(hotSettleWait([], now)).toBe(0);
+    // Long registered, the last round long over: no wait.
+    expect(hotSettleWait([client({registeredAt: 1000, roundEndedAt: 2000})], now)).toBe(0);
+    // Registered a moment ago (a relaunch): a round may still follow.
+    expect(hotSettleWait([client({registeredAt: now - 300})], now)).toBe(HOT_REGISTER_MS - 300);
+    // A round ended 225 ms ago: its view is still on the way out.
+    expect(hotSettleWait([client({registeredAt: 1000, roundEndedAt: now - 225})], now)).toBe(HOT_ROUND_MS - 225);
+    // In a round: looked at again shortly.
+    expect(hotSettleWait([client({registeredAt: 1000, inRound: true})], now)).toBeGreaterThan(0);
+  });
+
+  it("leaves out closed clients and another platform's", () => {
+    const now = 10_000;
+    expect(hotSettleWait([client({inRound: true, closedAt: now - 1})], now)).toBe(0);
+    expect(hotSettleWait([client({platform: 'android', inRound: true})], now, 'ios')).toBe(0);
+    expect(hotSettleWait([client({platform: 'android', inRound: true})], now, 'android')).toBeGreaterThan(0);
   });
 });

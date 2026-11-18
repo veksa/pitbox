@@ -70,6 +70,10 @@ export type HotClient = {
   syncedAt?: number;
   /** A round has started and not ended. */
   inRound: boolean;
+  /** When the app registered its bundle with the bundler. */
+  registeredAt?: number;
+  /** When the last round ended, compiled or not. */
+  roundEndedAt?: number;
   lastError?: {at: number; type: string; message: string};
   closedAt?: number;
 };
@@ -88,6 +92,28 @@ export const isNativeBundleRequest = (method: string | undefined, url: string, a
 export const eagerUrl = (url: string) => url.replace(/([?&])lazy=true/, '$1lazy=false');
 
 export const platformOf = (url: string) => /[?&]platform=(\w+)/.exec(url)?.[1] ?? 'unknown';
+
+/** How long after the app registers with the bundler a round may still follow it, unasked. */
+export const HOT_REGISTER_MS = 1000;
+/** How long after a round of hot updates ends its "Refreshing…" view may still be on its way out. */
+export const HOT_ROUND_MS = 500;
+
+/**
+ * How long a touch should wait for the app's bundler connection to stand still, 0 when it does. React Native shows
+ * "Refreshing…" over the app for every round of hot updates, an empty one too, and a touch that comes while the view
+ * shows or goes reaches no control; the bundler often sends a round a moment after the app registers (a relaunch
+ * after edits). `platform` limits it to the clients of that platform.
+ */
+export const hotSettleWait = (clients: HotClient[], now: number, platform?: string): number => {
+  let wait = 0;
+  for (const h of clients) {
+    if (h.closedAt !== undefined || (platform && h.platform && h.platform !== platform)) continue;
+    if (h.inRound) wait = Math.max(wait, 100);
+    if (h.registeredAt !== undefined) wait = Math.max(wait, h.registeredAt + HOT_REGISTER_MS - now);
+    if (h.roundEndedAt !== undefined) wait = Math.max(wait, h.roundEndedAt + HOT_ROUND_MS - now);
+  }
+  return Math.max(0, wait);
+};
 
 type AppSession = AppInfo & {ws: WebSocket};
 
@@ -518,7 +544,10 @@ export class DevProxy {
       const text = String(raw);
       try {
         const msg = JSON.parse(text) as {type?: string; body?: {isInitialUpdate?: boolean; added?: unknown[]; modified?: unknown[]; deleted?: unknown[]; type?: string; message?: string}};
-        if (msg.type === 'bundle-registered') h.registered = true;
+        if (msg.type === 'bundle-registered') {
+          h.registered = true;
+          h.registeredAt = Date.now();
+        }
         else if (msg.type === 'update-start') {
           initial = !!msg.body?.isInitialUpdate;
           modules = 0;
@@ -529,6 +558,7 @@ export class DevProxy {
         } else if (msg.type === 'update-done') {
           // The bundler ends a round with update-done whether or not it compiled.
           h.inRound = false;
+          h.roundEndedAt = Date.now();
           if (!failed) {
             h.syncedAt = Date.now();
             h.lastError = undefined;

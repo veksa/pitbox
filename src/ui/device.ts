@@ -551,6 +551,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
 
   async fill(selector: string, text: string): Promise<ActResult> {
     const t0 = this.#begin();
+    await this.#hooks.beforePointer?.();
     const {snap, target} = await this.#target(selector);
     this.#front(snap);
     await this.runner.call('tap', {x: target.x, y: target.y});
