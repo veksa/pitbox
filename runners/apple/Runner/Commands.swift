@@ -118,6 +118,10 @@ final class Commands {
         // an element that is not the only match cannot be tapped.
         let button = systemAlert().buttons[label].firstMatch
         if button.exists {
+          // The shell drops a touch on an alert that is still animating in, and the alert is in the tree, frames
+          // and all, from the animation's first frame: the tap waits for the shell's animations to end, as
+          // XCUITest's own wait (turned off for every other event) would.
+          Quiescence.beforeEvent(app(Self.alertsId))
           if cmd == "tap" { button.tap() } else if cmd == "doubletap" { button.doubleTap() } else { button.press(forDuration: double(req, "hold", 800) / 1000) }
           return [:]
         }
