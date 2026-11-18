@@ -32,7 +32,8 @@ export type NativeBuildSpec = {
   /** Seconds the build may take. Default 1800. */
   timeout?: number;
   /**
-   * Environment variables that are inputs of the build: names, or globs on names (`APP_*`). Their values are in the
+   * Environment variables that are inputs of the build: names, or globs on names (`APP_*`); a `!name` or `!glob`
+   * entry, wherever it stands, leaves variables out (`['APP_*', '!APP_DEV_PORT']`). Their values are in the
    * fingerprint (an unset name and an empty one differ), and the build runs with the caller's values of them.
    */
   env?: string[];
@@ -113,10 +114,25 @@ export const listFiles = (root: string): string[] => {
 export type Fingerprint = {hash: string; files: number; ms: number; variant?: string};
 
 const GLOB_CHARS = /[*?{]/;
-const envMatcher = (patterns: string[]) => {
+const nameMatcher = (patterns: string[]) => {
   const res = patterns.filter(p => GLOB_CHARS.test(p)).map(globRe);
   const names = new Set(patterns.filter(p => !GLOB_CHARS.test(p)));
   return (name: string) => names.has(name) || res.some(r => r.test(name));
+};
+
+/**
+ * A build's `env` read: which variables it declares (a name or glob, less every `!name` / `!glob` entry wherever it
+ * stands in the list) and the plain names among them, which count as unset when not set.
+ */
+export const parseEnv = (entries: string[] = []) => {
+  const pos = entries.filter(e => !e.startsWith('!'));
+  const not = nameMatcher(entries.filter(e => e.startsWith('!')).map(e => e.slice(1)));
+  const yes = nameMatcher(pos);
+  return {
+    declared: (name: string) => yes(name) && !not(name),
+    names: pos.filter(p => !GLOB_CHARS.test(p) && !not(p)),
+    any: pos.length > 0,
+  };
 };
 
 /**
@@ -124,8 +140,8 @@ const envMatcher = (patterns: string[]) => {
  * environment when one is given — set as the caller has them, unset when the caller has not.
  */
 export const buildEnv = (spec: Pick<NativeBuildSpec, 'env'>, base: NodeJS.ProcessEnv, caller?: Record<string, string | undefined>): NodeJS.ProcessEnv => {
-  if (!caller || !spec.env?.length) return base;
-  const declared = envMatcher(spec.env);
+  const {declared, any} = parseEnv(spec.env);
+  if (!caller || !any) return base;
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(base)) if (!declared(k)) env[k] = v;
   for (const [k, v] of Object.entries(caller)) if (declared(k) && typeof v === 'string') env[k] = v;
@@ -134,9 +150,9 @@ export const buildEnv = (spec: Pick<NativeBuildSpec, 'env'>, base: NodeJS.Proces
 
 /** The declared variables as fingerprint entries, sorted: `NAME=value`, or `NAME` unset for a plain name not set. */
 export const envEntries = (patterns: string[], env: NodeJS.ProcessEnv): string[] => {
-  const declared = envMatcher(patterns);
+  const {declared, names} = parseEnv(patterns);
   const out = new Map<string, string>();
-  for (const p of patterns) if (!GLOB_CHARS.test(p)) out.set(p, env[p] === undefined ? `${p}\0unset` : `${p}=${env[p]}`);
+  for (const p of names) out.set(p, env[p] === undefined ? `${p}\0unset` : `${p}=${env[p]}`);
   for (const [k, v] of Object.entries(env)) if (v !== undefined && declared(k)) out.set(k, `${k}=${v}`);
   return [...out.keys()].sort().map(k => out.get(k)!);
 };
@@ -146,7 +162,7 @@ export const resolveBuildFile = (entry: string, root: string, env: NodeJS.Proces
   const v = /^\$(?:\{(\w+)\}|(\w+))(.*)$/.exec(entry);
   if (v) {
     const name = (v[1] ?? v[2])!;
-    if (!envMatcher(declaredEnv)(name)) throw new BuildError(`build files: ${entry} names $${name}, which is not in the build's env`);
+    if (!parseEnv(declaredEnv).declared(name)) throw new BuildError(`build files: ${entry} names $${name}, which is not in the build's env`);
     const value = env[name];
     if (!value) return undefined;
     const file = path.resolve(root, `${value}${v[3]}`);
@@ -198,7 +214,7 @@ export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[
     n++;
   }
   let variant: string | undefined;
-  if (spec.env?.length) {
+  if (spec.env && parseEnv(spec.env).any) {
     const entries = envEntries(spec.env, env);
     h.update(`\0env\0${entries.join('\0')}\0`);
     variant = crypto.createHash('sha256').update(entries.join('\0')).digest('hex').slice(0, 8);

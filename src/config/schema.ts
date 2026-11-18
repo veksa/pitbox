@@ -122,7 +122,7 @@ const nativeBuildSchema = z
     inputs: z.array(z.string()).optional(),
     /** Seconds the build may take. Default 1800. */
     timeout: z.number().positive().optional(),
-    /** Environment variables that are inputs (names or globs on names): their values are in the fingerprint. */
+    /** Environment variables that are inputs (names or globs on names, `!name` / `!glob` leaves out): their values are in the fingerprint. */
     env: z.array(z.string()).optional(),
     /** Files or folders outside what git lists (absolute, `~/…`, ignored, `$NAME` of `env`) whose content is an input. */
     files: z.array(z.string()).optional(),

@@ -236,6 +236,26 @@ describe('native build variables, exclusions and outside files', () => {
     expect(envEntries(['B', 'A_*'], {A_2: 'x', A_1: 'y', B: 'z', C: 'w'})).toEqual(['A_1=y', 'A_2=x', 'B=z']);
   });
 
+  it('!name and !glob entries leave variables out, wherever they stand', () => {
+    const e = {env: ['APP_*', '!APP_DEV_PORT', '!APP_FIXTURE_*']};
+    const base = fp(e, {APP_ARCH: 'arm64'});
+    expect(fp(e, {APP_ARCH: 'arm64', APP_DEV_PORT: '1', APP_FIXTURE_PORT: '2', APP_FIXTURE_HOST: 'h'})).toBe(base);
+    expect(fp(e, {APP_ARCH: 'x86_64'})).not.toBe(base);
+    // Position-independent: an exclusion before the pattern it narrows works the same.
+    expect(fp({env: ['!APP_DEV_PORT', '!APP_FIXTURE_*', 'APP_*']}, {APP_ARCH: 'arm64', APP_DEV_PORT: '9'})).toBe(base);
+    // A plain name excluded is not counted as unset either, and an excluded name is never a literal one.
+    expect(envEntries(['A', 'B', '!B', '!C'], {B: '1', C: '2'})).toEqual(['A\0unset']);
+    expect(envEntries(['APP_*', '!APP_X'], {APP_X: '1', APP_Y: '2'})).toEqual(['APP_Y=2']);
+    // Exclusions alone declare nothing: the build keeps the fingerprint it has without env.
+    expect(fp({env: ['!APP_X']}, {APP_X: '1'})).toBe(fp({}, {}));
+    expect(fingerprint(root, {...spec(), env: ['!APP_X']}, ['**'], '', {}).variant).toBeUndefined();
+  });
+
+  it('an excluded variable is not taken from the caller', () => {
+    const env = buildEnv({env: ['APP_*', '!APP_DEV_PORT']}, {APP_DEV_PORT: 'daemon', APP_A: 'daemon'}, {APP_DEV_PORT: 'caller', APP_A: 'caller'});
+    expect(env).toEqual({APP_DEV_PORT: 'daemon', APP_A: 'caller'});
+  });
+
   it('the build environment takes the declared variables from the caller only', () => {
     const env = buildEnv({env: ['APP_*']}, {PATH: '/bin', APP_A: 'daemon', APP_B: 'daemon'}, {APP_A: 'caller', OTHER: 'x'});
     expect(env).toEqual({PATH: '/bin', APP_A: 'caller'});
