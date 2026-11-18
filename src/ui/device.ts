@@ -59,6 +59,8 @@ export type MediaResult = {target?: string; moving: boolean; black: boolean; pla
 export type UiRunner = {
   call<T extends Record<string, unknown> = Record<string, unknown>>(cmd: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T>;
   stop(): Promise<void>;
+  /** Lets go of the runner and leaves it running for the next daemon, where it can (`AppleRunner.detach`). */
+  detach?(): Promise<void>;
   /** What the runner changed on its own since the last action (a Mac app's followed window closed), told in its note. */
   notices?: string[];
   /**
@@ -1002,5 +1004,11 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
   async stop() {
     this.#crashes.stop();
     await this.runner.stop();
+  }
+
+  /** At a daemon's stop that keeps its devices: a runner that can outlive the daemon is left for the next one. */
+  async detach() {
+    this.#crashes.stop();
+    await (this.runner.detach ? this.runner.detach() : this.runner.stop());
   }
 }

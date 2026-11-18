@@ -613,3 +613,24 @@ describe('apple runner start without xcodebuild', () => {
     fs.rmSync(root, {recursive: true, force: true});
   });
 });
+
+describe('apple runner kept for the next daemon', () => {
+  it('leaves a record per simulator that the next start takes once', async () => {
+    const {keepRunner, keptRunnerFile, takeKeptRunner} = await import('./drivers/apple/runner.ts');
+    keepRunner('SIM-K', {port: 4321, xctestrun: '/cache/Runner.xctestrun', version: 1, at: 1});
+    expect(fs.existsSync(keptRunnerFile('SIM-K'))).toBe(true);
+    expect(takeKeptRunner('SIM-K')).toMatchObject({port: 4321, xctestrun: '/cache/Runner.xctestrun'});
+    // Taken: a second daemon finds nothing, and a broken record is dropped.
+    expect(takeKeptRunner('SIM-K')).toBeUndefined();
+    fs.writeFileSync(keptRunnerFile('SIM-K'), '{');
+    expect(takeKeptRunner('SIM-K')).toBeUndefined();
+    expect(fs.existsSync(keptRunnerFile('SIM-K'))).toBe(false);
+  });
+
+  it('a runner that is not running leaves nothing behind when the daemon stops', async () => {
+    const {keptRunnerFile} = await import('./drivers/apple/runner.ts');
+    const runner = new AppleRunner({simulators: async () => []} as never, 'SIM-N', 'com.example.app');
+    await runner.detach();
+    expect(fs.existsSync(keptRunnerFile('SIM-N'))).toBe(false);
+  });
+});

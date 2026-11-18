@@ -1916,7 +1916,9 @@ export class Engine {
     // The apps forget their watch pairing: nothing would relay their messages any more.
     await this.#wear?.close().catch(() => undefined);
     await this.#dev?.stop();
-    for (const ui of this.#uis.values()) await ui.stop().catch(() => undefined);
+    // A stop that keeps the devices leaves an iOS runner running for the next daemon: it takes it over in a moment
+    // instead of a start of seconds. One that gives them back ends it.
+    for (const ui of this.#uis.values()) await (opts.release ? ui.stop() : ui.detach()).catch(() => undefined);
     // A web app's browser starts on first use by any call (js eval, goto, downloads), not only through a device UI:
     // every one closes here, or it would outlive the daemon.
     for (const r of this.#webRunners.values()) await r.stop().catch(() => undefined);

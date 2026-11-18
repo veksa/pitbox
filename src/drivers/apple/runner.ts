@@ -10,7 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
-import {freePort} from '../../util/net.ts';
+import {pitboxHome} from '../../lease/lease.ts';
+import {freePort, tcpOpen} from '../../util/net.ts';
 import {run} from '../../util/proc.ts';
 import {AppleError, type AppleDriver, type SimKind} from './driver.ts';
 import {hid, hidChord} from './hid.ts';
@@ -154,6 +155,40 @@ export const sameRunner = (a: string, b: string): boolean => {
 let developerDir: Promise<string> | undefined;
 
 /**
+ * A runner a stopping daemon left running for the next one on the simulator: its port and the build it runs. Kept
+ * in a file per simulator under PITBOX_HOME, so the next daemon, of any project on the Mac, finds it.
+ */
+export type KeptRunner = {port: number; xctestrun: string; version: number; at: number};
+
+export const keptRunnerFile = (udid: string) => path.join(pitboxHome(), 'runners', `${udid}.json`);
+
+/** The runner left on the simulator, taken: the record goes whether or not the runner is still there. */
+export const takeKeptRunner = (udid: string): KeptRunner | undefined => {
+  const file = keptRunnerFile(udid);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+  fs.rmSync(file, {force: true});
+  try {
+    const kept = JSON.parse(text) as KeptRunner;
+    return Number.isInteger(kept.port) && typeof kept.xctestrun === 'string' ? kept : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const keepRunner = (udid: string, kept: KeptRunner) => {
+  const file = keptRunnerFile(udid);
+  fs.mkdirSync(path.dirname(file), {recursive: true});
+  const tmp = `${file}.${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(kept));
+  fs.renameSync(tmp, file);
+};
+
+/**
  * What to tell the agent about a runner from its `info`. On visionOS XCUITest waits for the app's animations to end
  * before and after every event, and an open system menu never stops animating: the runner turns that wait off
  * through XCUITest's own (not public) switch. A runner whose XCUITest lost the switch says so, and every press into
@@ -229,7 +264,10 @@ export class AppleRunner {
   /** Whether the running runner was launched by simctl (no xcodebuild to end: the app is terminated instead). */
   #direct = false;
   /** How the last start went, for the agent-facing timing and the tests. */
-  lastStart?: {how: 'simctl' | 'xcodebuild'; ms: number; fallback?: string};
+  lastStart?: {how: 'simctl' | 'xcodebuild' | 'kept'; ms: number; fallback?: string};
+  /** The build the running runner came from, for the record a stopping daemon leaves. */
+  #xctestrun?: string;
+  #port?: number;
 
   constructor(driver: AppleDriver, udid: string, bundleId?: string) {
     this.#driver = driver;
@@ -256,6 +294,20 @@ export class AppleRunner {
     if (!sim || sim.state !== 'Booted') throw new AppleError(`simulator ${this.udid} is not booted`);
     this.#kind = sim.kind;
     const {xctestrun} = await buildRunner(sim.kind);
+    // A runner the last daemon left here, of this build and still answering, is taken over instead of started.
+    const kept = takeKeptRunner(this.udid);
+    if (kept && !old && kept.xctestrun === xctestrun && kept.version === RUNNER_VERSION && (await tcpOpen(kept.port, '127.0.0.1', 500))) {
+      const t0 = Date.now();
+      await this.#connect(kept.port).catch(() => undefined);
+      if (this.alive && (await this.call<{version?: number}>('ping', {}, 3000).catch(() => ({version: undefined}))).version === RUNNER_VERSION) {
+        this.#direct = true;
+        this.#xctestrun = xctestrun;
+        this.#port = kept.port;
+        this.lastStart = {how: 'kept', ms: Date.now() - t0};
+        return this.#afterStart();
+      }
+      this.#teardown(false);
+    }
     await clearStaleRunner(this.#driver, this.udid, old);
     const port = await freePort();
     // xcodebuild boots a shut-down destination: a runner stopped meanwhile (the simulator given back) never starts.
@@ -332,6 +384,8 @@ export class AppleRunner {
     const r = await run(this.#driver.xcrun, ['simctl', 'launch', '--terminate-running-process', this.udid, RUNNER_BUNDLE_ID], {env, timeoutMs: 60_000});
     if (r.code !== 0) throw new AppleError(`simctl launch failed: ${r.stderr.trim().split('\n').pop()}`);
     this.#direct = true;
+    this.#xctestrun = xctestrun;
+    this.#port = port;
     // The app is a process of the Mac: one that dies at launch (a missing framework) is seen gone at once.
     const pid = Number(/:\s*(\d+)/.exec(r.stdout)?.[1]);
     const gone = () => {
@@ -475,5 +529,17 @@ export class AppleRunner {
     this.#stopped = true;
     if (this.alive) await this.call('shutdown', {}, 3000).catch(() => undefined);
     this.#teardown();
+  }
+
+  /**
+   * Leaves a runner launched by simctl running for the next daemon on the simulator (a restart, a version swap)
+   * and lets go of it; one started by xcodebuild ends with this daemon as before.
+   */
+  async detach() {
+    if (!this.alive || !this.#direct || !this.#xctestrun || !this.#port || this.#pending.size) return this.stop();
+    this.#stopped = true;
+    keepRunner(this.udid, {port: this.#port, xctestrun: this.#xctestrun, version: RUNNER_VERSION, at: Date.now()});
+    this.#direct = false;
+    this.#teardown(false);
   }
 }
