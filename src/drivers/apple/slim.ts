@@ -14,7 +14,7 @@ import path from 'node:path';
 /** Daemons a slim simulator runs without. Kept on purpose: SpringBoard and the keyboard, notifications and push,
  *  widgets and Live Activities (chronod, liveactivitiesd), location, privacy prompts (tccd), the photo library,
  *  accessibility (the UI test runner reads through it), universal links, keychain, contacts, calendars and
- *  reminders, HealthKit, Wallet and the App Store (StoreKit). */
+ *  reminders, HealthKit, Wallet, the App Store (StoreKit) and Game Center (a UI test runner's launch waits on it). */
 export const SIM_SLIM_LABELS = [
   // lock screen posters
   'com.apple.PosterBoard',
@@ -55,10 +55,9 @@ export const SIM_SLIM_LABELS = [
   'com.apple.fitnesscoachingd',
   'com.apple.activitysharingd',
   'com.apple.fitcore',
-  // News, Weather, Maps sync, Game Center, Finance, Shared with You, App Store engagement
+  // News, Weather, Maps sync, Finance, Shared with You, App Store engagement
   'com.apple.newsd',
   'com.apple.weatherd',
-  'com.apple.gamed',
   'com.apple.Maps.mapssyncd',
   'com.apple.financed',
   'com.apple.sociallayerd',
@@ -89,10 +88,12 @@ export const SIM_SLIM_LABELS = [
 ];
 
 /**
- * Daemons that others call in a tight loop while they are off: disabling one keeps several cores busy for good
- * (sleepd: healthd, mobiletimerd and SpringBoard spin, and diagnosticd with them). Never disabled.
+ * Daemons that are never disabled. Others call some in a tight loop while they are off, which keeps several cores
+ * busy for good (sleepd: healthd, mobiletimerd and SpringBoard spin, and diagnosticd with them). Game Center's gamed
+ * is asked for by the simulator's DTServiceHub when xcodebuild launches a test runner: with it off, the runner stays
+ * suspended for about 10 s before it runs, on every start.
  */
-export const SIM_NEVER = ['com.apple.sleepd', 'com.apple.SpringBoard', 'com.apple.backboardd', 'com.apple.runningboardd', 'com.apple.CoreSimulator.bridge'];
+export const SIM_NEVER = ['com.apple.sleepd', 'com.apple.SpringBoard', 'com.apple.backboardd', 'com.apple.runningboardd', 'com.apple.CoreSimulator.bridge', 'com.apple.gamed'];
 
 /** Home screen widgets and Live Activities (about 0.6 GB with their extensions): off only on request, `disable:
  *  ['widgets']`, since an app's own widgets and Live Activities need them. */

@@ -264,10 +264,11 @@ disk on every exit (2.6 GB for a 2 GB guest) — no snapshot is written now, and
 overrides from a file on the Mac when the simulator starts
 (`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>/disabled.plist`, kept across an erase). pitbox writes
 them there while the simulator is shut down, just before its boot, so slimming costs no extra boot: Siri and Apple
-Intelligence, Spotlight, Mail, Screen Time and Family, the Health app, Home, Fitness, News, Weather, Game Center,
+Intelligence, Spotlight, Mail, Screen Time and Family, the Health app, Home, Fitness, News, Weather,
 lock screen posters, ads, experiments and diagnostics, Find My, Memoji, media analysis, iMessage identity. SpringBoard and the keyboard, notifications and push, widgets
 and Live Activities, location, privacy prompts, the photo library, accessibility (the UI runner reads through it),
-universal links, keychain, contacts, calendars and reminders, HealthKit, Wallet and StoreKit stay. Each label's
+universal links, keychain, contacts, calendars and reminders, HealthKit, Wallet, StoreKit and Game Center stay
+(xcodebuild's launch of the UI runner waits about 10 s for Game Center's daemon when it is off, on every start). Each label's
 earlier value is kept beside the file (`pitbox-slim.json`); a stock boot puts exactly those back. After the boot
 pitbox reads the state back from launchd (`launchctl print-disabled system`) and says how many are off.
 

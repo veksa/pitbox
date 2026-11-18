@@ -39,6 +39,20 @@ describe('simulator slim', () => {
     expect(simSlimList({disable: ['com.apple.SpringBoard']})).not.toContain('com.apple.SpringBoard');
   });
 
+  it('never disables game center: a test runner launched by xcodebuild waits about 10 s for it on every start', () => {
+    expect(SIM_SLIM_LABELS).not.toContain('com.apple.gamed');
+    expect(simSlimList({disable: ['com.apple.gamed']})).not.toContain('com.apple.gamed');
+  });
+
+  it('gives back a daemon an older list disabled once the list no longer names it', () => {
+    // As an older pitbox left it: gamed disabled, with no entry before.
+    fs.mkdirSync(storeDir(UDID, root), {recursive: true});
+    fs.writeFileSync(path.join(storeDir(UDID, root), 'disabled.plist'), encodeStore({'com.apple.gamed': true}));
+    fs.writeFileSync(path.join(storeDir(UDID, root), 'pitbox-slim.json'), JSON.stringify({'com.apple.gamed': null}));
+    expect(slimSimulator(UDID, {}, root).restored).toBe(1);
+    expect('com.apple.gamed' in store()).toBe(false);
+  });
+
   it('turns widgets off only on request, as a group', () => {
     for (const l of SIM_WIDGET_LABELS) expect(simSlimList()).not.toContain(l);
     expect(simSlimList({disable: ['widgets']})).toEqual(expect.arrayContaining(SIM_WIDGET_LABELS));
@@ -69,11 +83,11 @@ describe('simulator slim', () => {
   });
 
   it('a label taken out of the list (keep) gets its earlier value back', () => {
-    seed({'com.apple.gamed': false});
+    seed({'com.apple.weatherd': false});
     slimSimulator(UDID, {}, root);
-    const r = slimSimulator(UDID, {keep: ['com.apple.gamed', 'com.apple.newsd']}, root);
+    const r = slimSimulator(UDID, {keep: ['com.apple.weatherd', 'com.apple.newsd']}, root);
     expect(r.restored).toBe(2);
-    expect(store()['com.apple.gamed']).toBe(false);
+    expect(store()['com.apple.weatherd']).toBe(false);
     expect('com.apple.newsd' in store()).toBe(false);
   });
 
