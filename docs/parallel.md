@@ -374,8 +374,32 @@ same app, and two sessions on JS-only branches build the same native code twice,
   config preset) declares those variables in `env` (`['APP_PROBE', 'APP_PUBLIC_*']`): their values are in the
   fingerprint, an unset variable and an empty one differ, and the build runs with the values of the caller — the
   shell that ran `pitbox build`, or the MCP server's environment with `env={…}` of `app action=build` over it — not
-  those of the daemon, which has the environment of whichever session started it. Each set of values is a variant
+  those of the daemon, which has the environment of whichever session started it: a variable a declared pattern
+  names that the caller has not set is unset in the build, whatever the daemon has. Each set of values is a variant
   (`variant <hash>` in the answer), kept apart from the others.
+- **Leaving variables out.** A namespace glob catches variables the build does not read (a dev server's port, a
+  fixture server's address): `!name` and `!glob` entries leave them out wherever they stand in the list
+  (`['APP_*', '!APP_DEV_PORT', '!APP_FIXTURE_*']`), so changing one keeps the build. A left-out variable is not
+  taken from the caller either.
+- **Defaults.** A command that defaults a variable (`${APP_ARCH:-arm64}`) makes the same build whether the variable
+  is unset or set to that value; declare the default (`{name: 'APP_ARCH', default: 'arm64'}`) and the two are one
+  fingerprint, and the build gets the default when the caller leaves the variable unset (an empty value is still a
+  value of its own). The config is TypeScript, so a default that depends on the machine is computed when it loads:
+  `default: process.arch === 'arm64' ? 'arm64-v8a' : 'x86_64'`. Declaring a default for a variable already in `env`
+  keeps the fingerprints of the builds made with it set to the default.
+- **Strict environment.** Without it, the build inherits the daemon's other variables, which are not in the
+  fingerprint: one the build reads but `env` forgot gets another session's value, and the build made with it is
+  served to everyone. `envStrict: true` closes that: the build runs with only its declared variables and a
+  baseline the toolchains need to start, all taken from the caller — `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+  `TMPDIR` / `TMP` / `TEMP`, `LANG`, `LANGUAGE`, `LC_*`, `TERM`; the toolchain roots `DEVELOPER_DIR`, `JAVA_HOME`,
+  `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, `ANDROID_USER_HOME`,
+  `GRADLE_USER_HOME`; the version managers' and package managers' homes (`NVM_DIR`, `VOLTA_HOME`, `COREPACK_*`,
+  `GEM_HOME`, `GEM_PATH`, `RBENV_ROOT`, `ASDF_DIR`, `ASDF_DATA_DIR`, `MISE_DATA_DIR`); `SSH_AUTH_SOCK`, the
+  proxies and `SSL_CERT_FILE` / `NODE_EXTRA_CA_CERTS`; and on Windows its system variables (`SystemRoot`,
+  `ComSpec`, `PATHEXT`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, …). The toolchain roots' values
+  are then in the fingerprint (a build with another JDK or Xcode is another build); `PATH` and the rest are not.
+  Anything else the build needs — `GRADLE_OPTS`, `NODE_OPTIONS`, `CI` — goes in `env`. A missing variable shows up
+  as a failed build, not as a wrong one; CocoaPods, for one, wants `LANG` set to a UTF-8 locale.
 - **Exclusions and outside files.** A build with its JS inside takes every file (`inputs: ['**']`); `!glob` entries
   leave out what does not reach the build (`['**', '!docs/**', '!flows/**']`), so a doc or test edit keeps it.
   `inputs: ['!glob']` alone excludes from the default inputs. Files the build reads that git does not list — a
