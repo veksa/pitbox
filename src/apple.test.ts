@@ -326,6 +326,46 @@ describe('apple driver', () => {
     expect(lists).toBe(2);
   });
 
+  it('keeps the simulator list past the moment while no simulator boots, shuts down, comes or goes', async () => {
+    const set = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-set-'));
+    const plist = (udid: string) => {
+      fs.mkdirSync(path.join(set, udid), {recursive: true});
+      fs.writeFileSync(path.join(set, udid, 'device.plist'), `<plist>${Math.random()}</plist>`);
+    };
+    plist('AAA');
+    let lists = 0;
+    const d = Object.assign(Object.create(AppleDriver.prototype) as AppleDriver, {
+      deviceSet: set,
+      simctl: async (args: string[]) => {
+        if (args[0] === 'list') lists++;
+        return {stdout: JSON.stringify({devices: {'com.apple.CoreSimulator.SimRuntime.iOS-27-2': [{udid: 'AAA', name: 'Phone', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro'}]}}), stderr: '', code: 0, timedOut: false, ms: 0};
+      },
+    });
+    let now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await d.simulators();
+      now += 5000;
+      await d.simulators();
+      expect(lists).toBe(1);
+      // Booted or shut down from another process: its device.plist is written again.
+      const file = path.join(set, 'AAA', 'device.plist');
+      fs.utimesSync(file, new Date(), new Date(Date.now() + 2000));
+      await d.simulators();
+      expect(lists).toBe(2);
+      now += 5000;
+      plist('BBB');
+      await d.simulators();
+      expect(lists).toBe(3);
+      // Never longer than half a minute.
+      now += 31_000;
+      await d.simulators();
+      expect(lists).toBe(4);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it.skipIf(process.platform !== 'darwin')('copies the app data with the app stopped and says whether it was running', async () => {
     const container = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-container-'));
     const dataDir = path.join(container, 'Containers', 'Data', 'Application', 'X');

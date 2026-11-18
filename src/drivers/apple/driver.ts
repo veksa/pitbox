@@ -165,6 +165,32 @@ export const listFailure = (r: {code: number | null; stderr: string; timedOut: b
   return {message: `simctl list failed: ${r.stderr.trim()}`, hint: 'is Xcode installed and its license accepted (`sudo xcodebuild -license accept`)?'};
 };
 
+/** How long the simulator list is kept at most while no simulator's state file changes (AppleDriver.simulators). */
+const KEPT_MAX_MS = 30_000;
+
+/**
+ * The state of a device set as cheaply as it can be read: every simulator's folder with its device.plist's change
+ * time. CoreSimulator rewrites the file when the simulator boots, shuts down, is renamed or erased; a simulator
+ * created or deleted changes the folder list. Undefined when the set cannot be read (another machine's layout).
+ */
+export const deviceSetStamp = (dir: string): string | undefined => {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  const parts: string[] = [];
+  for (const name of names.sort()) {
+    try {
+      parts.push(`${name}:${fs.statSync(path.join(dir, name, 'device.plist')).mtimeMs}`);
+    } catch {
+      parts.push(`${name}:-`);
+    }
+  }
+  return parts.join('|');
+};
+
 export class AppleDriver {
   readonly xcrun: string;
 
@@ -186,14 +212,21 @@ export class AppleDriver {
   }
 
   /**
-   * The list `simctl list` gives, kept for a moment: it costs ~150 ms, and one command resolves its device two or
-   * three times (the target, its UI session, the web check). Booting and shutting down here drop it; a simulator
-   * booted elsewhere shows up within the moment.
+   * The list `simctl list` gives, kept: it costs ~100 ms, and one command resolves its device two or three times
+   * (the target, its UI session, the web check). For a moment it is used as it is; after that only while no
+   * simulator's state file changed (`deviceSetStamp`: CoreSimulator rewrites a simulator's device.plist on every boot
+   * and shutdown, from any process), and never longer than KEPT_MAX_MS. Booting and shutting down here drop it.
    */
-  private kept?: {at: number; sims: Promise<Simulator[]>};
+  private kept?: {at: number; stamp?: string; sims: Promise<Simulator[]>};
+
+  /** Where CoreSimulator keeps the default device set; a test points it elsewhere. */
+  deviceSet = path.join(os.homedir(), 'Library', 'Developer', 'CoreSimulator', 'Devices');
 
   async simulators(): Promise<Simulator[]> {
-    if (this.kept && Date.now() - this.kept.at < 1500) return this.kept.sims;
+    const kept = this.kept;
+    if (kept && (Date.now() - kept.at < 1500 || (Date.now() - kept.at < KEPT_MAX_MS && kept.stamp !== undefined && kept.stamp === deviceSetStamp(this.deviceSet)))) return kept.sims;
+    // Read before the list: a change while simctl answers makes the next call read it again.
+    const stamp = deviceSetStamp(this.deviceSet);
     const sims = (async () => {
       // Right after a boot or a runtime's install CoreSimulator can take tens of seconds to list its devices (a CI
       // machine most of all): waited for, and asked once more when it ran out of time.
@@ -203,8 +236,11 @@ export class AppleDriver {
       if (failed) throw new AppleError(failed.message, failed.hint);
       return parseSimulators(r.stdout).filter(s => s.available);
     })();
-    this.kept = {at: Date.now(), sims};
-    sims.catch(() => (this.kept = undefined));
+    const entry = {at: Date.now(), stamp, sims};
+    this.kept = entry;
+    sims.catch(() => {
+      if (this.kept === entry) this.kept = undefined;
+    });
     return sims;
   }
 
