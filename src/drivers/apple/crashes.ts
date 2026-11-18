@@ -88,8 +88,9 @@ const readHead = (file: string): {bundleID?: string; bug_type?: string; name?: s
 
 /**
  * How many crash reports macOS keeps of the app's process in `dir`, which is what it counts against its limit: it
- * saves a crash report only while fewer than {@link AppleCrashWatcher.keptReports} of that process are in the
- * directory, whatever their dates, and drops every later one until old ones are removed.
+ * saves a crash report while fewer than {@link AppleCrashWatcher.keptReports} of that process are in the
+ * directory, whatever their dates; past that it drops almost every later one (now and then one is still saved)
+ * until old ones are removed.
  */
 export const keptReports = (dir: string, bundleId: string): number => {
   const heads: {name?: string; bundleID?: string}[] = [];
@@ -213,9 +214,9 @@ export class AppleCrashWatcher {
    * How long a report is waited for once the app is gone: briefly after each action, longer on visionOS and when a
    * flow has failed — under load the reporter takes close to a minute on every platform.
    */
-  static waitMs = {quick: 8000, long: 60_000};
+  static waitMs = {quick: 8000, long: 60_000, atLimit: 4000};
 
-  /** How many crash reports of one process macOS keeps in its reports directory; past that it saves no more. */
+  /** How many crash reports of one process macOS keeps in its reports directory; past that it saves almost no more. */
   static keptReports = 25;
 
   /** A report of the app that macOS will not save, and why, or undefined while it would. */
@@ -223,7 +224,7 @@ export class AppleCrashWatcher {
     if (!this.#bundleId) return undefined;
     const kept = keptReports(this.#dir, this.#bundleId);
     if (kept < AppleCrashWatcher.keptReports) return undefined;
-    return `no crash report: macOS saves none while it keeps ${AppleCrashWatcher.keptReports} of the app and it has ${kept}; remove old ones from ${this.#dir}`;
+    return `no crash report: macOS saves almost none while it keeps ${AppleCrashWatcher.keptReports} of the app and it has ${kept}; remove old ones from ${this.#dir}`;
   }
 
   async since(since: number, after?: string[], final = false): Promise<AppEvent[]> {
@@ -237,11 +238,12 @@ export class AppleCrashWatcher {
     // The app died during the action and its report is not written yet: it takes the reporter a few seconds. A
     // report macOS will not save is not waited for.
     if (gone) {
-      let why = found.length ? undefined : this.#notSaved();
-      // The count may include a report written since the scan above.
-      if (why) found = this.#scan(since);
-      if (found.length) why = undefined;
-      const deadline = Date.now() + (slow || final ? AppleCrashWatcher.waitMs.long : AppleCrashWatcher.waitMs.quick);
+      let why: string | undefined;
+      // Past its limit macOS still saves a report now and then (the log says "26 of max 25"): the wait is cut short,
+      // not skipped — it ends when an old report is touched instead, or after a few seconds.
+      const atLimit = !found.length && !!this.#notSaved();
+      const wait = slow || final ? AppleCrashWatcher.waitMs.long : AppleCrashWatcher.waitMs.quick;
+      const deadline = Date.now() + (atLimit ? Math.min(wait, AppleCrashWatcher.waitMs.atLimit) : wait);
       const seen = {touched: false};
       let touchedAt: number | undefined;
       while (!found.length && !why && Date.now() < deadline) {

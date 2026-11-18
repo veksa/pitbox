@@ -190,7 +190,7 @@ describe('apple driver', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
     const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
     const saved = AppleCrashWatcher.waitMs;
-    AppleCrashWatcher.waitMs = {quick: 100, long: 3000};
+    AppleCrashWatcher.waitMs = {quick: 100, long: 3000, atLimit: 4000};
     try {
       const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
       const t = Date.parse('2026-01-02T10:00:00+02:00');
@@ -203,7 +203,7 @@ describe('apple driver', () => {
     }
   });
 
-  it('answers at once when macOS keeps as many reports of the app as it saves, whatever their dates', async () => {
+  it('answers within a few seconds when macOS keeps as many reports of the app as it saves, whatever their dates', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
     const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
     // Reports of earlier days count; so does another app with the same process name, and nothing else does.
@@ -215,13 +215,18 @@ describe('apple driver', () => {
     fs.writeFileSync(path.join(dir, 'MyApp-2026-01-03-130000.ips'), ips({udid: 'CCC'}));
     expect(keptReports(dir, 'com.example.app')).toBe(25);
     const saved = AppleCrashWatcher.waitMs;
-    AppleCrashWatcher.waitMs = {quick: 5000, long: 5000};
+    AppleCrashWatcher.waitMs = {quick: 20_000, long: 20_000, atLimit: 1000};
     try {
       const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
       const t = Date.now();
       const [e] = await w.since(Date.now(), undefined, true);
-      expect(e?.summary).toContain('stopped running during the action (no crash report: macOS saves none while it keeps 25 of the app and it has 25');
-      expect(Date.now() - t).toBeLessThan(2000);
+      expect(e?.summary).toContain('stopped running during the action (no crash report: macOS saves almost none while it keeps 25 of the app and it has 25');
+      expect(Date.now() - t).toBeLessThan(3000);
+      // Past the limit macOS still saves one now and then: a report that comes within the short wait is found.
+      const w2 = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+      const t2 = Date.now();
+      setTimeout(() => fs.writeFileSync(path.join(dir, 'MyApp-new.ips'), ips({at: new Date(t2 + 1000 + 2 * 3600_000).toISOString().replace('T', ' ').slice(0, 19)})), 300);
+      expect((await w2.since(t2, undefined, true)).map(f => f.summary)).toEqual(['EXC_BREAKPOINT (SIGTRAP)']);
     } finally {
       AppleCrashWatcher.waitMs = saved;
     }
@@ -251,7 +256,7 @@ describe('apple driver', () => {
     fs.writeFileSync(file, ips({udid: 'BBB'}));
     fs.utimesSync(file, new Date('2026-01-02T10:00:01+02:00'), new Date('2026-01-02T10:00:01+02:00'));
     const saved = AppleCrashWatcher.waitMs;
-    AppleCrashWatcher.waitMs = {quick: 20_000, long: 20_000};
+    AppleCrashWatcher.waitMs = {quick: 20_000, long: 20_000, atLimit: 4000};
     try {
       const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
       w.begin(['com.example.app']);
