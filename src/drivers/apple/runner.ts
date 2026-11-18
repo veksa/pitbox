@@ -116,7 +116,7 @@ export const directPlan = (xctestrun: unknown, testRoot: string, developerDir: s
   const doc = xctestrun as Record<string, {TestHostPath?: string; TestingEnvironmentVariables?: Record<string, string>}>;
   const target = doc.PitboxRunner ?? Object.entries(doc).find(([k]) => !k.startsWith('__'))?.[1];
   if (!target?.TestHostPath) return undefined;
-  const fill = (v: string) => v.replaceAll('__TESTROOT__', testRoot).replaceAll('__PLATFORMS__', path.join(developerDir, 'Platforms'));
+  const fill = (v: string) => v.replaceAll('__TESTROOT__', testRoot).replaceAll('__PLATFORMS__', path.posix.join(developerDir, 'Platforms'));
   const env = Object.fromEntries(Object.entries(target.TestingEnvironmentVariables ?? {}).map(([k, v]) => [k, fill(String(v))]));
   return {app: fill(target.TestHostPath), env};
 };
