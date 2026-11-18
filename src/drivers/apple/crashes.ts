@@ -31,7 +31,7 @@ export const reportsDir = () => path.join(os.homedir(), 'Library', 'Logs', 'Diag
 export const parseIps = (text: string, bundleId: string | undefined, udid: string, fallbackAt: number): AppEvent | undefined => {
   const nl = text.indexOf('\n');
   if (nl < 0) return undefined;
-  let header: {bundleID?: string; bug_type?: string};
+  let header: {bundleID?: string; bug_type?: string; timestamp?: string};
   let body: Ips;
   try {
     header = JSON.parse(text.slice(0, nl));
@@ -56,8 +56,55 @@ export const parseIps = (text: string, bundleId: string | undefined, udid: strin
   const reason = Object.values(body.asi ?? {}).flat().find(Boolean);
   const ex = body.exception;
   const summary = [ex?.type, ex?.signal && `(${ex.signal})`, reason ?? body.termination?.indicator].filter(Boolean).join(' ');
-  const at = body.captureTime ? Date.parse(body.captureTime.replace(' ', 'T').replace(/(\.\d{3})\d*/, '$1').replace(/ ([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
-  return {at: Number.isFinite(at) ? at : fallbackAt, kind: 'crash', summary: summary || 'crash', lines: frames.slice(0, 15).map(frame)};
+  // The capture time, else the header's: a report's file can be touched long after it was written, so its mtime is
+  // only the last resort.
+  const at = reportTime(body.captureTime) ?? reportTime(header.timestamp) ?? fallbackAt;
+  return {at, kind: 'crash', summary: summary || 'crash', lines: frames.slice(0, 15).map(frame)};
+};
+
+/** `2026-01-02 10:00:00.1234 +0200` (a report's capture time or header timestamp) as epoch ms. */
+const reportTime = (t: string | undefined): number | undefined => {
+  if (!t) return undefined;
+  const at = Date.parse(t.replace(' ', 'T').replace(/(\.\d{3})\d*/, '$1').replace(/(\.\d{1,2})(?=\s)/, m => m.padEnd(4, '0')).replace(/ ([+-]\d{2})(\d{2})$/, '$1:$2'));
+  return Number.isFinite(at) ? at : undefined;
+};
+
+/** The header line of a report (its first line), read without the rest of the file. */
+const readHead = (file: string): {bundleID?: string; bug_type?: string; name?: string; app_name?: string} | undefined => {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const text = buf.subarray(0, n).toString('utf8');
+    const nl = text.indexOf('\n');
+    return JSON.parse(nl < 0 ? text : text.slice(0, nl));
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+};
+
+/**
+ * How many crash reports macOS keeps of the app's process in `dir`, which is what it counts against its limit: it
+ * saves a crash report only while fewer than {@link AppleCrashWatcher.keptReports} of that process are in the
+ * directory, whatever their dates, and drops every later one until old ones are removed.
+ */
+export const keptReports = (dir: string, bundleId: string): number => {
+  const heads: {name?: string; bundleID?: string}[] = [];
+  try {
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.ips') || file.startsWith('.')) continue;
+      const head = readHead(path.join(dir, file));
+      if (head?.bug_type === '309') heads.push({name: head.name ?? head.app_name, bundleID: head.bundleID});
+    }
+  } catch {
+    return 0;
+  }
+  // The limit is per process name: another app with the same executable name shares it.
+  const names = new Set(heads.filter(h => h.bundleID === bundleId && h.name).map(h => h.name));
+  return heads.filter(h => h.name && names.has(h.name)).length;
 };
 
 /** Whether the app runs, and whether its reports are slow to come (visionOS). */
@@ -70,7 +117,8 @@ export class AppleCrashWatcher {
   readonly #dir: string;
   /** Whether the app ran when the current action began. */
   #wasRunning?: Promise<boolean>;
-  readonly #seen = new Map<string, AppEvent | undefined>();
+  /** Each report read so far, with the mtime and size it had: a file touched or rewritten later is read again. */
+  readonly #seen = new Map<string, {stamp: string; event?: AppEvent; written?: number}>();
 
   /** `driver` reads a simulator; a probe stands for a Mac app (`udid` empty). */
   constructor(driver: AppleDriver | CrashProbe, udid: string, bundleId?: string, dir = reportsDir()) {
@@ -109,35 +157,48 @@ export class AppleCrashWatcher {
     return this.#probe.running();
   }
 
-  #scan(since: number): AppEvent[] {
+  /**
+   * The app's reports written since `since`, by what is in them: a file's name and creation say nothing, as macOS
+   * touches an old report of the same crash instead of writing a new one when it keeps too many. `touched` is set
+   * when a report of the app from before `since` was modified since: the sign of a crash that macOS saw and saved
+   * no report of.
+   */
+  #scan(since: number, seen?: {touched: boolean}): AppEvent[] {
     let names: string[];
     try {
-      names = fs.readdirSync(this.#dir).filter(n => n.endsWith('.ips'));
+      names = fs.readdirSync(this.#dir).filter(n => n.endsWith('.ips') && !n.startsWith('.'));
     } catch {
       return [];
     }
     const out: AppEvent[] = [];
     for (const name of names) {
       const file = path.join(this.#dir, name);
-      let mtime: number;
+      let stat: fs.Stats;
       try {
-        mtime = fs.statSync(file).mtimeMs;
+        stat = fs.statSync(file);
       } catch {
         continue;
       }
-      if (mtime < since - 1000) continue;
-      if (!this.#seen.has(file)) {
+      if (stat.mtimeMs < since - 1000) continue;
+      const stamp = `${stat.mtimeMs}:${stat.size}`;
+      let entry = this.#seen.get(file);
+      if (entry?.stamp !== stamp) {
         let event: AppEvent | undefined;
+        let written: number | undefined;
         try {
-          event = parseIps(fs.readFileSync(file, 'utf8'), this.#bundleId, this.#udid, mtime);
-        } catch {
-          event = undefined;
-        }
-        this.#seen.set(file, event);
+          const text = fs.readFileSync(file, 'utf8');
+          event = parseIps(text, this.#bundleId, this.#udid, stat.mtimeMs);
+          // When a crash report of the app, from any simulator, was written: by its header, not its file.
+          const head = JSON.parse(text.slice(0, text.indexOf('\n'))) as {bundleID?: string; bug_type?: string; timestamp?: string};
+          if (head.bug_type === '309' && head.bundleID === this.#bundleId) written = reportTime(head.timestamp);
+        } catch {}
+        entry = {stamp, event, written};
+        this.#seen.set(file, entry);
       }
-      const e = this.#seen.get(file);
+      const e = entry.event;
       // The capture time comes after the crash: a small margin, or the last action's crash leaks into the next.
       if (e && e.at >= since - 300) out.push(e);
+      else if (seen && entry.written !== undefined && entry.written < since - 1000) seen.touched = true;
     }
     return out.sort((a, b) => a.at - b.at);
   }
@@ -154,24 +215,15 @@ export class AppleCrashWatcher {
    */
   static waitMs = {quick: 8000, long: 60_000};
 
-  /** How many reports of one app macOS writes a day; past that its crashes leave none. */
-  static dailyReports = 25;
+  /** How many crash reports of one process macOS keeps in its reports directory; past that it saves no more. */
+  static keptReports = 25;
 
-  /** The app's reports from today, by the header line of each. */
-  #reportsToday(): number {
-    const d = new Date();
-    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    let n = 0;
-    try {
-      for (const name of fs.readdirSync(this.#dir)) {
-        if (!name.endsWith('.ips') || !name.includes(`-${today}-`)) continue;
-        try {
-          const head = JSON.parse(fs.readFileSync(path.join(this.#dir, name), 'utf8').split('\n', 1)[0]!) as {bundleID?: string; timestamp?: string};
-          if (head.bundleID === this.#bundleId && head.timestamp?.startsWith(today)) n++;
-        } catch {}
-      }
-    } catch {}
-    return n;
+  /** A report of the app that macOS will not save, and why, or undefined while it would. */
+  #notSaved(): string | undefined {
+    if (!this.#bundleId) return undefined;
+    const kept = keptReports(this.#dir, this.#bundleId);
+    if (kept < AppleCrashWatcher.keptReports) return undefined;
+    return `no crash report: macOS saves none while it keeps ${AppleCrashWatcher.keptReports} of the app and it has ${kept}; remove old ones from ${this.#dir}`;
   }
 
   async since(since: number, after?: string[], final = false): Promise<AppEvent[]> {
@@ -182,16 +234,28 @@ export class AppleCrashWatcher {
     this.#slow ??= this.#probe.slow().catch(() => false);
     const slow = await this.#slow;
     const gone = (slow && !!after && !!this.#bundleId && !after.includes(this.#bundleId)) || !(await this.#running().catch(() => true));
-    // The app died during the action and its report is not written yet: it takes the reporter a few seconds.
+    // The app died during the action and its report is not written yet: it takes the reporter a few seconds. A
+    // report macOS will not save is not waited for.
     if (gone) {
+      let why = found.length ? undefined : this.#notSaved();
+      // The count may include a report written since the scan above.
+      if (why) found = this.#scan(since);
+      if (found.length) why = undefined;
       const deadline = Date.now() + (slow || final ? AppleCrashWatcher.waitMs.long : AppleCrashWatcher.waitMs.quick);
-      while (!found.length && Date.now() < deadline) {
+      const seen = {touched: false};
+      let touchedAt: number | undefined;
+      while (!found.length && !why && Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 400));
-        found = this.#scan(since);
+        found = this.#scan(since, seen);
+        // An old report of the app touched: macOS took the crash for one it has a report of and saved none. A
+        // moment more for a new report that comes with it, then the answer.
+        if (seen.touched && !found.length) {
+          touchedAt ??= Date.now();
+          if (Date.now() - touchedAt >= 1200) why = this.#notSaved() ?? 'no crash report: macOS saved none, it took the crash for one it has a report of';
+        }
       }
       if (!found.length) {
-        const kept = this.#reportsToday();
-        const why = kept >= AppleCrashWatcher.dailyReports ? `no crash report: macOS keeps ${AppleCrashWatcher.dailyReports} a day per app and has ${kept} of it today; remove old ones from ${this.#dir}` : 'no crash report yet';
+        why ??= this.#notSaved() ?? 'no crash report yet';
         found = [{at: Date.now(), kind: 'crash', summary: `${this.#bundleId} stopped running during the action (${why})`, lines: []}];
       }
     }

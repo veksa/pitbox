@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
 import {AppleRunner, runnerNotice, sourceHash} from './drivers/apple/runner.ts';
-import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
+import {AppleCrashWatcher, keptReports, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
 import {AppleDriver, appProcess, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulatorBoots, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp, listFailure} from './drivers/apple/driver.ts';
@@ -88,10 +88,10 @@ describe('apple driver', () => {
     // machine stalls file writes for a while, as a loaded Windows runner does while other tests start processes.
   }, 60_000);
 
-  const ips = (o: {bundle?: string; udid?: string; bug?: string; exception?: boolean} = {}) =>
-    `${JSON.stringify({bug_type: o.bug ?? '309', bundleID: o.bundle ?? 'com.example.app'})}\n${JSON.stringify({
+  const ips = (o: {bundle?: string; udid?: string; bug?: string; exception?: boolean; at?: string} = {}) =>
+    `${JSON.stringify({bug_type: o.bug ?? '309', bundleID: o.bundle ?? 'com.example.app', name: 'MyApp', timestamp: `${o.at ?? '2026-01-02 10:00:00'}.00 +0200`})}\n${JSON.stringify({
       procPath: `/Users/u/Library/Developer/CoreSimulator/Devices/${o.udid ?? 'AAA'}/data/Containers/Bundle/Application/X/MyApp.app/MyApp`,
-      captureTime: '2026-01-02 10:00:00.1234 +0200',
+      captureTime: `${o.at ?? '2026-01-02 10:00:00'}.1234 +0200`,
       exception: {type: o.exception ? 'EXC_CRASH' : 'EXC_BREAKPOINT', signal: o.exception ? 'SIGABRT' : 'SIGTRAP'},
       asi: o.exception ? {CoreFoundation: ["*** Terminating app due to uncaught exception 'NSInvalidArgumentException'"]} : undefined,
       lastExceptionBacktrace: o.exception ? [{imageIndex: 0, symbol: 'MyApp.save()', sourceFile: '/src/Store.swift', sourceLine: 42}] : undefined,
@@ -163,7 +163,8 @@ describe('apple driver', () => {
 
   it('tells a running app from the Mac process list, not its extensions or another install', async () => {
     const app = '/Users/me/Library/Developer/CoreSimulator/Devices/AAA/data/Containers/Bundle/Application/B1/MyApp.app';
-    const ps = [`${app}/PlugIns/Widgets.appex/Widgets`, '/usr/libexec/other', `${app.replace('B1', 'B0')}/MyApp`].join('\n');
+    // The same app on another simulator runs from that simulator's own container.
+    const ps = [`${app}/PlugIns/Widgets.appex/Widgets`, '/usr/libexec/other', `${app.replace('B1', 'B0')}/MyApp`, `${app.replace('/AAA/', '/BBB/')}/MyApp`].join('\n');
     expect(appProcess(ps, app)).toBe(false);
     expect(appProcess(`${ps}\n${app}/MyApp -AppleLanguages (en)`, app)).toBe(true);
     // The watcher asks the process list and not launchctl when the driver can.
@@ -202,21 +203,63 @@ describe('apple driver', () => {
     }
   });
 
-  it('says when macOS has stopped writing crash reports of the app for the day', async () => {
+  it('answers at once when macOS keeps as many reports of the app as it saves, whatever their dates', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
     const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
-    const d = new Date();
-    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    for (let i = 0; i < 25; i++) {
-      const head = JSON.stringify({app_name: 'MyApp', timestamp: `${today} 10:00:${String(i).padStart(2, '0')}.00 +0200`, bundleID: 'com.example.app'});
-      fs.writeFileSync(path.join(dir, `MyApp-${today}-1000${String(i).padStart(2, '0')}.ips`), `${head}\n{}`);
-    }
+    // Reports of earlier days count; so does another app with the same process name, and nothing else does.
+    for (let i = 0; i < 23; i++) fs.writeFileSync(path.join(dir, `MyApp-2026-01-${String(1 + (i % 9)).padStart(2, '0')}-1000${String(i).padStart(2, '0')}.ips`), ips({udid: 'BBB'}));
+    fs.writeFileSync(path.join(dir, 'MyApp-2026-01-03-110000.ips'), ips({bundle: 'com.example.other'}));
+    fs.writeFileSync(path.join(dir, 'Other-2026-01-03-110000.ips'), ips({bundle: 'com.example.other'}).replace('"name":"MyApp"', '"name":"Other"'));
+    fs.writeFileSync(path.join(dir, 'MyApp-2026-01-03-120000.ips'), ips({bug: '288'}));
+    expect(keptReports(dir, 'com.example.app')).toBe(24);
+    fs.writeFileSync(path.join(dir, 'MyApp-2026-01-03-130000.ips'), ips({udid: 'CCC'}));
+    expect(keptReports(dir, 'com.example.app')).toBe(25);
     const saved = AppleCrashWatcher.waitMs;
-    AppleCrashWatcher.waitMs = {quick: 100, long: 100};
+    AppleCrashWatcher.waitMs = {quick: 5000, long: 5000};
     try {
       const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+      const t = Date.now();
       const [e] = await w.since(Date.now(), undefined, true);
-      expect(e?.summary).toContain('macOS keeps 25 a day per app and has 25 of it today');
+      expect(e?.summary).toContain('stopped running during the action (no crash report: macOS saves none while it keeps 25 of the app and it has 25');
+      expect(Date.now() - t).toBeLessThan(2000);
+    } finally {
+      AppleCrashWatcher.waitMs = saved;
+    }
+  });
+
+  it('finds a crash written over an old report and never takes a touched old report for a new crash', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
+    const file = path.join(dir, 'MyApp-2026-01-02-100000.ips');
+    fs.writeFileSync(file, ips());
+    const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+    const t = Date.parse('2026-01-02T11:00:00+02:00');
+    // Touched an hour later with the old crash in it: not a crash of this action.
+    fs.utimesSync(file, new Date(t + 500), new Date(t + 500));
+    expect(await w.since(t)).toEqual([]);
+    // The same file rewritten with a new crash: read again, by its content.
+    fs.writeFileSync(file, ips({at: '2026-01-02 11:00:01'}));
+    fs.utimesSync(file, new Date(t + 1500), new Date(t + 1500));
+    expect((await w.since(t)).map(f => f.at)).toEqual([Date.parse('2026-01-02T11:00:01.123+02:00')]);
+  });
+
+  it('stops waiting soon when macOS touches an old report of the app instead of saving the new crash', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-'));
+    const driver = {simctl: async () => ({stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
+    // The old report is of another simulator: macOS matches the crash by its signature, not by the device.
+    const file = path.join(dir, 'MyApp-2026-01-02-100000.ips');
+    fs.writeFileSync(file, ips({udid: 'BBB'}));
+    fs.utimesSync(file, new Date('2026-01-02T10:00:01+02:00'), new Date('2026-01-02T10:00:01+02:00'));
+    const saved = AppleCrashWatcher.waitMs;
+    AppleCrashWatcher.waitMs = {quick: 20_000, long: 20_000};
+    try {
+      const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', dir);
+      w.begin(['com.example.app']);
+      const t = Date.now();
+      setTimeout(() => fs.utimesSync(file, new Date(), new Date()), 300);
+      const [e] = await w.since(t, undefined, true);
+      expect(e?.summary).toContain('stopped running during the action (no crash report: macOS saved none, it took the crash for one it has a report of)');
+      expect(Date.now() - t).toBeLessThan(5000);
     } finally {
       AppleCrashWatcher.waitMs = saved;
     }
