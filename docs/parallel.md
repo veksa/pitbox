@@ -365,11 +365,28 @@ same app, and two sessions on JS-only branches build the same native code twice,
   content of every input file (as git lists them: tracked and untracked, not ignored), and for iOS the Xcode
   version. For an app whose JS comes from a dev server the JS is not an input: a JS edit keeps the build.
 - **Shared.** Builds are kept in `~/Library/Caches/pitbox/builds/<app id>/<platform>/<fingerprint>` (an .app is
-  cloned on APFS, costing no space), so every checkout and worktree of the app reuses them; the newest three per
-  platform stay. A fingerprint built before — a branch switched back, an edit undone — is installed at once.
+  cloned on APFS, costing no space), so every checkout and worktree of the app reuses them. A fingerprint built
+  before — a branch switched back, an edit undone — is installed at once.
 - **Single flight.** Sessions asking for the same missing fingerprint build it once: the first builds, the others
   wait and take its result. Native builds of any app take turns on the machine (one `native-build` lock), as
   several at once only make each slower and starve the devices.
+- **Variants.** A build whose output depends on the environment (an instrumented variant, an architecture, a
+  config preset) declares those variables in `env` (`['APP_PROBE', 'APP_PUBLIC_*']`): their values are in the
+  fingerprint, an unset variable and an empty one differ, and the build runs with the values of the caller — the
+  shell that ran `pitbox build`, or the MCP server's environment with `env={…}` of `app action=build` over it — not
+  those of the daemon, which has the environment of whichever session started it. Each set of values is a variant
+  (`variant <hash>` in the answer), kept apart from the others.
+- **Exclusions and outside files.** A build with its JS inside takes every file (`inputs: ['**']`); `!glob` entries
+  leave out what does not reach the build (`['**', '!docs/**', '!flows/**']`), so a doc or test edit keeps it.
+  `inputs: ['!glob']` alone excludes from the default inputs. Files the build reads that git does not list — a
+  preset outside the checkout, an ignored local file — go in `files` (`['~/presets/local.json', '.env.local',
+  '$APP_PRESET']`, `$NAME` a variable of `env`): their content is in the fingerprint. A missing one counts as
+  absent, its own fingerprint; a `$NAME` set to a path that does not exist fails the build before it starts.
+- **Kept, then dropped.** After a build, old builds of the app and platform go: past the five most recently used
+  of each variant, unused for 30 days, or past `keep.mb` in all, least recently used first (`keep: {count, days,
+  mb}`). Reusing a build counts as a use. One used in the last 15 minutes never goes — another session may be
+  installing it — and a build is dropped by a rename first, so a reader finds it whole or not at all. `devices
+  clean` leaves the cache alone; deleting the folder is safe while no build or install runs.
 
 Measured on the React Native example (Android, warm Gradle daemon), `pitbox build android` from the command line:
 
