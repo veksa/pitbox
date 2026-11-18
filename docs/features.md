@@ -67,7 +67,10 @@ compact text.
 ## UI automation
 
 - **The screen as short lines with refs** (`@e3 button "Sign in"`), not a dump of the accessibility tree.
-- **Actions that wait for the UI to settle** and answer with what changed. Exact gestures (double tap, swipe
+- **Actions that wait for the UI to settle** and answer with what changed: quiet for 120 ms, then followed until
+  two reads agree with every node where it was (a sheet still sliding in is waited for). A screen that did not
+  change is watched for 0.6 s after the input — from the end of the requests the action started, for apps on the
+  dev server — and a step whose target is not there yet waits a second for it. Exact gestures (double tap, swipe
   velocity), D-pad keys and focus for TV, a finger held across calls (inspect a scrubber mid-drag).
 - **Taps that land** — the visible part of a covered target is tapped and what covers its centre is named; a
   keyboard over the target is closed first, once it stands still (on iOS never with return from a multi-line field, where

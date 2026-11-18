@@ -27,7 +27,9 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   and answers with one verdict. On failure: the line, the error, crashes or ANRs, a screenshot path and the
   screen as text — enough to act without another snapshot.
 - **New screen → `snapshot` once; after that, actions answer with the diff.** Every action waits for the UI to
-  settle (and for the app's network, when the dev server injects the in-app channel). A press whose target has
+  settle (and for the app's network, when the dev server injects the in-app channel). An action that changed
+  nothing answers 0.6 s after its input: an effect that comes later shows in the next `snapshot` — look before
+  pressing again — and a flow step whose target it brings waits a second for it. A press whose target has
   something painted over its centre (a floating button, an overlay) taps an uncovered part of it and says so in a
   `note`; a permission request over the app is named in the error of a selector that finds nothing.
 - **Selectors:** `@e12` from the last snapshot, `id=…` (testID), `text=…` (the string a line quotes), `label=…`,

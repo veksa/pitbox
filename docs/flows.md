@@ -107,7 +107,8 @@ locales.
 
 ### Acting
 
-Every action waits for the UI to settle before the next step.
+Every action waits for the UI to settle before the next step. An action whose effect comes late (a screen opened
+after a request) does not hold the flow up: the next step that needs what it brings waits a second for its target.
 
 | Step | Does |
 |---|---|
