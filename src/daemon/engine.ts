@@ -52,7 +52,7 @@ import {createdEntry, forgetCreated, isCreated, listCreated, recordCreated, upda
 import {WearRelay} from '../drivers/android/wearRelay.ts';
 import {Activity} from './activity.ts';
 import {VERSION} from './info.ts';
-import {ensureBuild, jsAppInputs, type NativePlatform} from '../native/builds.ts';
+import {buildInputs, ensureBuild, type NativePlatform} from '../native/builds.ts';
 
 type Params = Record<string, unknown>;
 
@@ -2524,7 +2524,7 @@ export class Engine {
       const root = this.#loaded.root;
       const app = (platform === 'android' ? this.config.app?.android : this.config.app?.apple) ?? path.basename(root);
       const toolchain = platform === 'ios' ? await this.#xcodeVersion() : '';
-      const r = await ensureBuild({root, app, platform, spec, inputs: spec.inputs ?? (this.config.devserver ? jsAppInputs(platform) : ['**']), toolchain, ...(this.config.shell ? {shell: this.config.shell} : {})});
+      const r = await ensureBuild({root, app, platform, spec, inputs: buildInputs(spec, platform, !!this.config.devserver), toolchain, ...(this.config.shell ? {shell: this.config.shell} : {})});
       if (bool(p, 'install') === false) return r;
       const installed = (await this.methods.install({apk: r.artifact, device: str(p, 'device'), replace: bool(p, 'replace')})) as {ms: number; serial?: string; udid?: string};
       return {...r, installed: {on: installed.serial ?? installed.udid, ms: installed.ms}};

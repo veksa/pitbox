@@ -34,6 +34,16 @@ const MANIFESTS = ['package.json', 'yarn.lock', 'package-lock.json', 'pnpm-lock.
 /** Inputs of a build whose JS comes from a dev server: the platform's folder, manifests, lock files, app config. */
 export const jsAppInputs = (platform: NativePlatform): string[] => [platform === 'ios' ? 'ios/**' : 'android/**', ...MANIFESTS];
 
+/**
+ * The inputs of a build: its own globs, or the defaults for the kind of app. `!glob` entries exclude paths; a list
+ * of exclusions only (`['!docs/**']`) keeps the default inputs and excludes from them.
+ */
+export const buildInputs = (spec: Pick<NativeBuildSpec, 'inputs'>, platform: NativePlatform, devserver: boolean): string[] => {
+  const defaults = devserver ? jsAppInputs(platform) : ['**'];
+  if (!spec.inputs) return defaults;
+  return spec.inputs.length > 0 && spec.inputs.every(g => g.startsWith('!')) ? [...defaults, ...spec.inputs] : spec.inputs;
+};
+
 /** A glob (`**`, `*`, `?`, `{a,b}`) as a regular expression over a `/`-separated relative path. */
 export const globRe = (glob: string): RegExp => {
   let re = '';
@@ -89,9 +99,10 @@ export type Fingerprint = {hash: string; files: number; ms: number};
  */
 export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[], toolchain = ''): Fingerprint => {
   const t0 = Date.now();
-  const res = inputs.map(globRe);
+  const res = inputs.filter(g => !g.startsWith('!')).map(globRe);
+  const not = inputs.filter(g => g.startsWith('!')).map(g => globRe(g.slice(1)));
   const files = listFiles(root)
-    .filter(f => res.some(r => r.test(f)))
+    .filter(f => res.some(r => r.test(f)) && !not.some(r => r.test(f)))
     .sort();
   const h = crypto.createHash('sha256');
   h.update(`${spec.command}\0${spec.output}\0${toolchain}\0`);

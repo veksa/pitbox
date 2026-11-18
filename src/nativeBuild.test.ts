@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {BuildError, buildsDir, ensureBuild, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
+import {BuildError, buildInputs, buildsDir, ensureBuild, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
 
 let root: string;
 let cache: string;
@@ -61,6 +61,22 @@ describe('native build fingerprint', () => {
     const a = fingerprint(root, spec(), ['**'], 'Xcode 26.0').hash;
     expect(fingerprint(root, spec(), ['**'], 'Xcode 26.1').hash).not.toBe(a);
     expect(fingerprint(root, {...spec(), command: 'other'}, ['**'], 'Xcode 26.0').hash).not.toBe(a);
+  });
+
+  it('!globs exclude inputs; exclusions alone keep the default inputs', () => {
+    write('docs/a.md', '1');
+    write('flows/smoke.yaml', '1');
+    const inputs = ['**', '!docs/**', '!flows/**'];
+    const a = fingerprint(root, spec(), inputs).hash;
+    write('docs/a.md', '2');
+    write('flows/smoke.yaml', '2');
+    expect(fingerprint(root, spec(), inputs).hash).toBe(a);
+    write('App.tsx', 'export default 9');
+    expect(fingerprint(root, spec(), inputs).hash).not.toBe(a);
+    expect(buildInputs({inputs: ['!android/gen/**']}, 'android', true)).toEqual([...jsAppInputs('android'), '!android/gen/**']);
+    expect(buildInputs({inputs: ['!x/**']}, 'ios', false)).toEqual(['**', '!x/**']);
+    expect(buildInputs({}, 'android', true)).toEqual(jsAppInputs('android'));
+    expect(buildInputs({inputs: ['android/**', '!android/x']}, 'android', true)).toEqual(['android/**', '!android/x']);
   });
 });
 

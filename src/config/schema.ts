@@ -148,8 +148,9 @@ export const configSchema = z.object({
        * Native builds, made once per fingerprint of their native inputs and kept in a cache every checkout and session
        * of the app shares (`build`): `{android: {command: 'cd android && ./gradlew assembleDebug', output:
        * 'android/app/build/outputs/apk/debug/app-debug.apk'}, ios: {command: 'xcodebuild … build', output:
-       * 'build/Build/Products/Debug-iphonesimulator/MyApp.app'}}`. `inputs` (globs) defaults to the platform's folder,
-       * manifests, lock files and app config when a dev server serves the JS, else every file git sees.
+       * 'build/Build/Products/Debug-iphonesimulator/MyApp.app'}}`. `inputs` (globs; `!glob` excludes) defaults to the
+       * platform's folder, manifests, lock files and app config when a dev server serves the JS, else every file git
+       * sees.
        */
       build: z
         .object({
