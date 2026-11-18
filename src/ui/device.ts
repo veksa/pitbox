@@ -558,7 +558,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     if (!this.runner.waitsForFocus) await this.runner.call('idle', {quiet: 150, timeout: 1000}, 6000);
     const editable = target.node && (target.node.f ?? '').includes('e');
     const args = {text, ...(editable ? {bounds: target.node!.b} : {})};
-    let r = await this.runner.call<{set: boolean}>('text', args);
+    let r = await this.runner.call<{set: boolean; retyped?: boolean}>('text', args);
     // The tap brought up a fullscreen keyboard, which hides the field's window: with the keyboard gone the field
     // keeps its focus and takes the text.
     if (!r.set && (await this.snapshot()).windows.some(w => w.type === 'ime')) {
@@ -570,7 +570,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       } catch {
         node = undefined;
       }
-      r = await this.runner.call<{set: boolean}>('text', {text, ...(node && (node.f ?? '').includes('e') ? {bounds: node.b} : {})});
+      r = await this.runner.call<{set: boolean; retyped?: boolean}>('text', {text, ...(node && (node.f ?? '').includes('e') ? {bounds: node.b} : {})});
     }
     if (!r.set) throw new Error(`could not set text on "${selector}" — it is not an editable field and no field took focus`);
     const chosen = target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`;
@@ -591,7 +591,10 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     }
     // Without a keyboard yet, the next press still gives one a moment to come up.
     this.#typed = !ime(this.last);
-    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
+    // The field dropped keys typed in one go and the runner typed it all again key by key: said, as a controlled
+    // input then renders about twice per key (a render budget over the fill counts them).
+    const note = r.retyped ? 'the field dropped keys typed in one go: cleared and typed again key by key' : undefined;
+    return {action: 'fill', target: target.ref, ...settled, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0, note))};
   }
 
   async type(text: string): Promise<ActResult> {

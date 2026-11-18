@@ -1441,3 +1441,23 @@ describe("a button of the shell's alert", () => {
     expect(taps).toHaveLength(2);
   });
 });
+
+describe('a fill the field dropped keys of', () => {
+  it('says that the runner typed it again key by key, which a render budget over the fill counts', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const name: UiNode = {p: -1, w: 0, c: 'TextField', b: [0, 0, 400, 50], id: 'name', f: 'cfe'};
+    const runner = {
+      waitsForFocus: true,
+      call: async (cmd: string) => {
+        if (cmd === 'tree') return {windows: app, nodes: [name]};
+        if (cmd === 'info') return {width: 400, height: 900};
+        if (cmd === 'text') return {set: true, retyped: true};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const r = await new DeviceUi('dev', runner as never).fill('id=name', 'Budget');
+    expect(r.note).toMatch(/dropped keys typed in one go: cleared and typed again key by key/);
+  });
+});
