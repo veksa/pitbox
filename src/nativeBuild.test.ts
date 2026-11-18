@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
+import {configSchema} from './config/schema.ts';
 import {BuildError, buildEnv, buildInputs, buildsDir, ensureBuild, envEntries, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
 
 let root: string;
@@ -249,6 +250,43 @@ describe('native build variables, exclusions and outside files', () => {
     // Exclusions alone declare nothing: the build keeps the fingerprint it has without env.
     expect(fp({env: ['!APP_X']}, {APP_X: '1'})).toBe(fp({}, {}));
     expect(fingerprint(root, {...spec(), env: ['!APP_X']}, ['**'], '', {}).variant).toBeUndefined();
+  });
+
+  it('a declared default: unset and the default are one build, other values are their own', () => {
+    const e = {env: ['APP_*', {name: 'APP_ARCH', default: 'arm64'}]};
+    const unset = fp(e, {});
+    expect(fp(e, {APP_ARCH: 'arm64'})).toBe(unset);
+    expect(fp(e, {APP_ARCH: 'x86_64'})).not.toBe(unset);
+    expect(fp(e, {APP_ARCH: ''})).not.toBe(unset);
+    expect(fingerprint(root, {...spec(), ...e}, ['**'], '', {}).variant).toBe(fingerprint(root, {...spec(), ...e}, ['**'], '', {APP_ARCH: 'arm64'}).variant);
+    // Opting into a default keeps the fingerprint of the builds made with the variable set to it.
+    expect(fp({env: ['APP_*', 'APP_ARCH']}, {APP_ARCH: 'arm64'})).toBe(unset);
+    expect(fp({env: [{name: 'APP_ARCH'}]}, {})).toBe(fp({env: ['APP_ARCH']}, {}));
+    expect(envEntries([{name: 'B', default: 'd'}, 'A'], {})).toEqual(['A\0unset', 'B=d']);
+    // An excluded name takes no default.
+    expect(envEntries(['APP_*', '!APP_ARCH', {name: 'APP_ARCH', default: 'arm64'}], {})).toEqual([]);
+    expect(() => envEntries([{name: 'APP_*', default: 'x'}], {})).toThrow(/plain name/);
+  });
+
+  it('the config takes defaults on plain names only', () => {
+    const cfg = (env: unknown[]) => configSchema.safeParse({app: {build: {android: {command: 'x', output: 'a.apk', env}}}}).success;
+    expect(cfg(['APP_*', '!APP_DEV_PORT', {name: 'APP_ARCH', default: 'arm64'}, {name: 'APP_X'}])).toBe(true);
+    expect(cfg([{name: 'APP_*', default: 'x'}])).toBe(false);
+    expect(cfg([{name: 'APP_X', default: 1}])).toBe(false);
+  });
+
+  it('the build gets the default when the caller leaves the variable unset', async () => {
+    const s = {command: `mkdir -p out; printf "%s" "\${APP_ARCH-unset}" > out/app.apk`, output: 'out/app.apk', env: [{name: 'APP_ARCH', default: 'arm64'}]};
+    const run = (callerEnv?: Record<string, string>) => ensureBuild({root, app: 'com.example.app', platform: 'android', spec: s, inputs: ['**'], cacheRoot: cache, ...(callerEnv ? {callerEnv} : {})});
+    const first = await run({});
+    expect(fs.readFileSync(first.artifact, 'utf8')).toBe('arm64');
+    expect(first.reused).toBe(false);
+    expect((await run({APP_ARCH: 'arm64'})).reused).toBe(true);
+    expect((await run()).reused).toBe(true);
+    const other = await run({APP_ARCH: 'x86_64'});
+    expect(other.reused).toBe(false);
+    expect(fs.readFileSync(other.artifact, 'utf8')).toBe('x86_64');
+    expect(buildEnv(s, {PATH: '/bin'})).toEqual({PATH: '/bin', APP_ARCH: 'arm64'});
   });
 
   it('an excluded variable is not taken from the caller', () => {

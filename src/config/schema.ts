@@ -122,8 +122,13 @@ const nativeBuildSchema = z
     inputs: z.array(z.string()).optional(),
     /** Seconds the build may take. Default 1800. */
     timeout: z.number().positive().optional(),
-    /** Environment variables that are inputs (names or globs on names, `!name` / `!glob` leaves out): their values are in the fingerprint. */
-    env: z.array(z.string()).optional(),
+    /**
+     * Environment variables that are inputs (names or globs on names, `!name` / `!glob` leaves out, `{name, default}`
+     * a name with the value it takes when unset): their values are in the fingerprint.
+     */
+    env: z
+      .array(z.union([z.string(), z.object({name: z.string().regex(/^\w+$/, 'a plain variable name'), default: z.string().optional()}).strict()]))
+      .optional(),
     /** Files or folders outside what git lists (absolute, `~/…`, ignored, `$NAME` of `env`) whose content is an input. */
     files: z.array(z.string()).optional(),
     /** Old builds kept: `count` per variant (default 5), unused `days` (default 30), `mb` in all (no limit). */

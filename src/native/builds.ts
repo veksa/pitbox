@@ -35,8 +35,10 @@ export type NativeBuildSpec = {
    * Environment variables that are inputs of the build: names, or globs on names (`APP_*`); a `!name` or `!glob`
    * entry, wherever it stands, leaves variables out (`['APP_*', '!APP_DEV_PORT']`). Their values are in the
    * fingerprint (an unset name and an empty one differ), and the build runs with the caller's values of them.
+   * `{name, default}` declares a name with the value the build gets when the caller leaves it unset: unset and the
+   * default are then one build.
    */
-  env?: string[];
+  env?: BuildEnvEntry[];
   /**
    * Files or folders read by the build that git does not list: absolute, `~/…`, relative to the root (ignored files),
    * or `$NAME…` with `NAME` a variable of `env`. Their content is in the fingerprint; a missing one counts as absent,
@@ -46,6 +48,9 @@ export type NativeBuildSpec = {
   /** Which old builds stay: `count` newest per variant (default 5), none unused for `days` (default 30), `mb` in all. */
   keep?: BuildKeep;
 };
+
+/** A declared variable: a name, a glob on names, `!name` / `!glob` to leave out, or a name with a default. */
+export type BuildEnvEntry = string | {name: string; default?: string};
 
 export type BuildKeep = {count?: number; days?: number; mb?: number};
 
@@ -122,35 +127,60 @@ const nameMatcher = (patterns: string[]) => {
 
 /**
  * A build's `env` read: which variables it declares (a name or glob, less every `!name` / `!glob` entry wherever it
- * stands in the list) and the plain names among them, which count as unset when not set.
+ * stands in the list), the plain names among them, which count as unset when not set, and their defaults.
  */
-export const parseEnv = (entries: string[] = []) => {
-  const pos = entries.filter(e => !e.startsWith('!'));
-  const not = nameMatcher(entries.filter(e => e.startsWith('!')).map(e => e.slice(1)));
+export const parseEnv = (entries: BuildEnvEntry[] = []) => {
+  const pos: string[] = [];
+  const nots: string[] = [];
+  const defaults = new Map<string, string>();
+  for (const e of entries) {
+    if (typeof e !== 'string') {
+      if (!/^\w+$/.test(e.name)) throw new BuildError(`build env: ${e.name} takes a default, so it must be a plain name`);
+      pos.push(e.name);
+      if (e.default !== undefined) defaults.set(e.name, e.default);
+    } else if (e.startsWith('!')) nots.push(e.slice(1));
+    else pos.push(e);
+  }
+  const not = nameMatcher(nots);
   const yes = nameMatcher(pos);
+  for (const n of [...defaults.keys()]) if (not(n)) defaults.delete(n);
   return {
     declared: (name: string) => yes(name) && !not(name),
     names: pos.filter(p => !GLOB_CHARS.test(p) && !not(p)),
+    defaults,
     any: pos.length > 0,
   };
 };
 
+/** The environment with the declared defaults filled in where a variable is unset. */
+const withDefaults = (env: NodeJS.ProcessEnv, defaults: Map<string, string>): NodeJS.ProcessEnv => {
+  if (![...defaults.keys()].some(k => env[k] === undefined)) return env;
+  const out = {...env};
+  for (const [k, v] of defaults) if (out[k] === undefined) out[k] = v;
+  return out;
+};
+
 /**
  * The environment a build runs with: the daemon's own, with the declared variables taken from the caller's
- * environment when one is given — set as the caller has them, unset when the caller has not.
+ * environment when one is given — set as the caller has them, unset when the caller has not — and a declared
+ * default for each one left unset.
  */
 export const buildEnv = (spec: Pick<NativeBuildSpec, 'env'>, base: NodeJS.ProcessEnv, caller?: Record<string, string | undefined>): NodeJS.ProcessEnv => {
-  const {declared, any} = parseEnv(spec.env);
-  if (!caller || !any) return base;
+  const {declared, any, defaults} = parseEnv(spec.env);
+  if (!caller || !any) return withDefaults(base, defaults);
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(base)) if (!declared(k)) env[k] = v;
   for (const [k, v] of Object.entries(caller)) if (declared(k) && typeof v === 'string') env[k] = v;
-  return env;
+  return withDefaults(env, defaults);
 };
 
-/** The declared variables as fingerprint entries, sorted: `NAME=value`, or `NAME` unset for a plain name not set. */
-export const envEntries = (patterns: string[], env: NodeJS.ProcessEnv): string[] => {
-  const {declared, names} = parseEnv(patterns);
+/**
+ * The declared variables as fingerprint entries, sorted: `NAME=value`, or `NAME` unset for a plain name not set. A
+ * name with a default left unset is `NAME=default`, the entry of the name set to it.
+ */
+export const envEntries = (patterns: BuildEnvEntry[], given: NodeJS.ProcessEnv): string[] => {
+  const {declared, names, defaults} = parseEnv(patterns);
+  const env = withDefaults(given, defaults);
   const out = new Map<string, string>();
   for (const p of names) out.set(p, env[p] === undefined ? `${p}\0unset` : `${p}=${env[p]}`);
   for (const [k, v] of Object.entries(env)) if (v !== undefined && declared(k)) out.set(k, `${k}=${v}`);
@@ -158,7 +188,7 @@ export const envEntries = (patterns: string[], env: NodeJS.ProcessEnv): string[]
 };
 
 /** Where a declared file is: `~` is the home folder, `$NAME` a declared variable, a relative path is under the root. */
-export const resolveBuildFile = (entry: string, root: string, env: NodeJS.ProcessEnv, declaredEnv: string[] = []): string | undefined => {
+export const resolveBuildFile = (entry: string, root: string, env: NodeJS.ProcessEnv, declaredEnv: BuildEnvEntry[] = []): string | undefined => {
   const v = /^\$(?:\{(\w+)\}|(\w+))(.*)$/.exec(entry);
   if (v) {
     const name = (v[1] ?? v[2])!;
@@ -192,8 +222,9 @@ const walkFiles = (dir: string): string[] => {
  * A file listed by git but gone from the disk (deleted, not yet staged) counts as absent. Declared variables and
  * files are added after them, so a build that declares none keeps the fingerprint it had before they existed.
  */
-export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[], toolchain = '', env: NodeJS.ProcessEnv = process.env): Fingerprint => {
+export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[], toolchain = '', given: NodeJS.ProcessEnv = process.env): Fingerprint => {
   const t0 = Date.now();
+  const env = withDefaults(given, parseEnv(spec.env).defaults);
   const res = inputs.filter(g => !g.startsWith('!')).map(globRe);
   const not = inputs.filter(g => g.startsWith('!')).map(g => globRe(g.slice(1)));
   const files = listFiles(root)
