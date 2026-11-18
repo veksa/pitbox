@@ -524,6 +524,11 @@ export class AndroidDriver {
 
   /** Picks a device: by serial, AVD name or model; the only online device when no selector is given. */
   async resolve(selector?: string): Promise<string> {
+    return (await this.pick(selector)).serial;
+  }
+
+  /** The device `resolve` picks, as `devices` lists it: one listing for the serial and what is known of it. */
+  async pick(selector?: string): Promise<AndroidDevice> {
     let online = (await this.devices()).filter(d => d.state === 'device');
     // adb sometimes answers an empty list while it is busy with concurrent calls; ask once more before failing.
     if (!online.length) {
@@ -532,10 +537,10 @@ export class AndroidDriver {
     }
     if (selector) {
       const hit = online.find(d => d.serial === selector || d.avd === selector || d.model === selector);
-      if (hit) return hit.serial;
+      if (hit) return hit;
       throw new AndroidError(`no online device matches "${selector}"`, online.length ? `online: ${online.map(d => d.avd ?? d.serial).join(', ')}` : 'boot one with `boot`');
     }
-    if (online.length === 1) return online[0]!.serial;
+    if (online.length === 1) return online[0]!;
     if (!online.length) throw new AndroidError('no online Android device', 'boot an emulator with `boot <avd>` or connect a device');
     throw new AndroidError('several devices online', `pass a device: ${online.map(d => d.avd ?? d.serial).join(', ')}`);
   }

@@ -119,6 +119,10 @@ class FakeAndroid {
     if (hit.length !== 1) throw new Error(`no online device matches "${sel ?? ''}"`);
     return hit[0]!.serial;
   };
+  pick = async (sel?: string) => {
+    const serial = await this.resolve(sel);
+    return (await this.devices()).find(d => d.serial === serial)!;
+  };
   /** A new emulator takes the lowest free port, as the emulator does: a serial comes back after a shutdown. */
   launch = async (avd: string, opts: Record<string, unknown>) => {
     this.bootOpts.push(opts);

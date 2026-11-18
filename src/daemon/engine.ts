@@ -696,10 +696,9 @@ export class Engine {
       if (hit && s) return take({platform: 'apple' as const, id: hit.udid, s}, hit.name);
       if (s && !a) return take({platform: 'apple' as const, id: await s.resolve(device), s});
       const android = a ?? this.#needAndroid();
-      const serial = await android.resolve(device);
-      const d = (await android.devices().catch(() => [])).find(x => x.serial === serial);
-      if (d?.kind === 'wear') this.#wearSerials.add(serial);
-      return take({platform: 'android' as const, id: serial, a: android}, d?.avd, d?.instance);
+      const d = await android.pick(device);
+      if (d.kind === 'wear') this.#wearSerials.add(d.serial);
+      return take({platform: 'android' as const, id: d.serial, a: android}, d.avd, d.instance);
     }
     const online = a ? (await a.devices().catch(() => [])).filter(d => d.state === 'device') : [];
     for (const d of online) if (d.kind === 'wear') this.#wearSerials.add(d.serial);
