@@ -138,7 +138,9 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 
 Simulators share the Mac's network, so exposed ports need no forwarding. The UI runner (XCUITest) drives iOS,
 iPadOS, tvOS, watchOS and visionOS simulators; it is built on first use per platform and cached under `~/Library/Caches/pitbox/apple-runner`; a changed runner source
-rebuilds it.
+rebuilds it. On iOS and iPadOS 17+ it is launched with simctl (`PITBOX_RUNNER_XCODEBUILD=1` in the daemon's
+environment starts it with xcodebuild, as on the other platforms) and outlives a daemon restart
+([Working in parallel](parallel.md#the-ui-runners-start)).
 
 ### A remote Mac
 

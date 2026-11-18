@@ -43,9 +43,10 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   double tap.
 - **Apple simulators:** the same tools. `device` takes a simulator name or udid, `install` a `.app` from a
   simulator build. The XCUITest runner is built once (then cached) and started on each simulator in the
-  background as soon as `boot` brings it up: starting takes 15–20 s, so after a build or an install that took that
-  long the first UI call finds it ready (2.6 s to the app's first screen instead of 17 s). Called right after the
-  boot, that call waits for the start still under way.
+  background as soon as `boot` brings it up: starting takes about 3.4 s on iOS (launched with simctl; xcodebuild on
+  tvOS, watchOS and visionOS takes longer), and a daemon restart takes over the runner already running instead
+  ([parallel.md](parallel.md#the-ui-runners-start)). Called right after the boot, the first UI call waits for the
+  start still under way.
   XCUITest cannot hold a finger between calls (`touch`; a held `swipe` can), and `network`, `perf`, display size and animations
   are reported as unsupported. iOS has no back key: `key back` does what a person does instead — presses the
   navigation bar's back button, or swipes in from the left edge when there is none — and its note says which.

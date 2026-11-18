@@ -316,8 +316,44 @@ example app, open it and wait for its first screen (the boot also starts the UI 
 | Boot to the app's first screen | 29.1–32.1 s | 21.6–22.9 s |
 | The simulator's CPU over the minute after | 0.24–0.28 cores | 0.02–0.16 cores |
 
-What is left of the first screen's time is the UI runner's start (`xcodebuild test-without-building`, 15–20 s),
-which no data in the simulator shortens.
+What was left of the first screen's time then was the UI runner's start (`xcodebuild test-without-building`,
+15–20 s); it is down to about 3.4 s now ([The UI runner's start](#the-ui-runners-start)).
+
+## The UI runner's start
+
+The first UI call on an iOS simulator waits for the XCUITest runner (a boot starts it in the background). Three
+things keep that short:
+
+- **Game Center stays on in slim simulators.** When xcodebuild launches a test runner, the simulator's
+  DTServiceHub asks Game Center's daemon (`com.apple.gamed`) and, with it off, holds the runner suspended for about
+  10 s before it runs, on every start. Slim never disables it, even when `apple.slim.disable` names it.
+- **simctl instead of xcodebuild** (iOS and iPadOS 17 and later). The runner app is launched like any app, with the
+  environment xcodebuild would give it (the test frameworks' paths from the build's `.xctestrun`); XCTest finds the
+  test bundle inside the app on its own. It is installed only when the simulator has none or another build of it.
+  No xcodebuild start, no install on every start, no launch held while Xcode's tools attach. A runner that does not
+  answer within 30 s, or exits, is started with xcodebuild instead, and so is every later one of that build in the
+  daemon; tvOS, watchOS and visionOS always use xcodebuild. `PITBOX_RUNNER_XCODEBUILD=1` in the daemon's
+  environment turns the simctl start off.
+- **Kept across a daemon restart.** A daemon that stops and keeps its devices (a restart, a version swap, a signal)
+  leaves a runner it launched with simctl running and writes its port to `~/.pitbox/runners/<udid>.json`; the next
+  daemon on that simulator takes it over when it runs the same build and answers, instead of starting one. A stop
+  that gives the devices back (`daemon stop`, `down`) ends the runner, and any other start clears one left behind.
+
+After a relaunch (`open`, `open!`), XCUITest's first query looks for the app's old process and tries again only a
+second later: pitbox activates the app through the runner right after the launch, which finds the new process at
+once.
+
+Measured through the daemon on an iPhone 17 Pro simulator, iOS 27.2, slim; median of five:
+
+| | Before | Now |
+|---|---|---|
+| Runner start, to the first snapshot | 14.1 s | 3.4 s (5.6 s with Game Center on and xcodebuild) |
+| … after a daemon restart | 14.1 s | 0.24 s |
+| Relaunch of the app and the first snapshot after it | 2.49 s (0.15 + 2.34) | 1.78 s (1.54 + 0.24) |
+
+Tried and left out, no difference measured on the xcodebuild start (2.86 s median each, with Game Center on):
+`-skipPackagePluginValidation -skipMacroValidation -disableAutomaticPackageResolution`, `-test-timeouts-enabled NO`,
+`-collect-test-diagnostics never`.
 
 ## Native builds
 
