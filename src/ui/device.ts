@@ -12,6 +12,20 @@ import {backButton, buildSnapshot, controlAt, diffSnapshots, keyboardTop, logBox
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
+/**
+ * How long after its input an action that changed nothing watches the screen for a late effect. A request the
+ * action started restarts it once the request ends (dev server apps); a step after it whose target is not there
+ * yet waits for the target a moment more (see #target), so an effect that comes later still reaches the flow.
+ */
+const GRACE_MS = 600;
+/** How long a change seen after the UI looked quiet is followed until the screen it leads to stands still. */
+const FOLLOW_MS = 1200;
+/** Between two looks at the screen while it is watched for a late effect or followed until it stands still. */
+const LOOK_MS = 80;
+
+/** The same lines, each with its node where it was: a screen that has stopped moving. */
+const sameScreen = (a: Snapshot, b: Snapshot) =>
+  a.lines.join('\n') === b.lines.join('\n') && [...a.refs].every(([ref, i]) => a.nodes[i]?.b.join() === b.nodes[b.refs.get(ref) ?? -1]?.b.join());
 /** A screen whose short side is below this (in press coordinates) is a watch's: its screenshot is not downscaled. */
 const SMALL_SCREEN = 500;
 
@@ -20,8 +34,8 @@ export type ActResult = {action: string; target?: string; /** An image of the sc
 export type UiHooks = {
   /** Called before each action; returns the trace id the app will stamp on the requests it causes. */
   beforeAction?: () => string | undefined;
-  /** Resolves when the app has no requests in flight (or after `timeoutMs`). */
-  networkIdle?: (timeoutMs: number) => Promise<void>;
+  /** Resolves when the app has no requests in flight (or after `timeoutMs`): true when it waited for some. */
+  networkIdle?: (timeoutMs: number) => Promise<boolean | void>;
   /** JS errors the app reported since `since` (ms epoch), symbolicated. */
   jsErrors?: (since: number) => Promise<AppEvent[]>;
   /** Before a tap, a gesture or the mouse goes to a point: waits out a window still moving there (an app just launched). */
@@ -187,7 +201,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return Date.now();
   }
 
-  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 1200, graceMs = 1200): Promise<{diff: SnapshotDiff; idle: boolean}> {
+  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 1200, graceMs = GRACE_MS): Promise<{diff: SnapshotDiff; idle: boolean}> {
     const t0 = Date.now();
     let t = t0;
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
@@ -195,7 +209,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     // navigation) and the first change seen can be only its first frame.
     const quietAtOnce = r.idle && Date.now() - t < quietMs;
     t = this.#phase('quiet', t);
-    if (this.#hooks.networkIdle) await this.#hooks.networkIdle(1500);
+    // Requests the action started: what they bring shows after they end, so the watch for a late effect starts then.
+    const waited = this.#hooks.networkIdle ? await this.#hooks.networkIdle(1500) : false;
     t = this.#phase('network', t);
     let snap = await this.snapshot();
     t = this.#phase('snapshot', t);
@@ -212,22 +227,26 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       t = this.#phase('stabilise', t);
     }
     let diff = diffSnapshots(before, snap);
-    while (!diff.changed && Date.now() - t0 < graceMs) {
-      await new Promise(res => setTimeout(res, 250));
+    // Nothing changed yet: the screen is looked at again until `graceMs` after the input, so an effect that starts
+    // a moment late (a sheet on the next frame, a render after a promise) is in the answer.
+    const graceEnd = (waited ? Date.now() : t0) + graceMs;
+    while (!diff.changed && Date.now() < graceEnd) {
+      await new Promise(res => setTimeout(res, Math.min(LOOK_MS, Math.max(0, graceEnd - Date.now()))));
       snap = await this.snapshot();
       diff = diffSnapshots(before, snap);
     }
     t = this.#phase('grace', t);
     // A change that began after the quiet check can be the first frame of a bigger one — a tab bar gone before the
-    // next screen is mounted. Followed until two snapshots agree, so the answer is the screen the action led to;
-    // while only lines have gone, the screen it leaves for is not drawn yet and is waited for (up to graceMs).
+    // next screen is mounted. Followed until two looks agree, nodes where they were included (a screen still
+    // sliding in has its lines but not its places), so the answer is the screen the action led to; while only lines
+    // have gone, the screen it leaves for is not drawn yet and is waited for (up to FOLLOW_MS).
     if (diff.changed && quietAtOnce) {
       const onlyGone = (d: SnapshotDiff) => !d.full && d.lines.every(l => l.startsWith('- '));
-      const end = Date.now() + graceMs;
+      const end = Date.now() + FOLLOW_MS;
       for (;;) {
-        await new Promise(res => setTimeout(res, 250));
+        await new Promise(res => setTimeout(res, LOOK_MS));
         const next = await this.snapshot();
-        const same = next.lines.join('\n') === snap.lines.join('\n');
+        const same = sameScreen(next, snap);
         snap = next;
         diff = diffSnapshots(before, snap);
         if ((same && !onlyGone(diff)) || Date.now() > end) break;
@@ -283,16 +302,23 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     } catch (e) {
       // A field that takes focus on launch brings up a keyboard by itself, a fullscreen one on a watch, which
       // hides the app a moment after it looked ready: a miss waits a second for one before it fails.
+      // The same second covers the late effect of the step before (a screen it opens after a request, after its
+      // own watch for one ended): a target that shows up meanwhile is taken.
       if (ref || imeShown) {
         if (!imeShown) throw e;
       } else {
         const end = Date.now() + 1000;
-        while (!imeShown && Date.now() < end) {
-          await new Promise(r => setTimeout(r, 200));
+        while (!imeShown && !target && Date.now() < end) {
+          await new Promise(r => setTimeout(r, 150));
           snap = await this.snapshot();
           imeShown = snap.windows.some(w => w.type === 'ime');
+          try {
+            target = resolveTarget(snap, selector);
+          } catch {
+            target = undefined;
+          }
         }
-        if (!imeShown) throw e;
+        if (!imeShown && !target) throw e;
       }
     }
     const coveredIn = async (s: Snapshot, t: typeof target) => {

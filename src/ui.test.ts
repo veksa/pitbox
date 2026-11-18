@@ -625,6 +625,58 @@ describe("React Native's warnings toast over a target", () => {
   }, 15_000);
 });
 
+describe('a press whose effect comes late', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const save: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 100, 400, 200], id: 'save', f: 'c'};
+  const done: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 300, 400, 400], id: 'done', f: 'c'};
+
+  it('answers unchanged within a second, and the next step waits for the target it brings', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let shownAt = Infinity;
+    const taps: string[] = [];
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(`${args.x},${args.y}`);
+          if (shownAt === Infinity) shownAt = Date.now() + 900;
+        }
+        if (cmd === 'tree') return {windows: app, nodes: Date.now() >= shownAt ? [save, done] : [save]};
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    const t0 = Date.now();
+    const first = await ui.press('id=save');
+    expect(first.diff.changed).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(900);
+    await ui.press('id=done');
+    expect(taps).toEqual(['200,150', '200,350']);
+  }, 15_000);
+
+  it('is watched for again after the requests the press started end', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    let shownAt = Infinity;
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'tree') return {windows: app, nodes: Date.now() >= shownAt ? [save, done] : [save]};
+        if (cmd === 'info') return {width: 400, height: 500};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    // A request in flight for a second; what it brings renders 400 ms after it ends.
+    const networkIdle = async () => {
+      await new Promise(r => setTimeout(r, 1000));
+      shownAt = Date.now() + 400;
+      return true;
+    };
+    const r = await new DeviceUi('dev', runner as never, {networkIdle}).press('id=save');
+    expect(r.diff.lines.join('\n')).toMatch(/#done/);
+  }, 15_000);
+});
+
 describe('a press that starts a navigation after the UI looked quiet', () => {
   it('answers with the screen it led to, not with the first frame of the change', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

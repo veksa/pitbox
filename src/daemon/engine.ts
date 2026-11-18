@@ -388,13 +388,16 @@ export class Engine {
       jsErrors: since => this.#jsErrors(since),
       networkIdle: async timeoutMs => {
         const proxy = this.#dev?.proxy;
-        if (!proxy || !proxy.apps().length) return;
+        if (!proxy || !proxy.apps().length) return false;
         const deadline = Date.now() + timeoutMs;
+        let waited = false;
         while (Date.now() < deadline) {
           const answers = await proxy.query<{inflight: number}>('idle', {}, 800);
-          if (answers.every(a => a.data.inflight <= 0)) return;
+          if (answers.every(a => a.data.inflight <= 0)) return waited;
+          waited = true;
           await new Promise(r => setTimeout(r, 150));
         }
+        return waited;
       },
       // An app launched a moment ago may still be in its window's opening animation: a desktop's freeform window
       // slides in for about a second, taking input where it is on the way while its nodes already say where it ends
