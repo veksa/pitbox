@@ -126,6 +126,11 @@ const nativeBuildSchema = z
     env: z.array(z.string()).optional(),
     /** Files or folders outside what git lists (absolute, `~/…`, ignored, `$NAME` of `env`) whose content is an input. */
     files: z.array(z.string()).optional(),
+    /** Old builds kept: `count` per variant (default 5), unused `days` (default 30), `mb` in all (no limit). */
+    keep: z
+      .object({count: z.number().int().positive().optional(), days: z.number().positive().optional(), mb: z.number().positive().optional()})
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -154,7 +159,7 @@ export const configSchema = z.object({
        * 'android/app/build/outputs/apk/debug/app-debug.apk'}, ios: {command: 'xcodebuild … build', output:
        * 'build/Build/Products/Debug-iphonesimulator/MyApp.app'}}`. `inputs` (globs; `!glob` excludes) defaults to the
        * platform's folder, manifests, lock files and app config when a dev server serves the JS, else every file git
-       * sees. `env` and `files` add variables and files git does not list.
+       * sees. `env` and `files` add variables and files git does not list; `keep` says which old builds stay.
        */
       build: z
         .object({

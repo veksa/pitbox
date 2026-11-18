@@ -134,14 +134,69 @@ describe('native build cache', () => {
     await expect(ensureBuild({root, app: 'com.example.app', platform: 'android', spec: {command: 'true', output: 'out/none.apk'}, inputs: ['**'], cacheRoot: cache})).rejects.toThrow(/left no out\/none.apk/);
   });
 
-  it('keeps the newest builds only', async () => {
-    for (let i = 0; i < 5; i++) {
+  it('keeps the newest builds per variant, never one used in the last minutes', async () => {
+    const dir = buildsDir('com.example.app', 'android', cache);
+    // The builds are made to look used hours ago, an hour apart in the order they were made, so none is in use.
+    const done = (n: string) => JSON.parse(fs.readFileSync(path.join(dir, n, 'build.json'), 'utf8')) as {builtAt: number};
+    const age = () => {
+      if (!fs.existsSync(dir)) return;
+      const names = fs.readdirSync(dir).sort((a, b) => done(a).builtAt - done(b).builtAt);
+      for (const [i, n] of names.entries()) {
+        const at = new Date(Date.now() - 3_600_000 * (20 - i));
+        fs.writeFileSync(path.join(dir, n, 'build.json'), JSON.stringify({...done(n), builtAt: at.getTime()}));
+        fs.utimesSync(path.join(dir, n, 'build.json'), at, at);
+      }
+    };
+    for (let i = 0; i < 7; i++) {
       write('android/Main.kt', `fun main() = ${i}`);
+      age();
       await build();
     }
+    expect(fs.readdirSync(dir)).toHaveLength(5);
+    // Two builds used just now (being installed by other sessions) both stay past a count of one; the others go.
+    age();
+    const used = fs.readdirSync(dir).sort((a, b) => done(a).builtAt - done(b).builtAt).slice(0, 2);
+    for (const n of used) fs.utimesSync(path.join(dir, n, 'build.json'), new Date(), new Date());
+    expect(gcBuilds(dir, 'none', 1)).toHaveLength(3);
+    expect(fs.readdirSync(dir).sort()).toEqual(used.sort());
+  });
+
+  it('drops builds by age and by size, the least recently used first', () => {
     const dir = buildsDir('com.example.app', 'android', cache);
-    expect(fs.readdirSync(dir)).toHaveLength(3);
-    expect(gcBuilds(dir, 'none', 1)).toHaveLength(2);
+    const now = Date.now();
+    const slot = (n: string, daysAgo: number, bytes: number, variant?: string) => {
+      fs.mkdirSync(path.join(dir, n), {recursive: true});
+      fs.writeFileSync(path.join(dir, n, 'app.apk'), Buffer.alloc(bytes));
+      const at = new Date(now - daysAgo * 86_400_000);
+      fs.writeFileSync(path.join(dir, n, 'build.json'), JSON.stringify({builtAt: at.getTime(), ms: 1, command: 'x', artifact: 'app.apk', ...(variant ? {variant} : {})}));
+      fs.utimesSync(path.join(dir, n, 'build.json'), at, at);
+    };
+    slot('a1', 1, 600_000);
+    slot('a2', 2, 600_000);
+    slot('a3', 40, 10);
+    // A build reused recently counts by its last use, not by when it was built.
+    slot('a4', 50, 10);
+    fs.utimesSync(path.join(dir, 'a4', 'build.json'), new Date(now - 3 * 86_400_000), new Date(now - 3 * 86_400_000));
+    expect(gcBuilds(dir, 'none', {}, {now}).sort()).toEqual(['a3']);
+    expect(gcBuilds(dir, 'none', {mb: 1}, {now}).sort()).toEqual(['a2', 'a4']);
+    expect(fs.readdirSync(dir)).toEqual(['a1']);
+  });
+
+  it('variants do not evict each other', async () => {
+    const dir = buildsDir('com.example.app', 'android', cache);
+    const probe = {...spec(), env: ['APP_PROBE'], keep: {count: 1}};
+    const run = (env: Record<string, string>) => ensureBuild({root, app: 'com.example.app', platform: 'android', spec: probe, inputs: jsAppInputs('android'), cacheRoot: cache, callerEnv: env});
+    const plain = await run({});
+    const probed = await run({APP_PROBE: '1'});
+    expect(probed.variant).toBeDefined();
+    expect(probed.variant).not.toBe(plain.variant);
+    expect(probed.fingerprint).not.toBe(plain.fingerprint);
+    // Both stay with a count of one: one per variant.
+    for (const n of fs.readdirSync(dir)) fs.utimesSync(path.join(dir, n, 'build.json'), new Date(0), new Date(0));
+    expect(gcBuilds(dir, 'none', {count: 1, days: 1e6})).toEqual([]);
+    expect((await run({})).reused).toBe(true);
+    expect((await run({APP_PROBE: '1'})).reused).toBe(true);
+    expect(runs()).toBe(2);
   });
 
   it('the build runs with the caller\'s values of the declared variables, unset when the caller has none', async () => {

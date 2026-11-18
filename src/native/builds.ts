@@ -10,7 +10,7 @@
 //
 // Beyond the files git sees, a build may declare environment variables (`env`) and files outside the checkout or
 // ignored by git (`files`) as inputs: a variant of the build (a probe, an architecture, a config preset) is then a
-// fingerprint of its own.
+// fingerprint of its own. Old builds are dropped by `keep`, per variant, never one used in the last minutes.
 
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
@@ -42,7 +42,11 @@ export type NativeBuildSpec = {
    * a `$NAME` that points at nothing is an error.
    */
   files?: string[];
+  /** Which old builds stay: `count` newest per variant (default 5), none unused for `days` (default 30), `mb` in all. */
+  keep?: BuildKeep;
 };
+
+export type BuildKeep = {count?: number; days?: number; mb?: number};
 
 const MANIFESTS = ['package.json', 'yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'app.json', 'app.config.*', 'eas.json', 'react-native.config.js', 'patches/**', '.yarnrc.yml'];
 
@@ -222,7 +226,12 @@ export const buildsDir = (app: string, platform: NativePlatform, cacheRoot = pat
   path.join(cacheRoot, app.replace(/[^\w.-]/g, '_'), platform);
 
 const DONE = 'build.json';
-export const KEEP_BUILDS = 3;
+/** Builds kept per variant (the values of the declared variables) of an app and platform. */
+export const KEEP_BUILDS = 5;
+/** Days a build stays unused before it goes. */
+export const KEEP_DAYS = 30;
+/** A build used (built or reused) this recently is never dropped: another session may be installing it. */
+export const IN_USE_MS = 15 * 60_000;
 
 type Done = {builtAt: number; ms: number; command: string; artifact: string; variant?: string};
 
@@ -240,8 +249,26 @@ const copy = (from: string, to: string) => {
   else fs.cpSync(from, to, {recursive: true});
 };
 
-/** Drops all but the `keep` newest builds of the folder, never `current`. */
-export const gcBuilds = (dir: string, current: string, keep = KEEP_BUILDS): string[] => {
+const folderBytes = (p: string): number => {
+  const st = fs.lstatSync(p, {throwIfNoEntry: false});
+  if (!st) return 0;
+  if (!st.isDirectory()) return st.size;
+  let n = 0;
+  for (const e of fs.readdirSync(p)) n += folderBytes(path.join(p, e));
+  return n;
+};
+
+/**
+ * Drops old builds of the folder: beyond the `count` most recently used of each variant, unused for `days`, or past
+ * `mb` in all (the least recently used go first). Never `current`, nor one used in the last `inUseMs`: another
+ * session may be installing it. A build goes by a rename first, so a reader sees it whole or not at all.
+ */
+export const gcBuilds = (dir: string, current: string, keep: number | BuildKeep = {}, o: {now?: number; inUseMs?: number} = {}): string[] => {
+  const k = typeof keep === 'number' ? {count: keep} : keep;
+  const count = k.count ?? KEEP_BUILDS;
+  const days = k.days ?? KEEP_DAYS;
+  const now = o.now ?? Date.now();
+  const inUseMs = o.inUseMs ?? IN_USE_MS;
   let names: string[] = [];
   try {
     names = fs.readdirSync(dir);
@@ -249,13 +276,39 @@ export const gcBuilds = (dir: string, current: string, keep = KEEP_BUILDS): stri
     return [];
   }
   const built = names
-    .map(n => ({n, at: readDone(path.join(dir, n))?.builtAt}))
-    .filter((x): x is {n: string; at: number} => typeof x.at === 'number')
-    .sort((a, b) => b.at - a.at);
+    .filter(n => !n.includes('.'))
+    .map(n => {
+      const done = readDone(path.join(dir, n));
+      const st = fs.statSync(path.join(dir, n, DONE), {throwIfNoEntry: false});
+      return done && st ? {n, used: Math.max(done.builtAt, st.mtimeMs), variant: done.variant ?? ''} : undefined;
+    })
+    .filter((x): x is {n: string; used: number; variant: string} => !!x)
+    .sort((a, b) => b.used - a.used);
+  const drop = new Set<string>();
+  const seen = new Map<string, number>();
+  for (const x of built) {
+    const i = (seen.get(x.variant) ?? 0) + 1;
+    seen.set(x.variant, i);
+    if (i > count || now - x.used > days * 86_400_000) drop.add(x.n);
+  }
+  if (k.mb !== undefined) {
+    let bytes = 0;
+    for (const x of built) {
+      if (drop.has(x.n)) continue;
+      bytes += folderBytes(path.join(dir, x.n));
+      if (bytes > k.mb * 1024 * 1024) drop.add(x.n);
+    }
+  }
   const gone: string[] = [];
-  for (const x of built.slice(keep)) {
-    if (x.n === current) continue;
-    fs.rmSync(path.join(dir, x.n), {recursive: true, force: true});
+  for (const x of built) {
+    if (!drop.has(x.n) || x.n === current || now - x.used < inUseMs) continue;
+    const away = path.join(dir, `${x.n}.gone-${process.pid}`);
+    try {
+      fs.renameSync(path.join(dir, x.n), away);
+    } catch {
+      continue; // dropped by another process meanwhile
+    }
+    fs.rmSync(away, {recursive: true, force: true});
     gone.push(x.n);
   }
   return gone;
@@ -277,6 +330,8 @@ export type BuildResult = {
   inputs: number;
   /** The variant, a hash of the declared variables' values, when the build declares any. */
   variant?: string;
+  /** Old builds dropped after this one was built. */
+  dropped?: number;
 };
 
 export class BuildError extends Error {}
@@ -346,8 +401,8 @@ export const ensureBuild = async (o: {root: string; app: string; platform: Nativ
             fs.rmSync(again, {recursive: true, force: true});
             fs.renameSync(tmp2, again);
           }
-          gcBuilds(dir, fp.hash);
-          return {platform: o.platform, fingerprint: fp.hash, reused: false, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs, inputs: fp.files, ...variant, ...(waitedMs > 1000 ? {waitedMs} : {})};
+          const dropped = gcBuilds(dir, fp.hash, o.spec.keep).length;
+          return {platform: o.platform, fingerprint: fp.hash, reused: false, artifact: path.join(slot, name), ms: Date.now() - t0, builtAt: done.builtAt, buildMs, inputs: fp.files, ...variant, ...(waitedMs > 1000 ? {waitedMs} : {}), ...(dropped ? {dropped} : {})};
         },
         timeoutMs + 60 * 60_000,
       );

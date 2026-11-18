@@ -585,7 +585,8 @@ export const formatResult = (method: string, r: unknown): string => {
       const waited = x.waitedMs ? ` · waited ${seconds(x.waitedMs as number)} for another build` : '';
       const inst = x.installed as {on: string; ms: number} | undefined;
       const variant = x.variant ? ` · variant ${x.variant}` : '';
-      return `${what} · ${x.inputs} native inputs${variant}${waited}${inst ? `\ninstalled on ${inst.on} in ${seconds(inst.ms)}` : `\n${x.artifact}`}`;
+      const dropped = x.dropped ? ` · dropped ${x.dropped} old build${x.dropped === 1 ? '' : 's'}` : '';
+      return `${what} · ${x.inputs} native inputs${variant}${waited}${dropped}${inst ? `\ninstalled on ${inst.on} in ${seconds(inst.ms)}` : `\n${x.artifact}`}`;
     }
     case 'install':
       return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
