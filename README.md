@@ -65,8 +65,24 @@ without it. Details and method: [slim devices, warm templates and native builds]
 | Tap | 395 ms | 249 ms |
 | Fill a field | 3.67 s | 2.87 s |
 | Fill a field with a sentence | 5.39 s | 4.77 s |
-| Press a button under the keyboard after a fill | 3.10 s | 2.25 s |
-| Press that changes nothing | 2.25 s | 2.06 s |
+| Press a button under the keyboard after a fill | 3.10 s | 1.74 s |
+| Press that changes nothing | 2.25 s | 0.90 s |
+| Snapshot | 166 ms | 68 ms |
+| A call's time outside its action (finding the device, the crash check) | 340 ms | 40 ms |
+
+**Android UI actions** (the Android example on an API 36 phone emulator; median of five, each call through the
+daemon):
+
+| | Before | pitbox |
+|---|---|---|
+| Press that changes nothing | 1.58 s | 0.72 s |
+| Press that changes the screen | 0.40–0.68 s | 0.26 s |
+| Snapshot | 137 ms | 42 ms |
+| A call's time outside its action (finding the device) | 25–110 ms | 12 ms |
+
+An action that changed nothing watches the screen 0.6 s after its input instead of 1.2 s; a later effect still
+reaches a flow, whose next step waits for the target it brings
+([features](docs/features.md#ui-automation)).
 
 **Native builds** (the React Native example; once built, every checkout and session on the Mac reuses the build):
 
