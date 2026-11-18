@@ -191,6 +191,13 @@ export const deviceSetStamp = (dir: string): string | undefined => {
   return parts.join('|');
 };
 
+/**
+ * Whether a process list (`ps -o command=`) has the app started from the .app at `bundle`: its main executable, not an
+ * extension of it (PlugIns/…appex, a widget's process).
+ */
+export const appProcess = (ps: string, bundle: string): boolean =>
+  ps.split('\n').some(l => l.startsWith(`${bundle}/`) && !l.slice(bundle.length + 1).split(' ')[0]!.includes('/'));
+
 export class AppleDriver {
   readonly xcrun: string;
 
@@ -518,6 +525,27 @@ export class AppleDriver {
     const r = await this.simctl(['get_app_container', udid, bundleId, 'app']);
     const dir = r.stdout.trim();
     return r.code === 0 && dir && fs.existsSync(dir) ? dir : undefined;
+  }
+
+  /** Where each simulator app was installed last, by `udid bundleId`: a reinstall moves it. */
+  readonly #bundles = new Map<string, string>();
+
+  /**
+   * Whether the app runs on the simulator, from the Mac's process list: a simulator's apps are processes of the
+   * Mac, started from the installed .app. About 25 ms, against a quarter of a second for asking launchctl inside the
+   * simulator. Undefined when the app is not installed or the process list cannot be read.
+   */
+  async appRunning(udid: string, bundleId: string): Promise<boolean | undefined> {
+    const key = `${udid} ${bundleId}`;
+    let dir = this.#bundles.get(key);
+    if (!dir || !fs.existsSync(dir)) {
+      dir = await this.appBundle(udid, bundleId);
+      if (!dir) return undefined;
+      this.#bundles.set(key, dir);
+    }
+    const r = await run('ps', ['-ax', '-o', 'command='], {timeoutMs: 10_000, env: {...process.env, LC_ALL: 'C'}});
+    if (r.code !== 0) return undefined;
+    return appProcess(r.stdout, dir);
   }
 
   /** Posts a Darwin notification inside the simulator (`notifyutil -p`): what an app's observer of that name hears. */

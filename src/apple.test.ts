@@ -6,7 +6,7 @@ import {AppleRunner, runnerNotice, sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
 import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
-import {AppleDriver, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulatorBoots, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp, listFailure} from './drivers/apple/driver.ts';
+import {AppleDriver, appProcess, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulatorBoots, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp, listFailure} from './drivers/apple/driver.ts';
 
 vi.mock('./drivers/apple/fold.ts', () => ({foldTool: async () => '/tmp/fold'}));
 
@@ -159,6 +159,20 @@ describe('apple driver', () => {
     } finally {
       AppleCrashWatcher.waitMs = saved;
     }
+  });
+
+  it('tells a running app from the Mac process list, not its extensions or another install', async () => {
+    const app = '/Users/me/Library/Developer/CoreSimulator/Devices/AAA/data/Containers/Bundle/Application/B1/MyApp.app';
+    const ps = [`${app}/PlugIns/Widgets.appex/Widgets`, '/usr/libexec/other', `${app.replace('B1', 'B0')}/MyApp`].join('\n');
+    expect(appProcess(ps, app)).toBe(false);
+    expect(appProcess(`${ps}\n${app}/MyApp -AppleLanguages (en)`, app)).toBe(true);
+    // The watcher asks the process list and not launchctl when the driver can.
+    let spawned = 0;
+    const driver = {simctl: async () => (spawned++, {stdout: '', stderr: '', code: 0, timedOut: false, ms: 0}), appRunning: async () => true, simulators: async () => [{udid: 'AAA', kind: 'phone'}]};
+    const w = new AppleCrashWatcher(driver as never, 'AAA', 'com.example.app', fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-ips-')));
+    w.begin(['com.example.app']);
+    expect(await w.since(Date.now(), ['com.example.app'])).toEqual([]);
+    expect(spawned).toBe(0);
   });
 
   it('waits for the report of a crash that came after the last action when a flow failed', async () => {

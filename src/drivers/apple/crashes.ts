@@ -79,6 +79,9 @@ export class AppleCrashWatcher {
         ? {
             running: async () => {
               if (!bundleId) return false;
+              // The Mac's process list first (a tenth of the time); launchctl inside the simulator when it cannot tell.
+              const seen = 'appRunning' in driver ? await driver.appRunning(udid, bundleId).catch(() => undefined) : undefined;
+              if (seen !== undefined) return seen;
               const r = await driver.simctl(['spawn', udid, 'launchctl', 'list'], {timeoutMs: 10_000});
               return r.stdout.split('\n').some(l => l.includes(`UIKitApplication:${bundleId}[`) && /^\d+\s/.test(l));
             },
