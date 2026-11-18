@@ -18,6 +18,11 @@ const LATE_EFFECT_MS = 600;
  * yet waits for the target a moment more (see #target), so an effect that comes later still reaches the flow.
  */
 const GRACE_MS = 600;
+/**
+ * How long the UI must be quiet after an action before its screen is read: no accessibility event for that long
+ * (Android), or two trees that far apart the same (XCUITest). A change is then followed until two looks agree.
+ */
+const QUIET_MS = 120;
 /** How long a change seen after the UI looked quiet is followed until the screen it leads to stands still. */
 const FOLLOW_MS = 1200;
 /** Between two looks at the screen while it is watched for a late effect or followed until it stands still. */
@@ -67,6 +72,11 @@ export type UiRunner = {
    * instead of first waiting for the screen to go quiet while the keyboard slides in.
    */
   waitsForFocus?: boolean;
+  /**
+   * `idle` answers quiet only once two trees `quiet` apart are the same, nodes where they were (XCUITest), rather
+   * than when the platform's events stop: a change seen right after it needs no second look.
+   */
+  settlesByTrees?: boolean;
 };
 
 /** Crashes of the app under test, collected in the background. */
@@ -201,7 +211,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     return Date.now();
   }
 
-  async #settle(before: Snapshot | undefined, quietMs = 250, timeoutMs = 1200, graceMs = GRACE_MS): Promise<{diff: SnapshotDiff; idle: boolean}> {
+  async #settle(before: Snapshot | undefined, quietMs = QUIET_MS, timeoutMs = 1200, graceMs = GRACE_MS): Promise<{diff: SnapshotDiff; idle: boolean}> {
     const t0 = Date.now();
     let t = t0;
     const r = await this.runner.call<{idle: boolean}>('idle', {quiet: quietMs, timeout: timeoutMs}, timeoutMs + 5000);
@@ -227,6 +237,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       t = this.#phase('stabilise', t);
     }
     let diff = diffSnapshots(before, snap);
+    const late = !diff.changed;
     // Nothing changed yet: the screen is looked at again until `graceMs` after the input, so an effect that starts
     // a moment late (a sheet on the next frame, a render after a promise) is in the answer.
     const graceEnd = (waited ? Date.now() : t0) + graceMs;
@@ -236,11 +247,12 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       diff = diffSnapshots(before, snap);
     }
     t = this.#phase('grace', t);
-    // A change that began after the quiet check can be the first frame of a bigger one — a tab bar gone before the
-    // next screen is mounted. Followed until two looks agree, nodes where they were included (a screen still
-    // sliding in has its lines but not its places), so the answer is the screen the action led to; while only lines
-    // have gone, the screen it leaves for is not drawn yet and is waited for (up to FOLLOW_MS).
-    if (diff.changed && quietAtOnce) {
+    // A change can be the first frame of a bigger one — a tab bar gone before the next screen is mounted. Followed
+    // until two looks agree, nodes where they were included (a screen still sliding in has its lines but not its
+    // places), so the answer is the screen the action led to; while only lines have gone, the screen it leaves for
+    // is not drawn yet and is waited for (up to FOLLOW_MS). A runner whose quiet answer already compared trees
+    // after the change needs no second look, unless the change began after that answer.
+    if (diff.changed && (quietAtOnce || late || !this.runner.settlesByTrees)) {
       const onlyGone = (d: SnapshotDiff) => !d.full && d.lines.every(l => l.startsWith('- '));
       const end = Date.now() + FOLLOW_MS;
       for (;;) {

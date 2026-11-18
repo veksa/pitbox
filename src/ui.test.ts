@@ -677,6 +677,38 @@ describe('a press whose effect comes late', () => {
   }, 15_000);
 });
 
+describe('a press that opens a screen sliding in', () => {
+  it('answers once its nodes stop moving, so the next press lands where the target ends up', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+    const open: UiNode = {p: -1, w: 0, c: 'Button', b: [0, 0, 400, 100], id: 'open', f: 'c'};
+    let tapped = 0;
+    const taps: string[] = [];
+    // The sheet's button slides up for 400 ms: its line is there from the first frame, its place is not.
+    const sheet = (): UiNode => {
+      const y = 900 - Math.round(500 * Math.min(1, (Date.now() - tapped) / 400));
+      return {p: -1, w: 0, c: 'Button', b: [0, y, 400, y + 100], id: 'ok', f: 'c'};
+    };
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(`${args.x},${args.y}`);
+          tapped ||= Date.now();
+        }
+        if (cmd === 'tree') return {windows: app, nodes: tapped ? [open, sheet()] : [open]};
+        if (cmd === 'info') return {width: 400, height: 1000};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    await ui.press('id=open');
+    expect(Date.now() - tapped).toBeGreaterThanOrEqual(400);
+    await ui.press('id=ok');
+    expect(taps).toEqual(['200,50', '200,450']);
+  }, 15_000);
+});
+
 describe('a press that starts a navigation after the UI looked quiet', () => {
   it('answers with the screen it led to, not with the first frame of the change', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

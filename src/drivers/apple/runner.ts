@@ -156,6 +156,8 @@ export class AppleRunner {
   readonly udid: string;
   /** XCUITest keeps no finger down between calls: a held swipe is held by the runner and the image taken here. */
   readonly holdsSwipes = true;
+  /** `idle` compares two trees (Commands.swift): quiet means the screen stood still. */
+  readonly settlesByTrees = true;
   /** On iOS `text` waits for the field to take keyboard focus itself (`DeviceUi.fill`). */
   get waitsForFocus() {
     return this.#kind === 'phone' || this.#kind === 'tablet' || this.#kind === 'foldable';
