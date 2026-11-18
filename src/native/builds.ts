@@ -40,6 +40,11 @@ export type NativeBuildSpec = {
    */
   env?: BuildEnvEntry[];
   /**
+   * Run the build with its declared variables and the toolchain baseline (`STRICT_ENV`) only, all from the caller:
+   * nothing undeclared reaches it from the daemon or the caller, and the toolchain roots are in the fingerprint.
+   */
+  envStrict?: boolean;
+  /**
    * Files or folders read by the build that git does not list: absolute, `~/…`, relative to the root (ignored files),
    * or `$NAME…` with `NAME` a variable of `env`. Their content is in the fingerprint; a missing one counts as absent,
    * a `$NAME` that points at nothing is an error.
@@ -152,6 +157,26 @@ export const parseEnv = (entries: BuildEnvEntry[] = []) => {
   };
 };
 
+/**
+ * What a strict build gets besides its declared variables, from the caller: what a shell, Node, Gradle, xcodebuild
+ * and CocoaPods need to start and to reach the network — the search path, the user and home, locale, temp folders,
+ * the toolchain roots, the package managers' homes, the proxies, and the Windows system variables. None of them is
+ * meant to change what a build makes; one that does (an SDK chosen by a variable) belongs in `env`.
+ */
+export const STRICT_ENV = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LANGUAGE', 'LC_*', 'TERM',
+  'DEVELOPER_DIR', 'JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_NDK_HOME', 'ANDROID_NDK_ROOT', 'ANDROID_USER_HOME', 'GRADLE_USER_HOME',
+  'NVM_DIR', 'VOLTA_HOME', 'COREPACK_*', 'GEM_HOME', 'GEM_PATH', 'RBENV_ROOT', 'ASDF_DIR', 'ASDF_DATA_DIR', 'MISE_DATA_DIR',
+  'SSH_AUTH_SOCK', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS',
+  'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'PATHEXT', 'USERNAME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
+  'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMW6432', 'COMMONPROGRAMFILES', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS',
+];
+/** The baseline variables that choose a toolchain: a strict build's fingerprint takes their values. */
+export const TOOLCHAIN_ROOTS = ['DEVELOPER_DIR', 'JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_NDK_HOME', 'ANDROID_NDK_ROOT'];
+// Upper-cased: Windows spells its variables in any case (`Path`, `SystemRoot`), and so may a proxy (`https_proxy`).
+const strictBaseline = nameMatcher(STRICT_ENV);
+const inBaseline = (name: string) => strictBaseline(name.toUpperCase());
+
 /** The environment with the declared defaults filled in where a variable is unset. */
 const withDefaults = (env: NodeJS.ProcessEnv, defaults: Map<string, string>): NodeJS.ProcessEnv => {
   if (![...defaults.keys()].some(k => env[k] === undefined)) return env;
@@ -163,10 +188,17 @@ const withDefaults = (env: NodeJS.ProcessEnv, defaults: Map<string, string>): No
 /**
  * The environment a build runs with: the daemon's own, with the declared variables taken from the caller's
  * environment when one is given — set as the caller has them, unset when the caller has not — and a declared
- * default for each one left unset.
+ * default for each one left unset. A variable a declared pattern names never comes from the daemon when a caller is
+ * given. With `envStrict`, only the declared variables and the baseline, all from the caller.
  */
-export const buildEnv = (spec: Pick<NativeBuildSpec, 'env'>, base: NodeJS.ProcessEnv, caller?: Record<string, string | undefined>): NodeJS.ProcessEnv => {
+export const buildEnv = (spec: Pick<NativeBuildSpec, 'env' | 'envStrict'>, base: NodeJS.ProcessEnv, caller?: Record<string, string | undefined>): NodeJS.ProcessEnv => {
   const {declared, any, defaults} = parseEnv(spec.env);
+  if (spec.envStrict) {
+    // Strict: the declared variables and the baseline, from the caller (the daemon's own when no caller is given).
+    const env: NodeJS.ProcessEnv = {};
+    for (const [k, v] of Object.entries(caller ?? base)) if (typeof v === 'string' && (declared(k) || inBaseline(k))) env[k] = v;
+    return withDefaults(env, defaults);
+  }
   if (!caller || !any) return withDefaults(base, defaults);
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(base)) if (!declared(k)) env[k] = v;
@@ -249,6 +281,11 @@ export const fingerprint = (root: string, spec: NativeBuildSpec, inputs: string[
     const entries = envEntries(spec.env, env);
     h.update(`\0env\0${entries.join('\0')}\0`);
     variant = crypto.createHash('sha256').update(entries.join('\0')).digest('hex').slice(0, 8);
+  }
+  if (spec.envStrict) {
+    // Added only when asked for, so a build that is not strict keeps its fingerprint.
+    const roots = TOOLCHAIN_ROOTS.map(k => [k, Object.entries(env).find(([n]) => n.toUpperCase() === k)?.[1]] as const);
+    h.update(`\0strict\0${roots.map(([k, v]) => (v === undefined ? `${k}\0unset` : `${k}=${v}`)).join('\0')}\0`);
   }
   for (const entry of spec.files ?? []) {
     h.update(`\0file\0${entry}\0`);

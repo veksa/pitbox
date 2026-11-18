@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {configSchema} from './config/schema.ts';
-import {BuildError, buildEnv, buildInputs, buildsDir, ensureBuild, envEntries, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
+import {BuildError, STRICT_ENV, buildEnv, buildInputs, buildsDir, ensureBuild, envEntries, fingerprint, gcBuilds, globRe, jsAppInputs, listFiles} from './native/builds.ts';
 
 let root: string;
 let cache: string;
@@ -287,6 +287,47 @@ describe('native build variables, exclusions and outside files', () => {
     expect(other.reused).toBe(false);
     expect(fs.readFileSync(other.artifact, 'utf8')).toBe('x86_64');
     expect(buildEnv(s, {PATH: '/bin'})).toEqual({PATH: '/bin', APP_ARCH: 'arm64'});
+  });
+
+  it('envStrict: only the declared variables and the baseline, all from the caller', () => {
+    const daemon = {PATH: '/daemon/bin', HOME: '/daemon', JAVA_HOME: '/daemon/jdk', APP_A: 'daemon', APP_B: 'daemon', OTHER_DAEMON: 'x'};
+    const caller = {PATH: '/caller/bin', HOME: '/caller', LANG: 'en_US.UTF-8', LC_ALL: 'C', https_proxy: 'p', APP_A: 'caller', APP_DEV_PORT: '1', NODE_ENV: 'production', OTHER: 'y'};
+    const s = {env: ['APP_*', '!APP_DEV_PORT', {name: 'APP_ARCH', default: 'arm64'}], envStrict: true};
+    expect(buildEnv(s, daemon, caller)).toEqual({PATH: '/caller/bin', HOME: '/caller', LANG: 'en_US.UTF-8', LC_ALL: 'C', https_proxy: 'p', APP_A: 'caller', APP_ARCH: 'arm64'});
+    // Windows spells its variables in any case.
+    expect(buildEnv({envStrict: true}, {}, {Path: 'C:\\bin', SystemRoot: 'C:\\Windows', Foo: '1'})).toEqual({Path: 'C:\\bin', SystemRoot: 'C:\\Windows'});
+    // Without a caller, the daemon's view is filtered the same way.
+    expect(buildEnv({envStrict: true}, daemon)).toEqual({PATH: '/daemon/bin', HOME: '/daemon', JAVA_HOME: '/daemon/jdk'});
+    expect(STRICT_ENV).toEqual(expect.arrayContaining(['PATH', 'HOME', 'LANG', 'LC_*', 'TMPDIR', 'JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'DEVELOPER_DIR']));
+  });
+
+  it('envStrict is in the fingerprint with the toolchain roots, not the search path', () => {
+    const strict = {envStrict: true};
+    const a = fp(strict, {PATH: '/a', JAVA_HOME: '/jdk17'});
+    expect(a).not.toBe(fp({}, {PATH: '/a', JAVA_HOME: '/jdk17'}));
+    expect(fp(strict, {PATH: '/b', JAVA_HOME: '/jdk17', OTHER: 'x'})).toBe(a);
+    expect(fp(strict, {PATH: '/a', JAVA_HOME: '/jdk21'})).not.toBe(a);
+    expect(fp(strict, {PATH: '/a', JAVA_HOME: '/jdk17', DEVELOPER_DIR: '/Applications/Xcode.app'})).not.toBe(a);
+    // Not strict: the toolchain roots stay out of the fingerprint, as before.
+    expect(fp({}, {JAVA_HOME: '/jdk21'})).toBe(fp({}, {JAVA_HOME: '/jdk17'}));
+  });
+
+  it('a strict build sees nothing undeclared, from the daemon or the caller', async () => {
+    const s = {command: 'mkdir -p out; printf "%s/%s/%s/%s" "${APP_A-unset}" "${APP_DAEMON_ONLY-unset}" "${UNDECLARED-unset}" "${HOME:+home}" > out/app.apk', output: 'out/app.apk', env: ['APP_*'], envStrict: true};
+    const run = (callerEnv: Record<string, string>) => ensureBuild({root, app: 'com.example.app', platform: 'android', spec: s, inputs: ['**'], cacheRoot: cache, callerEnv});
+    process.env.APP_DAEMON_ONLY = 'daemon';
+    process.env.UNDECLARED = 'daemon';
+    try {
+      const home = process.env.HOME!;
+      expect(fs.readFileSync((await run({HOME: home, APP_A: '1', UNDECLARED: 'caller'})).artifact, 'utf8')).toBe('1/unset/unset/home');
+      // Not strict: a daemon-only value of a declared pattern still never reaches the build.
+      const loose = {...s, envStrict: false};
+      const r = await ensureBuild({root, app: 'com.example.app', platform: 'android', spec: loose, inputs: ['**'], cacheRoot: cache, callerEnv: {APP_A: '1'}});
+      expect(fs.readFileSync(r.artifact, 'utf8')).toBe('1/unset/daemon/home');
+    } finally {
+      delete process.env.APP_DAEMON_ONLY;
+      delete process.env.UNDECLARED;
+    }
   });
 
   it('an excluded variable is not taken from the caller', () => {

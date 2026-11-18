@@ -129,6 +129,8 @@ const nativeBuildSchema = z
     env: z
       .array(z.union([z.string(), z.object({name: z.string().regex(/^\w+$/, 'a plain variable name'), default: z.string().optional()}).strict()]))
       .optional(),
+    /** Run the build with only the declared variables and a toolchain baseline (PATH, HOME, locale, SDK roots…), all from the caller. */
+    envStrict: z.boolean().optional(),
     /** Files or folders outside what git lists (absolute, `~/…`, ignored, `$NAME` of `env`) whose content is an input. */
     files: z.array(z.string()).optional(),
     /** Old builds kept: `count` per variant (default 5), unused `days` (default 30), `mb` in all (no limit). */
