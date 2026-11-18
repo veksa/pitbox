@@ -176,9 +176,6 @@ export class AppleCrashWatcher {
     const was = await this.#wasRunning;
     this.#wasRunning = undefined;
     if (found.length || !(was || final)) return found;
-    // The app's window on screen once the action settled: it runs, and asking launchctl (a quarter of a second on a
-    // simulator) would only say so again. A crashed app leaves the screen to the shell first, on visionOS too.
-    if (!final && after && this.#bundleId && after.includes(this.#bundleId)) return found;
     this.#slow ??= this.#probe.slow().catch(() => false);
     const slow = await this.#slow;
     const gone = (slow && !!after && !!this.#bundleId && !after.includes(this.#bundleId)) || !(await this.#running().catch(() => true));
