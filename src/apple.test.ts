@@ -566,3 +566,50 @@ describe('ui runner start', () => {
     await expect(started).rejects.toThrow(/stopped while it started/);
   });
 });
+
+describe('apple runner start without xcodebuild', () => {
+  it('takes the runner app and its test environment from the .xctestrun, placeholders filled in', async () => {
+    const {directPlan} = await import('./drivers/apple/runner.ts');
+    const doc = {
+      __xctestrun_metadata__: {FormatVersion: 1},
+      PitboxRunner: {
+        TestHostPath: '__TESTROOT__/Debug-iphonesimulator/PitboxRunner-Runner.app',
+        TestingEnvironmentVariables: {DYLD_FRAMEWORK_PATH: '__TESTROOT__/Debug-iphonesimulator:__PLATFORMS__/iPhoneSimulator.platform/Developer/Library/Frameworks', XCODE_SCHEME_NAME: 'PitboxRunner'},
+      },
+    };
+    expect(directPlan(doc, '/cache/Products', '/Xcode/Developer')).toEqual({
+      app: '/cache/Products/Debug-iphonesimulator/PitboxRunner-Runner.app',
+      env: {DYLD_FRAMEWORK_PATH: '/cache/Products/Debug-iphonesimulator:/Xcode/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks', XCODE_SCHEME_NAME: 'PitboxRunner'},
+    });
+    expect(directPlan({__xctestrun_metadata__: {}}, '/r', '/d')).toBeUndefined();
+  });
+
+  it('starts without xcodebuild on iOS and iPadOS 17 and later only', async () => {
+    const {startsDirect} = await import('./drivers/apple/runner.ts');
+    expect(startsDirect({kind: 'phone', os: 'iOS 27.2'})).toBe(true);
+    expect(startsDirect({kind: 'tablet', os: 'iOS 17.0'})).toBe(true);
+    expect(startsDirect({kind: 'foldable', os: 'iOS 27.2'})).toBe(true);
+    expect(startsDirect({kind: 'phone', os: 'iOS 16.4'})).toBe(false);
+    expect(startsDirect({kind: 'tv', os: 'tvOS 27.2'})).toBe(false);
+    expect(startsDirect({kind: 'xr', os: 'visionOS 27.2'})).toBe(false);
+    expect(startsDirect({kind: 'watch', os: 'watchOS 27.2'})).toBe(false);
+  });
+
+  it('installs the runner again only when the simulator holds other code of it', async () => {
+    const {sameRunner} = await import('./drivers/apple/runner.ts');
+    const app = (dir: string, code: string) => {
+      const a = path.join(dir, 'PitboxRunner-Runner.app');
+      fs.mkdirSync(path.join(a, 'PlugIns', 'PitboxRunner.xctest'), {recursive: true});
+      fs.writeFileSync(path.join(a, 'PitboxRunner-Runner'), 'host');
+      fs.writeFileSync(path.join(a, 'Info.plist'), 'plist');
+      fs.writeFileSync(path.join(a, 'PlugIns', 'PitboxRunner.xctest', 'PitboxRunner'), code);
+      return a;
+    };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-runner-'));
+    const a = app(path.join(root, 'a'), 'v1');
+    expect(sameRunner(a, app(path.join(root, 'b'), 'v1'))).toBe(true);
+    expect(sameRunner(a, app(path.join(root, 'c'), 'v2'))).toBe(false);
+    expect(sameRunner(a, path.join(root, 'missing.app'))).toBe(false);
+    fs.rmSync(root, {recursive: true, force: true});
+  });
+});

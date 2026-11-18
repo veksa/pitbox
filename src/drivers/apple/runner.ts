@@ -103,6 +103,56 @@ const buildInto = async (dir: string, src: string, destination: string, find: ()
 
 type Pending = {resolve: (v: Record<string, unknown>) => void; reject: (e: Error) => void; timer: NodeJS.Timeout};
 
+/** What a start without xcodebuild needs from a build: the runner app and the environment xcodebuild would give it. */
+export type DirectPlan = {app: string; env: Record<string, string>};
+
+/**
+ * The runner app and its test environment from an .xctestrun (as JSON: `plutil -convert json`), with xcodebuild's
+ * placeholders filled in: `__TESTROOT__` (the folder of the .xctestrun) and `__PLATFORMS__` (Xcode's platforms).
+ * Undefined when the file names no test host.
+ */
+export const directPlan = (xctestrun: unknown, testRoot: string, developerDir: string): DirectPlan | undefined => {
+  const doc = xctestrun as Record<string, {TestHostPath?: string; TestingEnvironmentVariables?: Record<string, string>}>;
+  const target = doc.PitboxRunner ?? Object.entries(doc).find(([k]) => !k.startsWith('__'))?.[1];
+  if (!target?.TestHostPath) return undefined;
+  const fill = (v: string) => v.replaceAll('__TESTROOT__', testRoot).replaceAll('__PLATFORMS__', path.join(developerDir, 'Platforms'));
+  const env = Object.fromEntries(Object.entries(target.TestingEnvironmentVariables ?? {}).map(([k, v]) => [k, fill(String(v))]));
+  return {app: fill(target.TestHostPath), env};
+};
+
+/**
+ * Whether the runner can start without xcodebuild, launched by simctl like any app: XCTest then finds the test
+ * bundle inside the runner app on its own. An iOS or iPadOS simulator from iOS 17 on; the other platforms keep
+ * xcodebuild.
+ */
+export const startsDirect = (sim: {kind: SimKind; os: string}): boolean => {
+  if (sim.kind !== 'phone' && sim.kind !== 'tablet' && sim.kind !== 'foldable') return false;
+  const m = /^iOS (\d+)/.exec(sim.os);
+  return !!m && Number(m[1]) >= 17;
+};
+
+/** Builds whose start without xcodebuild failed once: the daemon starts them with xcodebuild from then on. */
+const directFailed = new Set<string>();
+
+/** Whether two installs of the runner app hold the same code: its executable and its test bundle's. */
+export const sameRunner = (a: string, b: string): boolean => {
+  const files = (app: string) => {
+    const name = path.basename(app, '.app');
+    return [path.join(app, name), path.join(app, 'PlugIns', 'PitboxRunner.xctest', 'PitboxRunner'), path.join(app, 'Info.plist')];
+  };
+  const [x, y] = [files(a), files(b)];
+  try {
+    return x.every((f, i) => {
+      const [p, q] = [fs.statSync(f), fs.statSync(y[i]!)];
+      return p.size === q.size && fs.readFileSync(f).equals(fs.readFileSync(y[i]!));
+    });
+  } catch {
+    return false;
+  }
+};
+
+let developerDir: Promise<string> | undefined;
+
 /**
  * What to tell the agent about a runner from its `info`. On visionOS XCUITest waits for the app's animations to end
  * before and after every event, and an open system menu never stops animating: the runner turns that wait off
@@ -176,6 +226,10 @@ export class AppleRunner {
   #starting?: Promise<void>;
   /** Whether a command has come back since the runner started. */
   #answered = false;
+  /** Whether the running runner was launched by simctl (no xcodebuild to end: the app is terminated instead). */
+  #direct = false;
+  /** How the last start went, for the agent-facing timing and the tests. */
+  lastStart?: {how: 'simctl' | 'xcodebuild'; ms: number; fallback?: string};
 
   constructor(driver: AppleDriver, udid: string, bundleId?: string) {
     this.#driver = driver;
@@ -206,6 +260,24 @@ export class AppleRunner {
     const port = await freePort();
     // xcodebuild boots a shut-down destination: a runner stopped meanwhile (the simulator given back) never starts.
     if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
+    const t0 = Date.now();
+    let fallback: string | undefined;
+    // Without xcodebuild the runner answers in under half the time: no xcodebuild start, no install of the
+    // runner on every start, no launch held while Xcode's tools attach to it. Any failure falls back to xcodebuild.
+    if (AppleRunner.direct && startsDirect(sim) && !directFailed.has(`${xctestrun}|${sim.runtime}`)) {
+      fallback = await this.#startDirect(xctestrun, port).then(
+        () => undefined,
+        (e: Error) => e.message,
+      );
+      if (fallback === undefined) {
+        this.lastStart = {how: 'simctl', ms: Date.now() - t0};
+        return this.#afterStart();
+      }
+      if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
+      directFailed.add(`${xctestrun}|${sim.runtime}`);
+      this.#teardown();
+      await clearStaleRunner(this.#driver, this.udid);
+    }
     const child = spawn('xcodebuild', ['test-without-building', '-xctestrun', xctestrun, '-destination', `id=${this.udid}`, '-only-testing:PitboxRunner/RunnerTests/testServe'], {
       env: {...process.env, TEST_RUNNER_PITBOX_PORT: String(port)},
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -236,6 +308,54 @@ export class AppleRunner {
       }
       await this.#connect(port).catch(() => new Promise(r => setTimeout(r, 400)));
     }
+    this.lastStart = {how: 'xcodebuild', ms: Date.now() - t0, ...(fallback ? {fallback} : {})};
+    return this.#afterStart();
+  }
+
+  /** Starts with the runner, without xcodebuild: one start costs the dispatch of xcodebuild's test session. */
+  static direct = process.env.PITBOX_RUNNER_XCODEBUILD !== '1';
+
+  /**
+   * Launches the runner app with simctl and the environment xcodebuild would give it; installs it first when the
+   * simulator has none or another build of it. Throws when it does not answer, so xcodebuild takes over.
+   */
+  async #startDirect(xctestrun: string, port: number) {
+    developerDir ??= run('xcode-select', ['-p'], {timeoutMs: 10_000}).then(r => r.stdout.trim());
+    const conv = await run('plutil', ['-convert', 'json', '-o', '-', xctestrun], {timeoutMs: 10_000});
+    const plan = conv.code === 0 ? directPlan(JSON.parse(conv.stdout), path.dirname(xctestrun), await developerDir) : undefined;
+    if (!plan || !fs.existsSync(plan.app)) throw new AppleError('no runner app in the build');
+    const installed = await this.#driver.appBundle(this.udid, RUNNER_BUNDLE_ID);
+    if (!installed || !sameRunner(installed, plan.app)) await this.#driver.install(this.udid, plan.app);
+    if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
+    const env: NodeJS.ProcessEnv = {...process.env, SIMCTL_CHILD_PITBOX_PORT: String(port)};
+    for (const [k, v] of Object.entries(plan.env)) env[`SIMCTL_CHILD_${k}`] = v;
+    const r = await run(this.#driver.xcrun, ['simctl', 'launch', '--terminate-running-process', this.udid, RUNNER_BUNDLE_ID], {env, timeoutMs: 60_000});
+    if (r.code !== 0) throw new AppleError(`simctl launch failed: ${r.stderr.trim().split('\n').pop()}`);
+    this.#direct = true;
+    // The app is a process of the Mac: one that dies at launch (a missing framework) is seen gone at once.
+    const pid = Number(/:\s*(\d+)/.exec(r.stdout)?.[1]);
+    const gone = () => {
+      if (!pid) return false;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    };
+    const deadline = Date.now() + AppleRunner.directTimeoutMs;
+    while (!this.alive) {
+      if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
+      if (gone()) throw new AppleError('the runner app exited before it answered');
+      if (Date.now() > deadline) throw new AppleError(`the runner app did not answer in ${AppleRunner.directTimeoutMs / 1000}s`);
+      await this.#connect(port).catch(() => new Promise(res => setTimeout(res, 100)));
+    }
+  }
+
+  /** How long a runner launched by simctl gets to answer before xcodebuild starts it instead. */
+  static directTimeoutMs = 30_000;
+
+  async #afterStart() {
     const notice = runnerNotice(await this.call<{platform?: string; animationWaitOff?: boolean}>('info', {}, 30_000).catch(() => ({})));
     if (notice) this.notices.push(notice);
     if (this.bundleId) await this.call('activate', {}, 30_000).catch(() => undefined);
@@ -295,6 +415,9 @@ export class AppleRunner {
     this.#socket = undefined;
     if (kill && this.#child && this.#child.exitCode === null) this.#child.kill();
     this.#child = undefined;
+    // A runner launched by simctl has no xcodebuild to take it along: the app itself is ended.
+    if (kill && this.#direct) void this.#driver.stop(this.udid, RUNNER_BUNDLE_ID).catch(() => undefined);
+    this.#direct = false;
   }
 
   async #simKind(): Promise<SimKind | undefined> {

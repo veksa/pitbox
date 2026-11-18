@@ -2590,9 +2590,14 @@ export class Engine {
           }
         }
         const r = await t.s.open(t.id, target, {relaunch, bundleId, args});
-        // A runner already attached reads the shell until the launched app comes to the front.
+        // A runner already attached reads the shell until the launched app comes to the front. XCUITest's first
+        // query of a relaunched app looks for its old process and tries again only a second later (about 2.3 s to
+        // the first tree); activating the app right after its launch finds the new process at once.
         const ui = this.#uis.get(t.id);
-        if (ui && !target.includes('://')) await ui.runner.call('foreground', {}, 10_000).catch(() => undefined);
+        if (ui && !target.includes('://')) {
+          if (bundleId && target === bundleId) await ui.runner.call('activate', {}, 10_000).catch(() => undefined);
+          await ui.runner.call('foreground', {}, 10_000).catch(() => undefined);
+        }
         // A link waits behind the shell's "Open in …?" question until someone answers it.
         let confirmed = false;
         if (target.includes('://')) {
