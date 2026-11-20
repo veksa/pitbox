@@ -502,8 +502,8 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
         note = 'the first tap only closed the keyboard or took the focus off the field: pressed again';
       } else note = 'the tap closed the keyboard and nothing else changed: the control may not have got it (a list that spends the first tap on the keyboard; press again)';
     }
-    // A button of the shell's alert closes it. One still there a moment after the press did not take the tap (the
-    // shell drops a touch while its alert animates in): pressed once more, and said, rather than passing a press that
+    // A button of a system alert (the shell's, Android's permission request) closes it. One still there a moment after
+    // the press did not take the tap (the system drops a touch while its alert animates in): pressed once more, and said, rather than passing a press that
     // left the alert over the app, where it outlives even a relaunch and takes every later tap.
     if (kind === 'tap' && target.node && this.last && shellAlertButtonStays(snap, target.node, this.last)) {
       const stays = async () => {

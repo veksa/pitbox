@@ -1442,6 +1442,47 @@ describe("a button of the shell's alert", () => {
   });
 });
 
+describe("a button of Android's permission request", () => {
+  const withPrompt: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}, {type: 'app', title: '', pkg: 'com.google.android.permissioncontroller'}];
+  const allow: UiNode = {p: -1, w: 1, c: 'Button', b: [50, 400, 350, 450], id: 'permission_allow_button', t: 'Allow', f: 'c'};
+  const fine: UiNode = {p: -1, w: 1, c: 'RadioButton', b: [50, 300, 190, 350], id: 'permission_location_accuracy_radio_fine', t: 'Precise', f: 'cx'};
+  /** A permission request that drops the first `drops` taps (still animating in); its choice of accuracy never closes it. */
+  const prompt = (drops: number) => {
+    let closed = false;
+    const taps: number[] = [];
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap') {
+          taps.push(Number(args.y));
+          if (taps.length > drops && Number(args.y) > 400) closed = true;
+        }
+        if (cmd === 'tree') return closed ? {windows: [withPrompt[0]!], nodes: []} : {windows: withPrompt, nodes: [fine, allow]};
+        if (cmd === 'info') return {width: 400, height: 900};
+        if (cmd === 'idle') await new Promise(r => setTimeout(r, Number(args.quiet ?? 0)));
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    return {runner, taps};
+  };
+
+  it('that stays after the press did not take it, and is pressed once more', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const {runner, taps} = prompt(1);
+    const r = await new DeviceUi('dev', runner as never).press('text="Allow"');
+    expect(taps).toHaveLength(2);
+    expect(r.note).toMatch(/did not take the first tap: pressed again/);
+  });
+
+  it('leaves its choice of accuracy alone: a radio button keeps the request up', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const {runner, taps} = prompt(0);
+    const r = await new DeviceUi('dev', runner as never).press('id=permission_location_accuracy_radio_fine');
+    expect(taps).toHaveLength(1);
+    expect(r.note ?? '').not.toMatch(/pressed again/);
+  });
+});
+
 describe('a fill the field dropped keys of', () => {
   it('says that the runner typed it again key by key, which a render budget over the fill counts', async () => {
     const {DeviceUi} = await import('./ui/device.ts');
