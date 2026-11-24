@@ -816,6 +816,42 @@ describe("iOS's offer to save a password", () => {
   });
 });
 
+describe("a phone maker's crash notice over the app", () => {
+  const notice: UiWindow[] = [{type: 'app', title: 'Error', pkg: 'com.miui.thirdappassistant'}];
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const home: UiNode[] = [{p: -1, w: 0, c: 'android.widget.EditText', b: [0, 0, 1080, 200], id: 'name'}];
+
+  it('is closed with back, so the next step reaches the app, and the press says so', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const keys: unknown[] = [];
+    let shown = true;
+    const runner = {
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'key') {
+          keys.push(args.code);
+          shown = false;
+        }
+        if (cmd === 'tree') return shown ? {windows: notice, nodes: [{p: -1, w: 0, c: 'android.view.View', b: [0, 0, 1080, 2400], id: 'action_bar_root'}]} : {windows: app, nodes: home};
+        if (cmd === 'info') return {width: 1080, height: 2400};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    await ui.wait('id=name', {timeoutMs: 3000});
+    expect(keys).toEqual([4]);
+    const r = await ui.press('id=name');
+    expect(r.note).toMatch(/closed the phone's own crash notice "Error"/);
+  }, 15_000);
+
+  it('is only the maker\'s notice package', async () => {
+    const {vendorNotice} = await import('./ui/snapshot.ts');
+    expect(vendorNotice({windows: app})).toBeUndefined();
+    expect(vendorNotice({windows: [{type: 'app', title: '', pkg: 'com.miui.thirdappassistant.extra'}]})).toBeUndefined();
+    expect(vendorNotice({windows: [...notice, ...app]})).toBe('Error');
+  });
+});
+
 describe('a wait whose first read starts the runner', () => {
   it('counts its seconds from that read, so a slow start does not use them up', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

@@ -65,6 +65,17 @@ export const passwordOffer = (snap: Pick<Snapshot, 'nodes'>): {title: string; de
 };
 
 /**
+ * A phone maker's own notice over the app, not the platform's: HyperOS and MIUI open an activity of theirs ("<app>
+ * has crashed repeatedly… check for updates") after an app crashed a few times, some seconds later and over whatever
+ * is in front. Only information, it hides the app from every check: its window's title, if one is there.
+ */
+const VENDOR_NOTICE = /^com\.miui\.thirdappassistant$/;
+export const vendorNotice = (snap: Pick<Snapshot, 'windows'>): string | undefined => {
+  const w = snap.windows.find(x => VENDOR_NOTICE.test(x.pkg));
+  return w ? w.title || w.pkg : undefined;
+};
+
+/**
  * React Native's warnings or errors toast in a debug build ("Open debugger to view warnings."). After the first
  * warning it sits over the bottom of every screen — a tab bar under it takes no taps — and no check is about it.
  * Returns it and its dismiss button: the control without a label inside it, on its right.
