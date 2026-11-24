@@ -325,6 +325,38 @@ export const muxConnect = async (udid: string, port: number, timeoutMs = 5000): 
   return s;
 };
 
+/**
+ * The last sample of a process in an `xctrace export` of Activity Monitor's `activity-monitor-process-live` table:
+ * its memory footprint (what Xcode's gauge and the system's memory limit count) and CPU. A value repeated in the
+ * export is written once with an `id` and later as a `ref` to it.
+ */
+export const parseProcessLive = (xml: string, pid: number): {footprint?: number; cpu?: number} | undefined => {
+  const cols = [...xml.matchAll(/<mnemonic>([^<]+)<\/mnemonic>/g)].map(m => m[1]!);
+  const byId = new Map<string, string>();
+  for (const m of xml.matchAll(/<[\w-]+ id="(\d+)"[^>]*>([^<]*)/g)) byId.set(m[1]!, m[2]!);
+  let last: {footprint?: number; cpu?: number} | undefined;
+  for (const row of xml.match(/<row>[\s\S]*?<\/row>/g) ?? []) {
+    // The row's own cells: the elements right under <row>, a nested one (a process's pid) skipped.
+    const cells: string[] = [];
+    let depth = 0;
+    for (const t of row.slice(5, -6).matchAll(/<(\/?)([\w-]+)([^>]*?)(\/?)>([^<]*)/g)) {
+      const [, close, , attrs, selfClose, text] = t;
+      if (close) {
+        depth--;
+        continue;
+      }
+      if (depth === 0) cells.push(/ref="(\d+)"/.exec(attrs!)?.[1] ? (byId.get(/ref="(\d+)"/.exec(attrs!)![1]!) ?? '') : /<sentinel/.test(t[0]) ? '' : text!);
+      if (!selfClose) depth++;
+    }
+    const at = (name: string) => cells[cols.indexOf(name)];
+    if (Number(at('pid')) !== pid) continue;
+    const footprint = Number(at('memory-physical-footprint'));
+    const cpu = Number(at('cpu-percent'));
+    last = {...(at('memory-physical-footprint') && Number.isFinite(footprint) ? {footprint} : {}), ...(at('cpu-percent') && Number.isFinite(cpu) ? {cpu} : {})};
+  }
+  return last;
+};
+
 /** A scratch file for one devicectl transfer; the caller removes it. */
 export const scratchFile = (name: string) => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-device-')), name);
 
@@ -581,6 +613,26 @@ export class PhysicalDevices {
     const url = await this.#appUrl(udid, bundleId);
     if (!url) return undefined;
     return devicePid(await this.#json(['device', 'info', 'processes', '--device', udid], 'list processes'), url);
+  }
+
+  /**
+   * Memory and CPU of a running app, from a one-second Activity Monitor recording of its process (`xctrace`, the
+   * Instruments engine): a device's processes are not the Mac's, so `ps` cannot read them. Takes a few seconds.
+   * All processes are recorded: `--attach` to a pid often answers that a running app's process cannot be found.
+   */
+  async processStats(udid: string, pid: number): Promise<{footprint?: number; cpu?: number}> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-perf-'));
+    try {
+      const trace = path.join(dir, 'p.trace');
+      const rec = await run(this.#xcrun, ['xctrace', 'record', '--template', 'Activity Monitor', '--device', udid, '--all-processes', '--time-limit', '1s', '--output', trace, '--no-prompt'], {timeoutMs: 60_000});
+      if (rec.code !== 0 || !fs.existsSync(trace)) throw new AppleError(`xctrace could not record the app: ${(rec.stderr || rec.stdout).trim().split('\n').pop()}`, deviceHint(rec.stderr + rec.stdout) ?? 'is the device unlocked, and Instruments free (no other recording on it)?');
+      const xml = await run(this.#xcrun, ['xctrace', 'export', '--input', trace, '--xpath', '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-live"]'], {timeoutMs: 60_000});
+      const stats = parseProcessLive(xml.stdout, pid);
+      if (!stats) throw new AppleError('xctrace recorded no sample of the app', 'is it still running? open it and try again');
+      return stats;
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
   }
 
   async appRunning(udid: string, bundleId: string): Promise<boolean | undefined> {

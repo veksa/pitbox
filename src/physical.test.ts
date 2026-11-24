@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
-import {crashFiles, devicectlJson, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, PhysicalDevices, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
+import {crashFiles, devicectlJson, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, parseProcessLive, PhysicalDevices, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
 import {runnerBundleId, signingArgs} from './drivers/apple/runner.ts';
 import {formatLog, parseSyslog} from './drivers/apple/syslog.ts';
 import {builtinRules} from './doctor/rules.ts';
@@ -183,5 +183,21 @@ describe('physical apple devices', () => {
     } finally {
       fs.rmSync(dir, {recursive: true, force: true});
     }
+  });
+
+  it('reads an app\'s memory and CPU from an Activity Monitor export', () => {
+    const col = (m: string) => `<col><mnemonic>${m}</mnemonic></col>`;
+    const head = `<schema name="activity-monitor-process-live">${['start', 'process', 'pid', 'cpu-percent', 'memory-physical-footprint'].map(col).join('')}</schema>`;
+    // The first sample writes its values with ids; the second refers back to the process and pid and has no CPU yet.
+    const rows = [
+      '<row><start-time id="1" fmt="00:00.1">1</start-time><process id="2" fmt="MyApp (321)"><pid id="3" fmt="321">321</pid><device-session id="4"/></process><pid ref="3"/><system-cpu-percent id="5" fmt="2.5%">2.5</system-cpu-percent><size-in-bytes id="6" fmt="24 MiB">25165824</size-in-bytes></row>',
+      '<row><start-time id="7" fmt="00:00.2">2</start-time><process id="8" fmt="Other (9)"><pid id="9" fmt="9">9</pid></process><pid ref="9"/><sentinel/><size-in-bytes id="10" fmt="1 MiB">1048576</size-in-bytes></row>',
+      '<row><start-time id="11" fmt="00:01.1">3</start-time><process ref="2"/><pid ref="3"/><sentinel/><size-in-bytes id="12" fmt="30 MiB">31457280</size-in-bytes></row>',
+    ];
+    const xml = `<?xml version="1.0"?><trace-query-result><node>${head}${rows.join('')}</node></trace-query-result>`;
+    expect(parseProcessLive(xml, 321)).toEqual({footprint: 31457280});
+    expect(parseProcessLive(xml.replace(rows[2]!, ''), 321)).toEqual({footprint: 25165824, cpu: 2.5});
+    expect(parseProcessLive(xml, 9)).toEqual({footprint: 1048576});
+    expect(parseProcessLive(xml, 77)).toBeUndefined();
   });
 });

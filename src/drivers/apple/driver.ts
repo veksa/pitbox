@@ -804,7 +804,14 @@ export class AppleDriver {
    * frame counter like Android's gfxinfo: frames stay unknown rather than estimated.
    */
   async perf(udid: string, bundleId: string, reset = false): Promise<{reset?: boolean; memoryMb?: number; note?: string}> {
-    if (physicalUdid(udid)) throw new AppleError('memory of an app on a device is not read yet', 'use Instruments, or a simulator for perf');
+    if (physicalUdid(udid)) {
+      if (reset) return {reset: true, note: 'nothing to reset on a device: memory and CPU are read live, frames are not counted'};
+      const pid = await this.physical.pid(udid, bundleId);
+      if (!pid) throw new AppleError(`${bundleId} is not running`, 'open it first');
+      const s = await this.physical.processStats(udid, pid);
+      const cpu = s.cpu !== undefined ? ` · CPU ${s.cpu.toFixed(1)}%` : '';
+      return {memoryMb: s.footprint !== undefined ? Math.round(s.footprint / 1048576) : undefined, note: `footprint${cpu} · frames are not counted on a device`};
+    }
     if (reset) return {reset: true, note: 'nothing to reset on a simulator: memory is read live, frames are not counted'};
     const pid = await this.pid(udid, bundleId);
     if (!pid) throw new AppleError(`${bundleId} is not running`, 'open it first');
