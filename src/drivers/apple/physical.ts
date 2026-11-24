@@ -92,7 +92,10 @@ export type DevicectlResult = {code: number | null; stdout: string; stderr: stri
 
 /** Runs devicectl with its JSON on stdout (`-q -j -`) and answers the JSON's `result`; throws with a hint on failure. */
 export const devicectlJson = async <T = Record<string, unknown>>(xcrun: string, args: string[], what: string, timeoutMs = 60_000): Promise<T> => {
-  const r = await run(xcrun, ['devicectl', ...args, '-q', '-j', '-'], {timeoutMs});
+  // devicectl's own flags go before `--`: what follows it is the launched app's arguments.
+  const end = args.indexOf('--');
+  const own = ['-q', '-j', '-'];
+  const r = await run(xcrun, ['devicectl', ...(end < 0 ? [...args, ...own] : [...args.slice(0, end), ...own, ...args.slice(end)])], {timeoutMs});
   let doc: {result?: T; error?: {userInfo?: Record<string, {string?: string}>}} | undefined;
   try {
     doc = JSON.parse(r.stdout);
@@ -533,6 +536,17 @@ export class PhysicalDevices {
     }
   }
 
+  /**
+   * The languages the apps pitbox launches on a device get: a device's own language is set only in its Settings,
+   * but an app takes `-AppleLanguages` and `-AppleLocale` from its launch arguments over the system's.
+   */
+  readonly #locales = new Map<string, string[]>();
+
+  localeArgs(udid: string): string[] {
+    const l = this.#locales.get(udid);
+    return l?.length ? ['-AppleLanguages', `(${l.join(',')})`, '-AppleLocale', l[0]!.replace('-', '_')] : [];
+  }
+
   async pid(udid: string, bundleId: string): Promise<number | undefined> {
     const url = await this.#appUrl(udid, bundleId);
     if (!url) return undefined;
@@ -553,7 +567,10 @@ export class PhysicalDevices {
       await this.#json(['device', 'process', 'openURL', '--device', udid, target], 'open url', 60_000);
       return {totalMs: Date.now() - t0};
     }
-    const r = await this.#json<{process?: {processIdentifier?: number}}>(['device', 'process', 'launch', '--device', udid, ...(opts.relaunch ? ['--terminate-existing'] : []), target, ...(opts.args ?? [])], 'launch', 90_000).catch((e: AppleError) => {
+    // `-AppleLanguages` and the like would read as devicectl's flags without `--`.
+    const passed = [...this.localeArgs(udid), ...(opts.args ?? [])];
+    const appArgs = passed.length ? ['--', ...passed] : [];
+    const r = await this.#json<{process?: {processIdentifier?: number}}>(['device', 'process', 'launch', '--device', udid, ...(opts.relaunch ? ['--terminate-existing'] : []), target, ...appArgs], 'launch', 90_000).catch((e: AppleError) => {
       throw /not (be )?found|no such app|unknown application|is not installed/i.test(e.message) ? new AppleError(e.message.split('\n')[0]!, 'is the app installed on the device? `apps` lists bundle ids') : e;
     });
     return {totalMs: Date.now() - t0, ...(r.process?.processIdentifier ? {pid: r.process.processIdentifier} : {})};
@@ -583,7 +600,6 @@ export class PhysicalDevices {
     const done: string[] = [];
     if (s.size || s.density) throw new AppleError('a device has a fixed screen size', 'use another device or a simulator of that size');
     if (s.animations !== undefined) throw new AppleError('devicectl cannot switch animations off', 'leave animations on; the runner waits for them (or turn on Reduce Motion on the device)');
-    if (s.locale !== undefined) throw new AppleError("a device's language is not set from the Mac", 'pass the app its language at launch: open with args -AppleLanguages "(fr)" -AppleLocale fr_FR, or change it in Settings › General › Language & Region');
     if (s.grant || s.revoke || s.reset) throw new AppleError("a device's privacy permissions are not set from the Mac", 'answer the system permission dialog in the flow (press "Allow"), or reset it by reinstalling the app');
     const args: string[] = [];
     if (s.fontScale !== undefined) {
@@ -596,6 +612,13 @@ export class PhysicalDevices {
       done.push(`dark ${s.dark ? 'on' : 'off'}`);
     }
     if (args.length) await this.#json(['device', 'settings', 'appearance', '--device', udid, ...args], 'appearance');
+    if (s.locale !== undefined) {
+      const locales = s.locale.split(',').map(l => l.trim()).filter(l => l && l !== '""');
+      if (locales.length) this.#locales.set(udid, locales);
+      else this.#locales.delete(udid);
+      // Not the device's own language: the arguments of every launch pitbox makes there.
+      done.push(locales.length ? `locale ${locales.join(',')} for the apps pitbox launches (relaunch the app)` : 'locale reset (relaunch the app)');
+    }
     return done;
   }
 

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it, vi} from 'vitest';
-import {crashFiles, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, PhysicalDevices, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
+import {crashFiles, devicectlJson, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, PhysicalDevices, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
 import {runnerBundleId, signingArgs} from './drivers/apple/runner.ts';
 import {formatLog, parseSyslog} from './drivers/apple/syslog.ts';
 import {builtinRules} from './doctor/rules.ts';
@@ -169,6 +169,19 @@ describe('physical apple devices', () => {
     } finally {
       vi.restoreAllMocks();
       fs.rmSync(home, {recursive: true, force: true});
+    }
+  });
+  it('keeps devicectl\'s own flags before the launched app\'s arguments', async () => {
+    // `-AppleLanguages (fr)` after the bundle id reads as devicectl's flags unless it follows `--`.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-xcrun-'));
+    const fake = path.join(dir, 'xcrun');
+    fs.writeFileSync(fake, `#!/bin/sh\nprintf '{"result":{"args":"%s"}}' "$*"\n`, {mode: 0o755});
+    try {
+      const r = await devicectlJson<{args: string}>(fake, ['device', 'process', 'launch', 'com.example.app', '--', '-AppleLanguages', '(fr)'], 'launch');
+      expect(r.args).toBe('devicectl device process launch com.example.app -q -j - -- -AppleLanguages (fr)');
+      expect((await devicectlJson<{args: string}>(fake, ['list', 'devices'], 'list')).args).toBe('devicectl list devices -q -j -');
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
     }
   });
 });
