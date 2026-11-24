@@ -791,7 +791,7 @@ export class PushCenter {
   async clear(opts: {device?: string; app?: string}): Promise<{device: string; app: string; cleared: number}> {
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
-    if (t.platform === 'apple') throw new Error('unsupported on iOS simulators: no command removes delivered notifications (swipe them away in Notification Center)');
+    if (t.platform === 'apple') throw new Error(`unsupported on ${physicalUdid(t.id) ? 'an iPhone or iPad' : 'iOS simulators'}: no command removes delivered notifications (swipe them away in Notification Center)`);
     const before = (await notifications(t.a, t.id, app)).filter(n => !n.summary).length;
     const r = await callReceiver(t.a, t.id, app, 'clear');
     if (r.code !== 1) throw new Error(r.data ?? (await missingReceiver(t.a, t.id, app)));
@@ -810,7 +810,11 @@ export class PushCenter {
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
     if (t.platform === 'apple') {
-      const lines = ['simctl push: ready (no app code needed; the app must have asked for notification permission)'];
+      const lines = [
+        physicalUdid(t.id)
+          ? 'pushes go through the app\'s notification hook (PitboxNotifications in the debug build): the Mac sends no push to a device; the app must have asked for notification permission'
+          : 'simctl push: ready (no app code needed; the app must have asked for notification permission)',
+      ];
       const host = this.#deps.liveActivity?.();
       if (host) {
         const aps = await host.apsEnvironment?.(t.id, app).catch(() => undefined);

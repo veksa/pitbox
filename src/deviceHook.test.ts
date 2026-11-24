@@ -5,6 +5,7 @@
 import {describe, expect, it} from 'vitest';
 import type {HookFiles} from './drivers/apple/driver.ts';
 import {deliverToHook, type LiveActivityHost} from './push/liveactivity.ts';
+import {PushCenter} from './push/push.ts';
 import {notificationDir, notificationNotice} from './push/respond.ts';
 
 const UDID = '00008150-0000000000000000';
@@ -70,5 +71,21 @@ describe('a debug hook on a physical device', () => {
     const left = JSON.parse(d.files.get('Library/Caches/pitbox/notification/in/p3.json')!) as {deadline: number};
     expect(left.deadline * 1000).toBeGreaterThan(Date.now());
     expect(left.deadline * 1000).toBeLessThan(Date.now() + 15_000);
+  });
+});
+
+describe('push status and clear on a device', () => {
+  const center = new PushCenter({
+    target: async () => ({platform: 'apple', id: UDID, s: {} as never}),
+    online: async () => ({android: [], apple: [UDID]}),
+    appleApp: () => 'com.example.app',
+    ui: async () => Promise.reject(new Error('no runner')),
+  });
+
+  it('names the hook as the way in, not simctl', async () => {
+    const r = await center.status({});
+    expect(r.lines[0]).toMatch(/notification hook \(PitboxNotifications/);
+    expect(r.lines.join('\n')).not.toMatch(/simctl/);
+    await expect(center.clear({})).rejects.toThrow(/unsupported on an iPhone or iPad/);
   });
 });
