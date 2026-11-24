@@ -29,11 +29,13 @@ type DevicectlDevice = {
 };
 
 /**
- * `devicectl list devices -j` → the physical devices paired with this Mac, as Simulators (runtime `device`). One
+ * `devicectl list devices -j` (the document or its `result`) → the physical devices paired with this Mac, as Simulators (runtime `device`). One
  * that is on and connected (cable or network) is `Booted`; one that is paired but away is `Disconnected`.
  */
 export const parsePhysicalDevices = (json: unknown): Simulator[] => {
-  const list = ((json as {result?: {devices?: DevicectlDevice[]}})?.result?.devices ?? []) as DevicectlDevice[];
+  // The whole document or its `result` (what devicectlJson answers).
+  const doc = json as {result?: {devices?: DevicectlDevice[]}; devices?: DevicectlDevice[]} | undefined;
+  const list = (doc?.result?.devices ?? doc?.devices ?? []) as DevicectlDevice[];
   return list
     .filter(d => d.hardwareProperties?.reality === 'physical' && d.hardwareProperties.udid && d.connectionProperties?.pairingState === 'paired' && d.visibilityClass !== 'hidden')
     .map(d => {

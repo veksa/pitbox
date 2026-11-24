@@ -43,6 +43,7 @@ describe('physical apple devices', () => {
       expect.objectContaining({udid: UDID, name: 'My iPhone', state: 'Booted', runtime: 'device', os: 'iOS 27.2', kind: 'phone', deviceType: 'iPhone 18 Pro'}),
       expect.objectContaining({udid: '00008150-0000000000000001', state: 'Disconnected', kind: 'tablet'}),
     ]);
+    expect(parsePhysicalDevices({devices: [device()]})).toEqual([list[0]]);
     expect(isPhysical(list[0])).toBe(true);
     expect(isPhysical({runtime: 'iOS 27.2'})).toBe(false);
     expect(parsePhysicalDevices({result: {devices: [device({deviceProperties: {name: 'My iPhone', developerModeStatus: 'disabled'}})]}})[0]).toMatchObject({note: 'Developer Mode is off'});
