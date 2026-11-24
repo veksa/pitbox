@@ -79,6 +79,19 @@ Limits of the simulator:
 - **No Notification Service Extension**: `simctl push` hands the payload straight to the system, so a
   `mutable-content` push shows as sent — no rewritten text, no image from `fcm_options.image`. The verdict notes it.
 
+### iPhone or iPad
+
+A device takes pushes only from APNs, and a Personal Team signs no push entitlement. pitbox hands the APNs payload to
+the app's debug hook instead — `PitboxNotifications.start()`, the one [notification actions](#notification-actions)
+use — through the app's container (`devicectl device copy`) and a Darwin notification:
+
+- an alert becomes a local notification with the same title, subtitle, body, category, thread, badge and sound,
+  and the whole payload as its `userInfo`: the app's `willPresent` and `didReceive` see what a push would bring;
+- a background push (`content-available` alone) goes to the app delegate's
+  `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`;
+- the app must have asked for notifications and been allowed, as for a real push; a suspended or stopped app is
+  launched to take the push (the verdict notes it); a Notification Service Extension does not run.
+
 ### Android emulator
 
 A real FCM message comes from Google Play services as the broadcast `com.google.android.c2dm.intent.RECEIVE`,

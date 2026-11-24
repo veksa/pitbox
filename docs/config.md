@@ -160,9 +160,20 @@ never takes a simulator's place. Apps, the screen, the UI runner, flows and chec
 - **Exposed ports** reach the device's own `localhost` through the runner (as `adb reverse` does on Android): an
   app asks `http://localhost:4100` on a simulator and on a device alike, without the Local Network permission.
 - **Crashes** come from the device's own reports, copied from it when the app dies during a step.
-- **Not on a device:** boot, wipe, clone or shut down; clearing app data and app states; pushes, locale, screen
-  size and density, animations, permissions granted or revoked from the Mac; app logs (Console.app shows them).
-  Dark mode and text size work (`settings`).
+- **App logs** (`app-logs`) come from the device's system log, read through its syslog relay from the moment the
+  app is opened: what it logged before that is not there.
+- **App data.** `clear-app` wipes the app's container; `state save` copies it to the Mac. `state restore` installs
+  the app again (from where `pitbox install` last installed it) before copying it back: iOS keeps an app's
+  UserDefaults cached by its container and ignores a plist copied over them. Reinstalling resets the app's
+  permissions.
+- **Locale** (`settings locale=fr`) reaches the apps pitbox launches as `-AppleLanguages`/`-AppleLocale` launch
+  arguments (relaunch the app); the device's own language is set only in its Settings.
+- **Pushes** reach a device only from APNs. `push` hands the payload to the app's `PitboxNotifications` hook,
+  which shows it as a local notification carrying the payload as its `userInfo` (or passes a background push to
+  the app delegate). The banner, `push tap` and `push respond` work as on a simulator; a Notification Service
+  Extension does not run, and an app with no hook gets nothing.
+- **Not on a device:** boot, wipe, clone or shut down; screen size and density, animations, permissions granted or
+  revoked from the Mac. Dark mode and text size work (`settings`).
 
 ### A remote Mac
 
