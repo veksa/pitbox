@@ -8,7 +8,7 @@ import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {backButton, buildSnapshot, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, shellAlertButtonStays, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, menuOutside, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, shellAlertButtonStays, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
@@ -656,6 +656,11 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       return `back: pressed the navigation bar's back button${n.t ? ` "${n.t}"` : ''}`;
     }
     const {width, height} = await this.size();
+    const outside = menuOutside(snap, width, height);
+    if (outside) {
+      await this.runner.call('tap', outside);
+      return 'back: a context menu was open, tapped outside it';
+    }
     await this.runner.call('swipe', {x1: 1, y1: Math.round(height / 2), x2: Math.round(width * 0.75), y2: Math.round(height / 2), duration: 300}, 10_300);
     return 'back: no back button, swiped in from the left edge';
   }

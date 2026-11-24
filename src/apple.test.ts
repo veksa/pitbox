@@ -5,7 +5,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {AppleRunner, runnerNotice, sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, keptReports, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
-import {buildSnapshot, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
+import {buildSnapshot, menuOutside, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
 import {AppleDriver, appProcess, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulatorBoots, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp, listFailure} from './drivers/apple/driver.ts';
 
 vi.mock('./drivers/apple/fold.ts', () => ({foldTool: async () => '/tmp/fold'}));
@@ -294,6 +294,20 @@ describe('apple driver', () => {
       ],
     );
     expect(swipeArea(snap, 402, 874)).toEqual([0, 0, 402, 583]);
+  });
+
+  it('finds a spot outside a context menu that is all the app shows', () => {
+    const app = {type: 'app', title: 'MyApp', pkg: 'com.example.app'};
+    const list = {p: -1, w: 0, c: 'CollectionView', b: [16, 452, 266, 1326], f: 's'} as const;
+    const copy = {p: 0, w: 0, c: 'Button', b: [16, 462, 266, 504], f: 'c', t: 'Copy'} as const;
+    const bar = {p: 0, w: 0, c: 'Other', b: [233, 481, 263, 485], t: 'Vertical scroll bar, 1 page'} as const;
+    const preview = {p: -1, w: 0, c: 'Other', b: [16, 530, 109, 554], t: 'Preview'} as const;
+    expect(menuOutside(buildSnapshot([app], [list, copy, bar, preview]), 402, 874)).toEqual({x: 201, y: 105});
+    // A screen of the app's own: a full-width list of rows, or a form.
+    const rows = {p: -1, w: 0, c: 'CollectionView', b: [0, 0, 402, 874], f: 's'} as const;
+    expect(menuOutside(buildSnapshot([app], [rows, {...copy, b: [0, 100, 402, 140]}]), 402, 874)).toBeUndefined();
+    const form = {p: -1, w: 0, c: 'Other', b: [0, 0, 402, 874]} as const;
+    expect(menuOutside(buildSnapshot([app], [form, {p: 0, w: 0, c: 'TextField', b: [16, 80, 386, 110], f: 'e'}, {...copy, p: 0}]), 402, 874)).toBeUndefined();
   });
 
   it('keeps a swipe on the screen when the list runs past it', () => {

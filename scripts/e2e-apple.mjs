@@ -310,6 +310,10 @@ async function runOnDevice(udid) {
     on(['swipe', 'up']);
     const menu = on(['snapshot']).out;
     checks.push({name: 'swipe over a context menu stays in the app', ok: /button "Copy"/.test(menu) && !/Home screen icons/.test(menu), ...(/Home screen icons/.test(menu) ? {note: 'the swipe went to the Home Screen'} : {})});
+    // The menu hides the app from accessibility and has no back button: back taps outside it.
+    const closed = on(['key', 'back']);
+    const after = on(['snapshot']).out;
+    checks.push({name: 'key back closes a context menu', ok: closed.code === 0 && !/button "Copy"/.test(after) && /#menu_target/.test(after), ...(closed.code || /button "Copy"/.test(after) ? {note: closed.out.split('\n')[0]} : {})});
     // Memory and CPU come from an Activity Monitor recording (xctrace): ps on the Mac does not see a device's apps.
     on(['open', '--relaunch']);
     const perf = on(['perf']);

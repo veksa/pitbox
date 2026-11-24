@@ -116,6 +116,33 @@ export const backButton = (snap: Pick<Snapshot, 'nodes'>): number | undefined =>
   const any = snap.nodes.findLastIndex(n => n.c === 'Button' && n.id === 'BackButton');
   return any >= 0 ? any : undefined;
 };
+/**
+ * Where to tap to close a context menu that is all the app shows (iOS hides the app under it from accessibility):
+ * the app's tree is then a narrow list of buttons and little else, and a tap outside the menu closes it. Undefined
+ * when the screen is not such a menu, or no spot outside it is free.
+ */
+export const menuOutside = (snap: Pick<Snapshot, 'nodes' | 'windows'>, width: number, height: number): {x: number; y: number} | undefined => {
+  const app = snap.windows.findIndex(w => w.type === 'app');
+  if (app < 0) return undefined;
+  const nodes = snap.nodes.map((n, i) => ({n, i})).filter(({n}) => n.w === app);
+  const roots = nodes.filter(({n}) => n.p === -1);
+  if (!roots.length || roots.length > 3) return undefined;
+  const menu = roots.find(({n, i}) => {
+    if (!(n.f ?? '').includes('s') || n.b[2] - n.b[0] > width * 0.85) return false;
+    const kids = nodes.filter(k => k.n.p === i);
+    return kids.some(k => k.n.c === 'Button') && kids.every(k => k.n.c === 'Button' || k.n.c === 'Other');
+  });
+  if (!menu || nodes.some(({n}) => (n.f ?? '').includes('e'))) return undefined;
+  const inside = (x: number, y: number) => nodes.some(({n}) => x >= n.b[0] - 8 && x <= n.b[2] + 8 && y >= n.b[1] - 8 && y <= n.b[3] + 8);
+  // Clear of the status bar and the home indicator.
+  const spots = [
+    {x: width / 2, y: height * 0.12},
+    {x: width / 2, y: height * 0.88},
+    {x: width * 0.1, y: height / 2},
+    {x: width * 0.9, y: height / 2},
+  ].map(p => ({x: Math.round(p.x), y: Math.round(p.y)}));
+  return spots.find(p => !inside(p.x, p.y));
+};
 export const interactive = (n: UiNode) => /[clesxX]/.test(n.f ?? '');
 
 const role = (n: UiNode): string => {
