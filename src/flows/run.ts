@@ -310,7 +310,9 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
   if (errors.length) return {ok: false, steps: 0, ms: 0, failed: {line: 0, step: 'validate', error: errors.join('; ')}, notes};
   let done = 0;
   const cold: ColdStart = {};
+  const started: {step: Step; at: number}[] = [];
   for (const s of steps) {
+    started.push({step: s, at: Date.now()});
     try {
       await runStep(host, s, notes, depth, cold);
       done++;
@@ -338,6 +340,17 @@ export const runFlow = async (host: FlowHost, source: string, params: Record<str
     }
   }
   if (cold.pending) notes.push(coldNote(cold.pending));
+  // An app that crashed can leave its window on screen a while (a vendor's crash dialog comes first), so the steps
+  // after the crash still find what they look for: a crash in the log fails the flow all the same, at its step.
+  if (depth === 0) {
+    const ui = await host.ui().catch(() => undefined);
+    const crashes = ((await ui?.crashesSince(t0, true).catch(() => [])) ?? []).filter(c => c.kind === 'crash' || c.kind === 'native-crash');
+    if (crashes.length) {
+      const at = [...started].reverse().find(x => x.at <= crashes[0]!.at) ?? started[0]!;
+      const failed: NonNullable<FlowResult['failed']> = {line: at.step.line, step: at.step.text, error: 'the app crashed at this step; its window stayed on screen a while, so the steps after it still passed', crashes};
+      return {ok: false, steps: started.indexOf(at), ms: Date.now() - t0, failed, notes};
+    }
+  }
   if (depth === 0 && host.jsErrors) {
     for (const e of await host.jsErrors(t0).catch(() => [])) notes.push(`! JS error: ${e.summary}`, ...e.lines.slice(0, 3).map(l => `    ${l}`));
   }

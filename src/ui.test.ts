@@ -283,6 +283,18 @@ describe('flows', () => {
     expect(r.notes.slice(1)).toEqual(['! JS error: boom (fatal)', '    onPress  src/a.ts:3:4']);
   });
 
+  it('fails a flow whose app crashed while its window stayed on screen, at the step that crashed it', async () => {
+    const {host} = fakeHost([['Home', 'Crash'], ['Home', 'Crash']]);
+    const ui = (await host.ui()) as unknown as {press: (s: string) => Promise<void>; crashesSince: () => Promise<unknown[]>};
+    let crashedAt = 0;
+    const press = ui.press;
+    ui.press = async s => (await press(s), (crashedAt = Date.now()), await new Promise(r => setTimeout(r, 5)));
+    ui.crashesSince = async () => (crashedAt ? [{at: crashedAt, kind: 'crash', summary: 'java.lang.IllegalStateException: boom', lines: []}] : []);
+    const r = await runFlow(host, 'expect text=Home\npress text=Crash\nexpect text=Home');
+    expect(r).toMatchObject({ok: false, steps: 1, failed: {line: 2, step: 'press text=Crash', error: expect.stringMatching(/^the app crashed at this step/)}});
+    expect(r.failed?.crashes).toHaveLength(1);
+  });
+
   it('presses an optional target when it shows and goes on when it does not', async () => {
     const {host, calls} = fakeHost([['Save Password?', 'Not Now'], ['Home']]);
     const r = await runFlow(host, 'press? text="Not Now" 1\npress? text=Later\nexpect text=Home');
