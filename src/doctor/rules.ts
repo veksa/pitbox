@@ -131,6 +131,10 @@ const reversePorts: Rule = {
     for (const d of await ownDevices(ctx)) {
       // Devices on the runner relay have no adb forwards on purpose.
       if (relayed.has(d.serial)) continue;
+      if (ctx.offline?.(d.serial)) {
+        findings.push({rule: 'reverse-ports', severity: 'info', message: `${d.avd ?? d.serial}: offline (network offline): stand forwards removed until network online`});
+        continue;
+      }
       const have = await ctx.android.reverseList(d.serial);
       const missing = ctx.exposedPorts.filter(p => !have.includes(p));
       if (missing.length) {

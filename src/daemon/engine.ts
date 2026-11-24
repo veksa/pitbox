@@ -1626,7 +1626,8 @@ export class Engine {
     const all = (await android.devices()).filter(d => d.state === 'device');
     for (const s of [...this.#forwarded]) if (!all.some(d => d.serial === s)) this.#forwarded.delete(s);
     // Only the devices this session holds: another session's emulator has its own stand and its own forwards.
-    const online = all.filter(d => this.#leases.holds('android', d.serial, d.instance));
+    // A phone taken offline (`network offline`) keeps no forwards: they would carry the stand past airplane mode.
+    const online = all.filter(d => this.#leases.holds('android', d.serial, d.instance) && !this.#offline.has(d.serial));
     const verify = force || Date.now() - this.#lastForwardCheck > 30_000;
     if (verify) this.#lastForwardCheck = Date.now();
     const applied: {serial: string; ports: number[]; via?: string}[] = [];
@@ -1694,6 +1695,8 @@ export class Engine {
     return applied;
   }
 
+  /** Phones on airplane mode through `network offline`: their stand forwards stay removed until online. */
+  readonly #offline = new Set<string>();
   /** Serials whose forwards go through the runner's relay instead of `adb reverse`. */
   readonly #relayed = new Set<string>();
   /** Serials where the relay carried nothing either (no emulator network): adb reverse only. */
@@ -1776,7 +1779,7 @@ export class Engine {
     if (!android) return [];
     const ports = exposedPorts(this.config);
     const out: {serial: string; via: 'reverse' | 'relay'; carries: boolean}[] = [];
-    for (const d of (await android.devices()).filter(x => x.state === 'device' && !this.#othersHold('android', x.serial, x.instance))) {
+    for (const d of (await android.devices()).filter(x => x.state === 'device' && !this.#othersHold('android', x.serial, x.instance) && !this.#offline.has(x.serial))) {
       out.push({serial: d.serial, via: this.#relayed.has(d.serial) ? 'relay' : 'reverse', carries: await this.#forwardCarries(d.serial, ports)});
     }
     return out;
@@ -2860,7 +2863,25 @@ export class Engine {
       const t = await this.#target(str(p, 'device'));
       if (t.platform === 'apple' && isPhysicalUdid(t.id)) throw new Error('an iPhone\'s or iPad\'s own network is switched on the device (Airplane Mode, Control Center): nothing on the Mac switches it\nhint: use `net` rules on the dev server, or the Network Link Conditioner in the device\'s Developer settings');
       if (t.platform === 'apple') throw new Error('a simulator shares the Mac\'s network\nhint: use `net` rules on the dev server, or the Network Link Conditioner on the Mac');
-      return {serial: t.id, applied: await t.a.network(t.id, req(p, 'profile') as NetworkProfile)};
+      const profile = req(p, 'profile') as NetworkProfile;
+      const applied = await t.a.network(t.id, profile);
+      const android = this.android;
+      const phone = android && !(await android.devices()).find(d => d.serial === t.id)?.emulator;
+      if (!android || !phone || (profile !== 'offline' && profile !== 'online')) return {serial: t.id, applied};
+      // A phone reaches the stand through adb reverse over USB, which airplane mode does not cut: the forwards go too,
+      // and stay gone until online.
+      const ports = exposedPorts(this.config);
+      if (profile === 'offline') {
+        this.#offline.add(t.id);
+        this.#forwarded.delete(t.id);
+        const had = await android.reverseList(t.id).catch(() => [] as number[]);
+        const mine = ports.filter(x => had.includes(x));
+        for (const x of mine) await android.adb(['reverse', '--remove', `tcp:${x}`], t.id).catch(() => undefined);
+        return {serial: t.id, applied: mine.length ? `${applied} · stand forwards ${mine.join(', ')} removed (USB carries them past airplane mode)` : applied};
+      }
+      this.#offline.delete(t.id);
+      const back = (await this.ensureForwards(true).catch(() => [])).filter(a => a.serial === t.id).flatMap(a => a.ports);
+      return {serial: t.id, applied: back.length ? `${applied} · stand forwards ${back.join(', ')} back` : applied};
     },
 
     screenshot: async (p: Params) => {
@@ -3208,6 +3229,7 @@ export class Engine {
       return runDoctor(
         {root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config), forwardHealth: () => this.forwardHealth(),
           othersHold: (serial, instance) => this.#othersHold('android', serial, instance),
+          offline: serial => this.#offline.has(serial),
           useRelay: serial => this.useRelay(serial),
           physicalApple: async () => {
             const s = this.apple;

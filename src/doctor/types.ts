@@ -28,6 +28,8 @@ export type DoctorContext = {
   othersHold?: (serial: string, instance?: string) => boolean;
   /** Whether each device's forwards really carry data, and through what. */
   forwardHealth?: () => Promise<{serial: string; via: 'reverse' | 'relay'; carries: boolean}[]>;
+  /** Whether a phone is offline through `network offline`: its stand forwards are removed on purpose. */
+  offline?: (serial: string) => boolean;
   /** Moves an emulator's forwards onto the runner relay. */
   useRelay?: (serial: string) => Promise<string>;
   /** System dialogs on top of each device ("… isn't responding"), and a way to dismiss one. */
