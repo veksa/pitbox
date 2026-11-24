@@ -122,6 +122,12 @@ export type LiveActivityHost = {
   files?: (udid: string, bundleId: string) => HookFiles | undefined;
 };
 
+/**
+ * A folder of the app's container as a path inside it on a device, always with `/`: the folders are built with the
+ * host's `path.join`, which on Windows joins with a backslash, and devicectl takes the path as the device spells it.
+ */
+export const inContainer = (rel: string, sep = path.sep) => rel.split(sep).join('/');
+
 export const liveActivityDir = (container: string) => path.join(container, 'Library', 'Caches', 'pitbox', 'liveactivity');
 export const liveActivityNotification = (bundleId: string) => `dev.pitbox.liveactivity.${bundleId}`;
 
@@ -133,7 +139,7 @@ export const readLiveActivityState = async (host: LiveActivityHost, udid: string
   let text: string | undefined;
   try {
     const files = host.files?.(udid, bundleId);
-    text = files ? await files.get(path.posix.join(liveActivityDir(''), 'state.json')) : fs.readFileSync(path.join(liveActivityDir(await host.container(udid, bundleId)), 'state.json'), 'utf8');
+    text = files ? await files.get(path.posix.join(inContainer(liveActivityDir('')), 'state.json')) : fs.readFileSync(path.join(liveActivityDir(await host.container(udid, bundleId)), 'state.json'), 'utf8');
   } catch {
     return undefined;
   }
@@ -271,7 +277,7 @@ const deliverToDeviceHook = async <O>(
   cmd: {id: string} & Obj,
   opts: {waitMs?: number; afterLaunchMs?: number; takenMs?: number},
 ): Promise<{outcome?: O; launched: boolean}> => {
-  const dir = where.dir('');
+  const dir = inContainer(where.dir(''));
   const waitMs = opts.waitMs ?? 2000;
   const afterLaunchMs = opts.afterLaunchMs ?? 4000;
   // Each copy takes a moment; the launch, a few seconds more.

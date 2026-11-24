@@ -4,7 +4,7 @@
 
 import {describe, expect, it} from 'vitest';
 import type {HookFiles} from './drivers/apple/driver.ts';
-import {deliverToHook, readLiveActivityState, type LiveActivityHost} from './push/liveactivity.ts';
+import {deliverToHook, inContainer, readLiveActivityState, type LiveActivityHost} from './push/liveactivity.ts';
 import {PushCenter} from './push/push.ts';
 import {notificationDir, notificationNotice} from './push/respond.ts';
 
@@ -126,5 +126,12 @@ describe('live activity state on a device', () => {
     expect((await readLiveActivityState(host, UDID, 'com.example.app'))?.types).toEqual(['DeliveryAttributes']);
     files.clear();
     expect(await readLiveActivityState(host, UDID, 'com.example.app')).toBeUndefined();
+  });
+});
+
+describe('a path inside the container on a device', () => {
+  it('is spelled with slashes even when the host joins with backslashes', () => {
+    expect(inContainer('Library\\Caches\\pitbox\\notification', '\\')).toBe('Library/Caches/pitbox/notification');
+    expect(inContainer('Library/Caches/pitbox/liveactivity', '/')).toBe('Library/Caches/pitbox/liveactivity');
   });
 });
