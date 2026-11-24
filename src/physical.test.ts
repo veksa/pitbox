@@ -1,6 +1,8 @@
 import {describe, expect, it} from 'vitest';
-import {deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
+import {crashFiles, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
 import {runnerBundleId, signingArgs} from './drivers/apple/runner.ts';
+import {builtinRules} from './doctor/rules.ts';
+import type {DoctorContext} from './doctor/types.ts';
 
 const UDID = '00008150-0000000000000000';
 
@@ -108,5 +110,29 @@ describe('physical apple devices', () => {
     expect(p.readUInt32LE(0)).toBe(p.length);
     expect([p.readUInt32LE(4), p.readUInt32LE(8), p.readUInt32LE(12)]).toEqual([1, 8, 2]);
     expect(p.subarray(16).toString()).toContain('<key>DeviceID</key><integer>5</integer>');
+  });
+
+  it('picks the app\'s recent crash reports among the device\'s', () => {
+    const now = new Date(2026, 0, 2, 10, 5, 0).getTime();
+    const names = ['MyApp-2026-01-02-100000.ips', 'MyApp-2026-01-01-100000.ips', 'Other-2026-01-02-100100.ips', 'Retired/MyApp-2026-01-02-100200.ips', 'MyApp.diskwrites_resource-2026-01-02-100300.ips', 'ota_patch.txt'];
+    expect(crashFiles(names, 'MyApp', now, 10 * 60_000)).toEqual(['MyApp-2026-01-02-100000.ips']);
+    expect(crashFiles(names, undefined, now, 10 * 60_000)).toEqual(['MyApp-2026-01-02-100000.ips', 'Other-2026-01-02-100100.ips', 'MyApp.diskwrites_resource-2026-01-02-100300.ips']);
+  });
+
+  it('doctor names what keeps a connected device from running tests', async () => {
+    const rule = builtinRules.find(r => r.id === 'physical-apple')!;
+    const ctx = (r: Awaited<ReturnType<NonNullable<DoctorContext['physicalApple']>>>) => ({physicalApple: async () => r}) as unknown as DoctorContext;
+    const phone = {udid: UDID, name: 'My iPhone', connected: true};
+    expect(await rule.check(ctx({devices: [{...phone, lock: 'unlocked'}], teams: ['TEAM123456']}))).toEqual([]);
+    // Nothing connected: nothing to say, even without a certificate.
+    expect(await rule.check(ctx({devices: [{...phone, connected: false}], teams: []}))).toEqual([]);
+    const found = await rule.check(ctx({devices: [{...phone, lock: 'locked', note: 'Developer Mode is off'}], teams: []}));
+    expect(found.map(f => [f.severity, f.message])).toEqual([
+      ['error', 'My iPhone: Developer Mode is off'],
+      ['warn', 'My iPhone: locked — no app or runner starts on it'],
+      ['error', 'no Apple Development certificate on this Mac: the runner cannot be signed for a device'],
+    ]);
+    expect((await rule.check(ctx({devices: [phone], teams: ['TEAM123456', 'OTHER12345']})))[0]?.message).toMatch(/several teams/);
+    expect((await rule.check(ctx({devices: [phone], teams: ['TEAM123456'], team: 'OTHER12345'})))[0]?.message).toMatch(/apple.team OTHER12345/);
   });
 });

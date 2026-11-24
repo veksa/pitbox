@@ -3202,6 +3202,19 @@ export class Engine {
         {root: this.#loaded.root, config: this.config, services: this.services, android: this.android, exposedPorts: exposedPorts(this.config), forwardHealth: () => this.forwardHealth(),
           othersHold: (serial, instance) => this.#othersHold('android', serial, instance),
           useRelay: serial => this.useRelay(serial),
+          physicalApple: async () => {
+            const s = this.apple;
+            if (!(s instanceof AppleDriver)) return {devices: [], teams: []};
+            const devices = (await s.physical.list()).filter(d => !this.#othersHold('apple', d.udid));
+            const connected = devices.filter(d => d.state === 'Booted');
+            const locks = await Promise.all(connected.map(d => s.physical.lockState(d.udid).catch(() => undefined)));
+            const teams = connected.length ? [...new Set((await readSigningIdentities().catch(() => [])).map(i => i.team))] : [];
+            return {
+              devices: devices.map(d => ({udid: d.udid, name: d.name, connected: d.state === 'Booted', ...(d.note ? {note: d.note} : {}), ...(d.state === 'Booted' && locks[connected.indexOf(d)] ? {lock: locks[connected.indexOf(d)]} : {})})),
+              teams,
+              ...(this.config.apple?.team ? {team: this.config.apple.team} : {}),
+            };
+          },
           systemDialogs: async () => {
             const out: {serial: string; title: string}[] = [];
             for (const d of (await this.android?.devices().catch(() => [])) ?? []) {

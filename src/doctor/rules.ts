@@ -391,6 +391,30 @@ const deviceLocked: Rule = {
   },
 };
 
+/** A physical iPhone or iPad runs tests only unlocked, in Developer Mode, with a team on this Mac to sign the runner. */
+const physicalApple: Rule = {
+  id: 'physical-apple',
+  title: 'connected iPhones and iPads can run the UI runner',
+  check: async ctx => {
+    const r = await ctx.physicalApple?.().catch(() => undefined);
+    const devices = r?.devices.filter(d => d.connected) ?? [];
+    if (!r || !devices.length) return [];
+    const findings: Finding[] = [];
+    for (const d of devices) {
+      if (d.note) findings.push({rule: 'physical-apple', severity: 'error', message: `${d.name}: ${d.note}`, hint: 'Settings › Privacy & Security › Developer Mode, then restart the device'});
+      if (d.lock && d.lock !== 'unlocked') findings.push({rule: 'physical-apple', severity: 'warn', message: `${d.name}: ${d.lock} — no app or runner starts on it`, hint: 'unlock it and keep it awake while testing: Settings › Display & Brightness › Auto-Lock › Never'});
+    }
+    if (!r.teams.length) {
+      findings.push({rule: 'physical-apple', severity: 'error', message: 'no Apple Development certificate on this Mac: the runner cannot be signed for a device', hint: 'Xcode › Settings › Accounts: sign in with an Apple ID, Manage Certificates › + Apple Development (a free Personal Team is enough)'});
+    } else if (r.team && !r.teams.includes(r.team)) {
+      findings.push({rule: 'physical-apple', severity: 'error', message: `apple.team ${r.team} has no Apple Development certificate on this Mac (teams here: ${r.teams.join(', ')})`, hint: 'create one in Xcode › Settings › Accounts › Manage Certificates, or name a team that has one'});
+    } else if (!r.team && r.teams.length > 1) {
+      findings.push({rule: 'physical-apple', severity: 'warn', message: `several teams can sign for devices: ${r.teams.join(', ')}`, hint: 'name one in the config: apple: {team: "<team id>"}'});
+    }
+    return findings;
+  },
+};
+
 /** Android blocks plain HTTP since API 28: a debug build that may not use it never reaches the stand. */
 const cleartext: Rule = {
   id: 'android-cleartext',
@@ -569,4 +593,4 @@ export const deviceLeases: Rule = {
     })),
 };
 
-export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, cleartext, animations, emulatorSlim, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock, deviceLeases];
+export const builtinRules: Rule[] = [adbAvailable, adbServer, adbBinaries, androidDevice, reversePorts, forwardData, systemDialog, ciDevServer, leftoverDisplay, releaseBuild, deviceLocked, physicalApple, cleartext, animations, emulatorSlim, servicesHealthy, dataPartition, metroWindowsWatcher, macPermissions, daemonVersions, webTouch, toolDevices, portBlock, deviceLeases];

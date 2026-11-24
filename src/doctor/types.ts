@@ -35,6 +35,11 @@ export type DoctorContext = {
   dismissDialog?: (serial: string) => Promise<string>;
   /** Whether the app that started pitbox may drive Mac apps (Accessibility) and take their images (Screen Recording). */
   macPermissions?: () => Promise<{accessibility: boolean; screen: boolean; host: string}>;
+  /**
+   * The physical iPhones and iPads paired with this Mac that no other session holds: connected or not, whether their
+   * screen is locked, Developer Mode's note; and the Apple Development teams that can sign the runner for them.
+   */
+  physicalApple?: () => Promise<{devices: {udid: string; name: string; connected: boolean; lock?: string; note?: string}[]; teams: string[]; team?: string}>;
   /** The daemon's pitbox version and the clients of another version that called it lately. */
   daemonClients?: () => {version: string; strangers: {version: string; agoMs: number}[]};
 };
