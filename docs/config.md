@@ -370,7 +370,9 @@ states: {
 
 Commands that back up and bring back the backend for `state save <name>` / `state restore <name>`; `{name}`
 and `{file}` (a file under `.pitbox/states`) are filled in. The device side is an emulator snapshot taken by
-pitbox; on restore the backend comes first, then the snapshot.
+pitbox; on an Android phone, which has no snapshots, a tar of the app's data folder (caches left out) read and
+written through `run-as`, so a debug build; on an Apple simulator or device, a copy of the app's container. On
+restore the backend comes first, then the device side; the app's data comes back with the app stopped.
 
 ## matrix
 

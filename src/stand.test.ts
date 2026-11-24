@@ -405,10 +405,40 @@ describe('named states', () => {
     expect(info).toMatchObject({name: 'signed-in', device: 'AAA', avd: 'iPhone', backend: true, kind: 'app-data'});
     await store.restore('signed-in', device);
     expect(fs.readFileSync(path.join(root, 'restored'), 'utf8')).toBe('7');
-    await expect(store.restore('signed-in', {...device, id: 'BBB'})).rejects.toThrow(/boot that simulator first/);
+    await expect(store.restore('signed-in', {...device, id: 'BBB'})).rejects.toThrow(/boot or connect that device first/);
     await store.remove('signed-in', device);
     expect(order).toEqual(['save pitbox-signed-in', 'load pitbox-signed-in', 'remove pitbox-signed-in']);
     expect(store.list()).toEqual([]);
+  });
+
+  it("keep an android phone's side as a tar of the app's data, read and written through run-as", async () => {
+    const {androidAppData} = await import('./stand/states.ts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-appdata-'));
+    const calls: string[] = [];
+    let relaunched = 0;
+    const android = {
+      adb: async (args: string[]) => {
+        calls.push(args.join(' '));
+        if (args[0] === 'exec-out') return {code: 0, stdout: '', stderr: '', buffer: Buffer.from('TAR')};
+        if (args[1]?.includes('ls -A')) return {code: 0, stdout: 'files\r\nshared_prefs\r\n', stderr: ''};
+        return {code: 0, stdout: '', stderr: ''};
+      },
+      shell: async (_serial: string, cmd: string) => (calls.push(cmd), cmd.startsWith('pidof') ? '123\n' : ''),
+    };
+    const snap = androidAppData(android as never, '0123abcd', 'com.example.app', dir, 'Phone', async () => relaunched++);
+    await snap.save('pitbox-s');
+    expect(fs.readFileSync(path.join(dir, 'pitbox-s.tar'), 'utf8')).toBe('TAR');
+    expect(calls).toContain("exec-out run-as com.example.app tar -cf - 'files' 'shared_prefs'");
+    expect(relaunched).toBe(1);
+    calls.length = 0;
+    await snap.load('pitbox-s');
+    expect(calls[0]).toBe('am force-stop com.example.app');
+    expect(calls.some(c => c.startsWith('push '))).toBe(true);
+    expect(calls).toContain('shell cat /data/local/tmp/pitbox-state-com.example.app.tar | run-as com.example.app tar -xf -');
+    expect(calls.at(-1)).toBe('shell rm -f /data/local/tmp/pitbox-state-com.example.app.tar');
+
+    const release = {...android, adb: async () => ({code: 1, stdout: '', stderr: "run-as: package not debuggable: com.example.app"})};
+    await expect(androidAppData(release as never, '0123abcd', 'com.example.app', dir).save('pitbox-r')).rejects.toThrow(/takes a debug build/);
   });
 });
 

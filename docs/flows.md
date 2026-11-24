@@ -86,7 +86,7 @@ locales.
 | `goto <route> key=value…` | opens a route from the config (`routes`), parameters URL-encoded: `goto item id=42`; goes on once the route shows, as a link does |
 | `as <user>` | runs the config's `signIn` flow with `${user}` |
 | `device <serial\|avd\|web:app>` | runs the following steps on another device — a web app from the config included, so one flow can act in an admin panel and check the phone |
-| `state <name>` | restores a named stand state (emulator snapshot + backend dump) |
+| `state <name>` | restores a named stand state (the device side + backend dump) |
 | `run <flow> key=value…` | runs another flow file with parameters (nesting up to 5 deep) |
 | `posture closed|half|open|rear|reset` | folds or unfolds a foldable through the platform's device state service (real devices too); `reset` hands it back to the hinge. The keyguard Android puts up on the outer screen when it folds ("swipe up to continue") is dismissed, so the app stays in front. A foldable iPhone simulator takes `closed|half|open|<degrees> [fast|medium|slow]`, swinging the hinge as Xcode's device window does, and `swap`, which changes the lit screen at once and holds motion for about ten seconds |
 | `rotate 0|90|180|270|auto` | locks the screen's rotation; `auto` gives it back to the sensor. On iPhone and iPad simulators it turns the device, and fails when the app stays as it was (a portrait-only app); a foldable iPhone turns as a whole, Xcode's device window too |

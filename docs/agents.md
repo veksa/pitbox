@@ -61,8 +61,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   swings the hinge and the app moves between the screens, `value=swap` changes the lit screen at once (motion
   then waits about ten seconds), `rotate` turns the whole phone, 180 upside down. `device action=info` names the
   lit screen (`fold: folded: cover screen …`) and screenshots are of it; `window` stays Android-only.
-- **Android phones on USB:** the same tools as on an emulator; snapshots (`state`) and network speed profiles stay
-  emulator-only. `network offline` turns airplane mode on and removes the stand's forwards too — USB carries
+- **Android phones on USB:** the same tools as on an emulator; network speed profiles stay emulator-only, and a
+  named `state` keeps the app's data instead of a snapshot (a debug build, through `run-as`). `network offline` turns airplane mode on and removes the stand's forwards too — USB carries
   `adb reverse` past airplane mode — and `network online` brings both back; over wireless adb it is refused,
   airplane mode would cut adb itself. Phones that keep adb from granting permissions or injecting taps (HyperOS,
   MIUI: "USB debugging (Security settings)", then a reboot) are named in the error.

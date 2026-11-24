@@ -1,6 +1,7 @@
 // Named stand states: a device snapshot (the app and its data included) plus the project's own backend dump,
 // saved together and restored together — "signed in, three items in the cart" in seconds instead of steps.
-// The device side is an emulator snapshot on Android and a copy of the app's data on an Apple simulator.
+// The device side is an emulator snapshot on Android, and a copy of the app's data on an Android phone and on an
+// Apple simulator or device.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,6 +69,62 @@ export const emulatorSnapshot = (android: Pick<AndroidDriver, 'devices' | 'adb'>
   };
 };
 
+/** What of an app's data folder a state leaves out: the caches, and the link to its native libraries. */
+const SKIPPED = 'cache|code_cache|lib';
+
+/**
+ * An Android phone's side of a state, which has no snapshot of its own: a tar of the app's data folder, read and
+ * written as the app through `run-as` (a debuggable build only), kept under `dir`. The app is stopped first, so
+ * nothing is half written; a load leaves it stopped, its next launch starts from the data.
+ */
+export const androidAppData = (android: Pick<AndroidDriver, 'adb' | 'shell'>, serial: string, pkg: string, dir: string, label?: string, relaunch?: () => Promise<unknown>): DeviceSnapshot => {
+  const file = (n: string) => path.join(dir, `${n}.tar`);
+  const asApp = async (cmd: string) => {
+    const r = await android.adb(['shell', `run-as ${pkg} sh -c '${cmd}'`], serial, {timeoutMs: 60_000});
+    const said = (r.stdout + r.stderr).trim();
+    if (/not debuggable|unknown package|Package '.*' is unknown/i.test(said)) {
+      throw new Error(`${pkg} on ${serial}: ${said.split('\n')[0]}\nhint: a phone has no snapshots; a state copies the app's data through run-as, which takes a debug build`);
+    }
+    return r;
+  };
+  const running = async () => !!(await android.shell(serial, `pidof ${pkg}`).catch(() => '')).trim();
+  return {
+    id: serial,
+    label,
+    kind: 'app-data',
+    save: async n => {
+      const was = await running();
+      await android.shell(serial, `am force-stop ${pkg}`);
+      const entries = (await asApp(`ls -A | grep -vxE "${SKIPPED}"`)).stdout.replace(/\r/g, '').split('\n').filter(Boolean);
+      fs.mkdirSync(dir, {recursive: true});
+      if (!entries.length) fs.writeFileSync(file(n), '');
+      else {
+        const r = await android.adb(['exec-out', `run-as ${pkg} tar -cf - ${entries.map(e => `'${e}'`).join(' ')}`], serial, {timeoutMs: 180_000, encoding: 'buffer'});
+        if (r.code !== 0 || !r.buffer?.length) throw new Error(`could not read ${pkg}'s data on ${serial}: ${r.stderr.trim() || 'nothing came back'}`);
+        fs.writeFileSync(file(n), r.buffer);
+      }
+      if (was) await relaunch?.();
+    },
+    load: async n => {
+      if (!fs.existsSync(file(n))) throw new Error(`no saved app data "${n}" for ${pkg} on ${serial}`);
+      await android.shell(serial, `am force-stop ${pkg}`);
+      await asApp(`ls -A | grep -vxE "${SKIPPED}" | while read f; do rm -rf "$f"; done`);
+      if (!fs.statSync(file(n)).size) return;
+      // The app's user reads no file of the shell's: the shell reads it and pipes it in.
+      const tmp = `/data/local/tmp/pitbox-state-${pkg}.tar`;
+      const push = await android.adb(['push', file(n), tmp], serial, {timeoutMs: 180_000});
+      if (push.code !== 0) throw new Error(`could not copy the state to ${serial}: ${push.stderr.trim()}`);
+      try {
+        const r = await android.adb(['shell', `cat ${tmp} | run-as ${pkg} tar -xf -`], serial, {timeoutMs: 180_000});
+        if (r.code !== 0) throw new Error(`could not write ${pkg}'s data on ${serial}: ${(r.stderr || r.stdout).trim()}`);
+      } finally {
+        await android.adb(['shell', `rm -f ${tmp}`], serial).catch(() => undefined);
+      }
+    },
+    remove: async n => fs.rmSync(file(n), {force: true}),
+  };
+};
+
 export const validStateName = (name: string) => {
   if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`state name must be letters, digits, . _ - (got "${name}")`);
   return name;
@@ -129,7 +186,7 @@ export class StateStore {
     // Backend first: the app restored from the snapshot reconnects to data that already matches it.
     if (info.backend) await this.#hook('restore', name);
     if (info.device) {
-      if (!device || (info.kind === 'app-data' && device.id !== info.device)) throw new Error(`state "${name}" has a device side (${info.avd ?? info.device}); boot that ${info.kind === 'app-data' ? 'simulator' : 'emulator'} first`);
+      if (!device || (info.kind === 'app-data' && device.id !== info.device)) throw new Error(`state "${name}" has a device side (${info.avd ?? info.device}); ${info.kind === 'app-data' ? 'boot or connect that device' : 'boot that emulator'} first`);
       await device.load(snapshotName(name));
     }
     return {...info, ms: Date.now() - t0};

@@ -11,7 +11,7 @@ compact text.
   project's daemon with the browsers it started.
 - **Actors** (extra users of the app), **project tools** (a protocol call, an SQL query) and an
   **OpenAI-compatible LLM mock** with forced replies, errors and delays.
-- **Named states** — an emulator snapshot or a simulator app's data, plus the project's backend dump, restored
+- **Named states** — an emulator snapshot, or the app's data on a phone or simulator, plus the project's backend dump, restored
   in seconds.
 - **Trace ids** — a `traceparent` on every request an action causes, and `trace` to read what the services
   logged for it.

@@ -32,7 +32,7 @@ import {PushGateway} from '../push/gateway.ts';
 import {fromPayloadFile} from '../push/payload.ts';
 import {projectRoot, ServiceManager, type ServiceState} from '../stand/services.ts';
 import {describeTool, runTool, toolDevicePlaceholders} from '../stand/tools.ts';
-import {type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
+import {androidAppData, type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import type {PerfData} from '../flows/budget.ts';
 import {formatResult} from '../format.ts';
@@ -239,8 +239,14 @@ export class Engine {
     }
     if (!a || t?.platform !== 'android') return {};
     const serial = t.id;
-    if (!serial.startsWith('emulator-')) throw new Error('device snapshots need an emulator');
-    return {serial, snap: emulatorSnapshot(a, serial, online.find(d => d.serial === serial)?.avd)};
+    const listed = online.find(d => d.serial === serial);
+    if (!serial.startsWith('emulator-') && !listed?.emulator) {
+      const pkg = this.config.app?.android;
+      if (!pkg) throw new Error('a phone has no snapshots: its side of a state is a copy of the app\'s data; set app.android in the config');
+      const dir = path.join(this.#loaded.stateDir, 'states', 'app-data', serial.replace(/[^\w.-]/g, '_'));
+      return {serial, snap: androidAppData(a, serial, pkg, dir, listed?.model ?? serial, () => this.methods.open({device: serial}))};
+    }
+    return {serial, snap: emulatorSnapshot(a, serial, listed?.avd)};
   }
 
   /** After a snapshot load the device's runner and forwards belong to a past moment: start them again. */
@@ -3129,7 +3135,8 @@ export class Engine {
     stateRestore: async (p: Params) => {
       const {snap, serial} = await this.#stateDevice(str(p, 'device'));
       const r = await this.#states().restore(req(p, 'name'), snap);
-      if (serial && r.device) await this.#afterRestore(serial);
+      // Only an emulator snapshot moves the whole device back in time; app data leaves the runner and forwards be.
+      if (serial && r.device && snap?.kind === 'emulator') await this.#afterRestore(serial);
       return r;
     },
 
