@@ -5,7 +5,7 @@
 import net from 'node:net';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {AndroidDriver} from './drivers/android/driver.ts';
-import {AndroidError, installFailure, securityHint} from './drivers/android/driver.ts';
+import {AndroidError, installFailure, securityHint, wirelessSerial} from './drivers/android/driver.ts';
 import {AndroidRunner, RUNNER_VERSION, retriedRead} from './drivers/android/runner.ts';
 
 type Device = {
@@ -181,5 +181,14 @@ describe('a phone that keeps adb from tapping and granting', () => {
     expect(securityHint(stack)).toMatch(/USB debugging \(Security settings\)/);
     expect(securityHint('SecurityException: Injecting input events requires the caller (or the source of the instrumentation, if any) to have the INJECT_EVENTS permission.')).toMatch(/Security settings/);
     expect(securityHint('Failure [INSUFFICIENT_STORAGE]')).toBeUndefined();
+  });
+});
+
+describe('wireless adb', () => {
+  it('tells a phone adb reaches over Wi-Fi from one on USB or an emulator', () => {
+    expect(wirelessSerial('192.168.1.20:5555')).toBe(true);
+    expect(wirelessSerial('adb-0123456789-AbCdEf._adb-tls-connect._tcp')).toBe(true);
+    expect(wirelessSerial('0123abcd')).toBe(false);
+    expect(wirelessSerial('emulator-5554')).toBe(false);
   });
 });

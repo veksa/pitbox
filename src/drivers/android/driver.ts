@@ -379,6 +379,9 @@ export const SECURITY_SETTINGS_HINT = 'turn on "USB debugging (Security settings
 export const securityHint = (text: string): string | undefined => (/INJECT_EVENTS|INSTALL_GRANT_RUNTIME_PERMISSIONS/.test(text) ? SECURITY_SETTINGS_HINT : undefined);
 
 /** Why `adb install` failed: its `Failure [...]`, else the exception's message, not the last line of its stack. */
+/** A device adb reaches over the network (`adb connect`, wireless debugging), not over USB or an emulator's pipe. */
+export const wirelessSerial = (serial: string): boolean => /^[\w.-]+:\d+$/.test(serial) || /\._adb-tls-connect\._tcp/.test(serial);
+
 export const installFailure = (out: string): string => {
   const failure = /Failure \[([^\]]+)\]/.exec(out)?.[1];
   if (failure) return failure;
@@ -999,6 +1002,9 @@ export class AndroidDriver {
   }
 
   async network(serial: string, profile: NetworkProfile): Promise<string> {
+    if (profile === 'offline' && wirelessSerial(serial)) {
+      throw new AndroidError(`${serial} is connected over Wi-Fi: airplane mode would cut adb itself, and pitbox could not turn it off again`, 'connect the phone over USB for network offline, or use `net` rules on the dev server');
+    }
     if (profile === 'offline' || profile === 'online') {
       const on = profile === 'online' ? 'disable' : 'enable';
       await this.shell(serial, `cmd connectivity airplane-mode ${on}`);
