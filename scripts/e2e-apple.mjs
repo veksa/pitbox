@@ -314,6 +314,13 @@ async function runOnDevice(udid) {
     const closed = on(['key', 'back']);
     const after = on(['snapshot']).out;
     checks.push({name: 'key back closes a context menu', ok: closed.code === 0 && !/button "Copy"/.test(after) && /#menu_target/.test(after), ...(closed.code || /button "Copy"/.test(after) ? {note: closed.out.split('\n')[0]} : {})});
+    // Screen video: the runner's screenshots made into an MP4, a few frames a second.
+    const rec = on(['capture', 'start', 'name=e2e-device']);
+    on(['swipe', 'up']);
+    on(['swipe', 'down']);
+    const recStop = on(['capture', 'stop']);
+    const recFps = Number(/screenshots, ([\d.]+) a second/.exec(recStop.out)?.[1] ?? 0);
+    checks.push({name: 'screen video from screenshots', ok: rec.code === 0 && recStop.code === 0 && /e2e-device\.mp4/.test(recStop.out) && recFps >= 1, note: recStop.code || rec.code ? (rec.code ? rec : recStop).out.split('\n')[0] : `${recFps} frames a second`});
     // Memory and CPU come from an Activity Monitor recording (xctrace): ps on the Mac does not see a device's apps.
     on(['open', '--relaunch']);
     const perf = on(['perf']);

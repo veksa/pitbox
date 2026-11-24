@@ -117,6 +117,35 @@ export const reencodeArgs = (input: string, out: string, o: {fps?: number; size?
   return ['-y', '-i', input, ...(filters.length ? ['-vf', filters.join(',')] : []), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-c:a', 'copy', out];
 };
 
+/**
+ * A concat list of stills, each shown until the next was taken (the last for as long as its own grab took), so a
+ * video made of screenshots grabbed at an uneven pace keeps the screen's own timing.
+ */
+export const frameList = (frames: readonly {file: string; at: number}[], end: number): string => {
+  const lines = ['ffconcat version 1.0'];
+  frames.forEach((f, i) => {
+    const next = frames[i + 1]?.at ?? Math.max(end, f.at + 1);
+    lines.push(`file '${f.file.replace(/'/g, "'\\''")}'`, `duration ${Math.max(0.001, (next - f.at) / 1000).toFixed(3)}`);
+  });
+  // The concat demuxer drops the last entry's duration unless the file comes once more.
+  if (frames.length) lines.push(`file '${frames[frames.length - 1]!.file.replace(/'/g, "'\\''")}'`);
+  return lines.join('\n') + '\n';
+};
+
+/** The arguments that make an H.264 MP4 at `fps` from a concat list of stills (sides made even, as yuv420p needs). */
+export const stillsArgs = (list: string, out: string, o: {fps?: number; size?: string} = {}): string[] => {
+  const [w, h] = (o.size ?? '').split('x');
+  const scale = o.size ? (h ? `scale=${w}:${h}` : `scale=${w}:-2`) : 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  return ['-y', '-f', 'concat', '-safe', '0', '-i', list, '-vf', `fps=${o.fps ?? 10},${scale}`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', out];
+};
+
+export const stillsToVideo = async (frames: readonly {file: string; at: number}[], end: number, out: string, o: {fps?: number; size?: string} = {}) => {
+  const list = path.join(path.dirname(frames[0]!.file), 'frames.txt');
+  fs.writeFileSync(list, frameList(frames, end));
+  await ffmpeg(stillsArgs(list, out, o), 'making the video', {timeoutMs: 600_000});
+  return out;
+};
+
 export const reencode = async (input: string, out: string, o: {fps?: number; size?: string}) => {
   await ffmpeg(reencodeArgs(input, out, o), 'resizing the recording', {timeoutMs: 600_000});
   return out;

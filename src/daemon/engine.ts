@@ -143,6 +143,7 @@ export class Engine {
     stateDir: () => this.#loaded.stateDir,
     transcribe: () => this.config.media?.transcribe,
     loopback: () => this.config.media?.loopback,
+    still: async (device, file) => void (await (await this.ui(device)).screenshot(file, 0.5, 70)),
   });
   readonly #pushes = new PushCenter({
     // A push from the gateway (an HTTP request) goes only to a device this session holds: it never takes one.

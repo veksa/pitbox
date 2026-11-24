@@ -4,6 +4,8 @@ import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {deviceIndex, InputSwitch, inSimulator, listArgs, parseDevices, parseRecorders, playArgs, type AudioDevice, type HostInput} from './media/loopback.ts';
 import {MediaCenter, type MediaTarget} from './media/center.ts';
+import {ffmpegPath, frameList, stillsArgs} from './media/ffmpeg.ts';
+import {execFileSync} from 'node:child_process';
 import {parseMic} from './media/sound.ts';
 import {micPlaysHere} from './cli.ts';
 
@@ -274,7 +276,7 @@ describe('media on a physical iPhone', () => {
   } as unknown as ConstructorParameters<typeof MediaCenter>[0]);
 
   it('says what the device cannot do instead of a simulator tool\'s error', async () => {
-    await expect(center.capture(udid, 'start', {what: 'screen'})).rejects.toThrow(/records no video of an iPhone's or iPad's screen.*\nhint: QuickTime/s);
+    await expect(center.capture(udid, 'start', {what: 'screen'})).rejects.toThrow(/recorded from its UI runner's screenshots.*\nhint: capture on the Mac/s);
     await expect(center.capture(udid, 'start', {what: 'audio'})).rejects.toThrow(/stays on the device/);
     const pic = path.join(os.tmpdir(), 'pitbox-device-pic.png');
     fs.writeFileSync(pic, '');
@@ -287,5 +289,44 @@ describe('media on a physical iPhone', () => {
     await expect(center.mic(udid, 'tone 440 200ms')).rejects.toThrow(/records its own microphone/);
     await expect(center.camera(udid, 'image a.png')).rejects.toThrow(/sees the room/);
     await expect(center.call(udid, 'incoming')).rejects.toThrow(/no call to an iPhone/);
+  });
+});
+
+describe('screen video of a physical iPhone', () => {
+  it('shows each still until the next one was taken', () => {
+    const list = frameList([{file: '/s/frame-00001.jpg', at: 1000}, {file: "/s/it's.jpg", at: 1400}], 2000);
+    expect(list).toBe("ffconcat version 1.0\nfile '/s/frame-00001.jpg'\nduration 0.400\nfile '/s/it'\\''s.jpg'\nduration 0.600\nfile '/s/it'\\''s.jpg'\n");
+    expect(stillsArgs('l.txt', 'o.mp4')).toEqual(['-y', '-f', 'concat', '-safe', '0', '-i', 'l.txt', '-vf', 'fps=10,scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', 'o.mp4']);
+  });
+
+  it.skipIf(!ffmpegPath())('records the runner\'s screenshots into an mp4', async () => {
+    const udid = '00008150-000A1B2C3D4E5F60';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-stills-test-'));
+    const jpeg = path.join(dir, 'still.jpg');
+    // An odd width, as a downscaled screenshot can have: the video's sides are made even.
+    execFileSync(ffmpegPath()!, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=201x437', '-frames:v', '1', jpeg]);
+    let grabs = 0;
+    const center = new MediaCenter({
+      target: async () => ({platform: 'apple', id: udid, s: {xcrun: 'xcrun'}}) as unknown as MediaTarget,
+      root: () => dir,
+      stateDir: () => dir,
+      still: async (_device: string, file: string) => {
+        grabs++;
+        await new Promise(r => setTimeout(r, 50));
+        fs.copyFileSync(jpeg, file);
+      },
+    } as unknown as ConstructorParameters<typeof MediaCenter>[0]);
+    try {
+      const started = await center.capture(udid, 'start', {what: 'screen', name: 'device'});
+      expect(started.file).toMatch(/device\.mp4$/);
+      await new Promise(r => setTimeout(r, 600));
+      const r = await center.capture(udid, 'stop');
+      expect(fs.existsSync(r.file as string)).toBe(true);
+      expect(r.secs as number).toBeGreaterThan(0.4);
+      expect((r.notes as string[]).join('\n')).toMatch(/no audio.*\n.*\d+ screenshots, [\d.]+ a second/s);
+      expect(grabs).toBeGreaterThan(3);
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
   });
 });

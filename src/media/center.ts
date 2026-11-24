@@ -14,7 +14,7 @@ import {captureAudio, type AudioCapture} from '../drivers/android/audioOut.ts';
 import {activeRecorders, injectWav} from '../drivers/android/mic.ts';
 import {swapFeed} from '../drivers/android/camera.ts';
 import {runShell} from '../util/proc.ts';
-import {audioOf, extractFrames, ffmpegPath, probeDuration, reencode, NO_FFMPEG} from './ffmpeg.ts';
+import {audioOf, extractFrames, ffmpegPath, probeDuration, reencode, stillsToVideo, NO_FFMPEG} from './ffmpeg.ts';
 import {analyze, convert, decodeWav, describe, dominantFreq, encodeWav, parseDb, parseHz, parseSecs, seconds, type AudioReport, type Pcm} from './pcm.ts';
 import {describeSound, parseMic, renderSound, type MicCommand} from './sound.ts';
 import {DEFAULT_LOOPBACK, InputSwitch, inSimulator, noLoopback, outputIndex, playTo, switchAudio, type HostInput, type Recorder, type Restored} from './loopback.ts';
@@ -38,6 +38,8 @@ export type MediaDeps = {
   macRecorders?: () => Promise<(Recorder & {command: string})[]>;
   playTo?: typeof playTo;
   outputIndex?: typeof outputIndex;
+  /** A still of a physical iPhone's or iPad's screen written to `file` as a JPEG (its UI runner's screenshot). */
+  still?: (device: string, file: string) => Promise<void>;
 };
 
 /** Why each platform cannot do something, said the same way everywhere. */
@@ -57,7 +59,7 @@ export const CANNOT_ON_DEVICE = {
   appleCamera: 'an iPhone\'s or iPad\'s camera sees the room: pitbox feeds it nothing\nhint: point it at a picture, or give the app images behind a test seam',
   appleCall: 'the Mac places no call to an iPhone\nhint: call it from another phone, or drive the interruption from the app side',
   appleVolume: 'an iPhone\'s or iPad\'s volume is set with its buttons or Control Center: nothing on the Mac sets or reads it',
-  screen: 'devicectl records no video of an iPhone\'s or iPad\'s screen (its screen-record is for other devices)\nhint: QuickTime Player › New Movie Recording with the device as the camera, a simulator for capture, or `shot` for stills',
+  screen: 'an iPhone\'s or iPad\'s screen is recorded from its UI runner\'s screenshots, which this Mac does not run (devicectl records no video of one)\nhint: capture on the Mac the device is plugged into, or `shot` for stills',
   library: 'the Mac has no way into an iPhone\'s or iPad\'s photo library\nhint: add the pictures on the device (AirDrop), or put files in the app\'s data; a simulator takes library add',
 } as const;
 
@@ -455,7 +457,7 @@ export class MediaCenter {
       return {device: t.id, capture: 'audio', file: c.file};
     }
     if (t.platform === 'apple') {
-      if (physicalUdid(t.id)) throw new Error(CANNOT_ON_DEVICE.screen);
+      if (physicalUdid(t.id)) return this.#startStills(t.id, name, fps, size, Boolean(o.touches), Number(o.limit ?? 600));
       const s = t.s as AppleDevices & {xcrun?: string};
       if (!s.xcrun) throw new Error('screen capture of a remote Mac\'s simulator is not supported: run it on that Mac');
       const file = path.join(this.#dir(), `${name}.mov`);
@@ -529,6 +531,76 @@ export class MediaCenter {
     };
     this.#captures.set(t.id, c);
     return {device: serial, capture: 'screen', file, notes};
+  }
+
+  /**
+   * A physical iPhone's or iPad's screen, which nothing records from the Mac (devicectl's screen-record is for other
+   * devices; QuickTime's capture needs the camera permission and drops devicectl's connection): stills from the UI
+   * runner, one after another, each shown in the video for as long as it was the latest. A few frames a second — it
+   * shows what the screen went through, not how smoothly it moved.
+   */
+  async #startStills(udid: string, name: string, fps: number | undefined, size: string | undefined, touches: boolean, limitSecs: number): Promise<Record<string, unknown>> {
+    const still = this.#d.still;
+    if (!still) throw new Error(CANNOT_ON_DEVICE.screen);
+    if (!ffmpegPath()) throw new Error(`screen capture of an iPhone or iPad needs ffmpeg to make the video\nhint: ${NO_FFMPEG}`);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-stills-'));
+    const frames: {file: string; at: number}[] = [];
+    const grab = async () => {
+      const at = Date.now();
+      const file = path.join(dir, `frame-${String(frames.length + 1).padStart(5, '0')}.jpg`);
+      await still(udid, file);
+      frames.push({file, at});
+    };
+    try {
+      await grab();
+    } catch (e) {
+      fs.rmSync(dir, {recursive: true, force: true});
+      throw new Error(`screen capture: the device gave no screenshot: ${(e as Error).message.split('\n')[0]}`);
+    }
+    const started = frames[0]!.at;
+    const until = started + Math.max(1, limitSecs) * 1000;
+    let stopping = false;
+    let failures = 0;
+    let lastError = '';
+    const loop = (async () => {
+      while (!stopping && Date.now() < until && failures < 5) {
+        const at = Date.now();
+        try {
+          await grab();
+          failures = 0;
+        } catch (e) {
+          failures++;
+          lastError = (e as Error).message.split('\n')[0]!;
+          await wait(300);
+        }
+        if (fps) await wait(Math.max(0, 1000 / fps - (Date.now() - at)));
+      }
+    })();
+    const notes = ['no audio: an iPhone\'s or iPad\'s screen is recorded as screenshots'];
+    if (touches) notes.push('no touches: screenshots show none');
+    const file = path.join(this.#dir(), `${name}.mp4`);
+    const c: Capture = {
+      kind: 'screen',
+      started,
+      file,
+      notes,
+      stop: async () => {
+        stopping = true;
+        await loop;
+        const end = Date.now();
+        try {
+          const secs = Math.max(0.001, (Math.min(end, until) - started) / 1000);
+          notes.push(`${frames.length} screenshots, ${(frames.length / secs).toFixed(1)} a second: what the screen went through, not how smoothly it moved`);
+          if (Date.now() >= until) notes.push(`stopped taking screenshots after ${limitSecs}s (limit=)`);
+          if (failures >= 5) notes.push(`stopped taking screenshots after ${((frames[frames.length - 1]!.at - started) / 1000).toFixed(1)}s: ${lastError}`);
+          await stillsToVideo(frames, Math.min(end, until), file, {fps: fps ?? 10, size});
+        } finally {
+          fs.rmSync(dir, {recursive: true, force: true});
+        }
+      },
+    };
+    this.#captures.set(udid, c);
+    return {device: udid, capture: 'screen', file, notes: [...notes, 'screenshots through the UI runner, a few a second']};
   }
 
   async #stop(device: string | undefined, o: Record<string, unknown>): Promise<Record<string, unknown>> {

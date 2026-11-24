@@ -113,7 +113,7 @@ compact text.
 - **Sound in and out** — files, tones, noise and silence played into an Android emulator's microphone once the app
   records (noise mixed in at an SNR, stopped mid-sound, in the background); what the app plays captured to a WAV
   and checked: is there sound, how long, how loud, which frequency, and what it says through your own transcriber.
-- **Screen recordings around a flow** — `capture start` / `capture stop` on emulators, simulators and phones, with
+- **Screen recordings around a flow** — `capture start` / `capture stop` on emulators, simulators, phones and iPhones (as screenshots), with
   the emulator's sound, fps and size; frames taken out to look at.
 - **Camera, gallery, calls, volumes, permissions** — an emulator's camera fed a picture or a clip that can change
   while it runs, files into Photos or MediaStore, an incoming call, volumes and the ringer, mic and camera

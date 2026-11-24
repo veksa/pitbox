@@ -32,6 +32,12 @@ Checked on emulator 37.2.13 (Android 16, API 36) and Xcode 27.2 (iOS 27.2).
 A phone or tablet on USB has none of the emulator's channels: `mic`, `capture start audio`, `camera` and `call` refuse
 it, and `capture start` uses the device's own `screenrecord` (an MP4 without sound, at most 3 minutes).
 
+A physical iPhone or iPad records no video from the Mac (devicectl's screen-record is for other devices; QuickTime's
+capture needs the camera permission and drops devicectl's connection). There `capture start` takes screenshots
+through the UI runner, one after another, and `capture stop` makes an MP4 of them, each shown until the next was
+taken: a few frames a second, no sound, no touches, at most 10 minutes (`limit=<s>`). It shows what the screen went
+through, not how smoothly it moved; `stop` says how many frames a second it got. It needs ffmpeg.
+
 ### Known emulator problems
 
 - **`injectAudio` crashes emulator 37.2 when no app records.** The emulator ends with a segmentation fault (in
