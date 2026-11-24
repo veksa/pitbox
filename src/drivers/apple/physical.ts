@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {run} from '../../util/proc.ts';
 import {AppleError, type SimKind, type Simulator} from './driver.ts';
+import {DeviceLog, formatLog} from './syslog.ts';
 
 /** The runtime a physical device is listed with: tells it from a simulator everywhere a Simulator is passed. */
 export const PHYSICAL_RUNTIME = 'device';
@@ -275,6 +276,17 @@ const muxSocket = () =>
     s.once('error', reject);
   });
 
+/** One request to usbmuxd itself (`ReadPairRecord`), its answer's plist. */
+export const muxRequest = async (msg: Record<string, string | number>, timeoutMs = 5000): Promise<string> => {
+  const s = await muxSocket();
+  try {
+    s.write(muxPacket(msg, 3));
+    return (await readPacket(s, timeoutMs)).body;
+  } finally {
+    s.destroy();
+  }
+};
+
 /**
  * A TCP connection to `port` on the device's loopback, through usbmuxd. A cable connection is preferred over the
  * network. Rejects with usbmuxd's answer when nothing listens there (yet). Bytes the device sent with the answer are
@@ -387,8 +399,7 @@ export class PhysicalDevices {
    * its reports itself (`systemCrashLogs`); they are named after the process (the app's executable) and the time.
    */
   async pullCrashes(udid: string, bundleId: string, dir: string, now = Date.now(), windowMs = 10 * 60_000): Promise<number> {
-    const url = await this.#appUrl(udid, bundleId);
-    const exe = url ? path.basename(url.replace(/\/+$/, ''), '.app') : undefined;
+    const exe = await this.#exe(udid, bundleId);
     const r = await this.#json<{files?: {relativePath?: string}[]}>(['device', 'info', 'files', '--device', udid, '--domain-type', 'systemCrashLogs'], 'list crash reports', 20_000);
     const want = crashFiles((r.files ?? []).map(f => f.relativePath ?? ''), exe, now, windowMs).filter(f => !fs.existsSync(path.join(dir, f)));
     fs.mkdirSync(dir, {recursive: true});
@@ -407,6 +418,52 @@ export class PhysicalDevices {
     return url;
   }
 
+  /** The executable of an app (its process name in the log and in crash reports): the app folder's name. */
+  async #exe(udid: string, bundleId: string): Promise<string | undefined> {
+    const url = await this.#appUrl(udid, bundleId);
+    return url ? path.basename(url.replace(/\/+$/, ''), '.app') : undefined;
+  }
+
+  readonly #logs = new Map<string, Promise<DeviceLog>>();
+
+  /** Starts keeping the device's log (once; again after its stream ended). */
+  async watchLog(udid: string): Promise<DeviceLog> {
+    const running = this.#logs.get(udid);
+    const log = running ? await running.catch(() => undefined) : undefined;
+    if (log && !log.closed) return log;
+    const started = DeviceLog.open(udid);
+    this.#logs.set(udid, started);
+    started.catch(() => this.#logs.delete(udid));
+    return started;
+  }
+
+  closeLog(udid: string) {
+    const log = this.#logs.get(udid);
+    this.#logs.delete(udid);
+    void log?.then(l => l.close(), () => undefined);
+  }
+
+  /**
+   * The device's log as a simulator's `log show` gives it: the app's process (all with no `bundleId`), the last
+   * `lines`. The device only streams what is logged from now on: the first call starts the stream and reads a moment
+   * of it, and the lines go back to when it started (the app's launch by pitbox, or that first call).
+   */
+  async logs(udid: string, opts: {bundleId?: string; lines?: number; grep?: string; level?: string} = {}): Promise<string[]> {
+    const fresh = !this.#logs.has(udid);
+    const log = await this.watchLog(udid);
+    if (fresh) await new Promise(r => setTimeout(r, 1500));
+    let exe: string | undefined;
+    if (opts.bundleId) {
+      exe = await this.#exe(udid, opts.bundleId);
+      if (!exe) return [`(${opts.bundleId} is not installed)`];
+    }
+    const lines = formatLog(log.entries, {...opts, exe});
+    const t = new Date(log.since);
+    const since = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+    if (!lines.length) return [`(no lines${exe ? ` from ${exe}` : ''} since ${since}, when pitbox began reading the device's log)`];
+    return fresh ? [`(the device's log as read from ${since}: earlier lines are not kept on the device for pitbox)`, ...lines] : lines;
+  }
+
   async pid(udid: string, bundleId: string): Promise<number | undefined> {
     const url = await this.#appUrl(udid, bundleId);
     if (!url) return undefined;
@@ -420,6 +477,8 @@ export class PhysicalDevices {
 
   async open(udid: string, target: string, opts: {relaunch?: boolean; bundleId?: string; args?: string[]} = {}): Promise<{totalMs?: number; pid?: number}> {
     const t0 = Date.now();
+    // The app's launch is in its log only when the stream is up before it: the log is read live.
+    await this.watchLog(udid).catch(() => undefined);
     if (target.includes('://')) {
       if (opts.relaunch && opts.bundleId) await this.stop(udid, opts.bundleId);
       await this.#json(['device', 'process', 'openURL', '--device', udid, target], 'open url', 60_000);

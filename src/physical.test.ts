@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest';
 import {crashFiles, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
 import {runnerBundleId, signingArgs} from './drivers/apple/runner.ts';
+import {formatLog, parseSyslog} from './drivers/apple/syslog.ts';
 import {builtinRules} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
 
@@ -134,5 +135,23 @@ describe('physical apple devices', () => {
     ]);
     expect((await rule.check(ctx({devices: [phone], teams: ['TEAM123456', 'OTHER12345']})))[0]?.message).toMatch(/several teams/);
     expect((await rule.check(ctx({devices: [phone], teams: ['TEAM123456'], team: 'OTHER12345'})))[0]?.message).toMatch(/apple.team OTHER12345/);
+  });
+
+  it('reads the device log relay\'s records and filters them as log show does', () => {
+    const now = new Date(2026, 10, 24, 10, 40, 0).getTime();
+    const e = parseSyslog('Nov 24 10:38:12 My-iPhone MyApp(CFNetwork)[123] <Error>: request failed\nsecond line\n', now)!;
+    expect(e).toEqual({at: new Date(2026, 10, 24, 10, 38, 12).getTime(), proc: 'MyApp', pid: 123, level: 'Error', text: 'request failed\nsecond line'});
+    // A December record read in January is last year's.
+    expect(new Date(parseSyslog('Dec 31 23:59:59 dev kernel[0] <Notice>: x', new Date(2027, 0, 1, 0, 0, 5).getTime())!.at).getFullYear()).toBe(2026);
+    expect(parseSyslog('garbage')).toBeUndefined();
+    const entries = [
+      parseSyslog('Nov 24 10:38:10 dev MyApp[123] <Debug>: tick', now)!,
+      parseSyslog('Nov 24 10:38:11 dev MyApp[123] <Notice>: started', now)!,
+      parseSyslog('Nov 24 10:38:11 dev other[9] <Error>: noise', now)!,
+      e,
+    ];
+    expect(formatLog(entries, {exe: 'MyApp'})).toEqual(['10:38:11 N MyApp[123] started', '10:38:12 E MyApp[123] request failed\nsecond line']);
+    expect(formatLog(entries, {level: 'error', lines: 1})).toEqual(['10:38:12 E MyApp[123] request failed\nsecond line']);
+    expect(formatLog(entries, {exe: 'MyApp', level: 'debug', grep: 'tick'})).toEqual(['10:38:10 D MyApp[123] tick']);
   });
 });

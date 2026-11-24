@@ -439,7 +439,10 @@ export class AppleDriver {
 
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {
     // A physical device stays on: giving it back only ends what pitbox runs on it.
-    if (physicalUdid(udid)) return {ms: 0, gone: false};
+    if (physicalUdid(udid)) {
+      this.physical.closeLog(udid);
+      return {ms: 0, gone: false};
+    }
     this.forgetList();
     const t0 = Date.now();
     const r = await this.simctl(['shutdown', udid], {timeoutMs: 60_000});
@@ -635,7 +638,7 @@ export class AppleDriver {
 
   /** Recent unified-log lines, of one app's process when `bundleId` is given. */
   async logs(udid: string, opts: {bundleId?: string; lines?: number; grep?: string; level?: string; since?: string} = {}): Promise<string[]> {
-    if (physicalUdid(udid)) return ["(a physical device\'s log is not read yet: open Console.app on the Mac and pick the device)"];
+    if (physicalUdid(udid)) return this.physical.logs(udid, opts);
     const args = ['spawn', udid, 'log', 'show', '--style', 'compact', '--last', opts.since ?? '5m'];
     const preds: string[] = [];
     if (opts.bundleId) {
