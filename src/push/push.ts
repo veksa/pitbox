@@ -19,6 +19,9 @@ import {describe, fromFirebaseAdmin, toApns, toFcmExtras, toMessage, type PushIn
 export const TAP_EXPECT = ['app', 'away', 'any'] as const;
 export type TapExpect = (typeof TAP_EXPECT)[number];
 
+/** The notification a `clear` command names, which no notification is: see `#clearApple`. */
+const CLEAR_SENTINEL = 'pitbox-clear-names-no-notification';
+
 export type PushTarget = {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices};
 
 export type PushDeps = {
@@ -787,15 +790,32 @@ export class PushCenter {
     return {...base, ok: !notes.length, verdict: `pressed "${name}" on "${title}"${text !== undefined && !notes.length ? ` and sent ${JSON.stringify(text)}` : ''}`, notification: title, answered: name, actions, state, screen: snap?.lines.slice(0, 12), notes};
   }
 
-  /** Removes the app's notifications (Android; iOS has no command for it). */
+  /**
+   * Removes the app's delivered notifications. Android: the app's receiver. iOS, which has no command for it: the
+   * app's PitboxNotifications hook, on a simulator and a device alike.
+   */
   async clear(opts: {device?: string; app?: string}): Promise<{device: string; app: string; cleared: number}> {
     const t = await this.#deps.target(opts.device);
     const app = this.#app(t, opts.app);
-    if (t.platform === 'apple') throw new Error(`unsupported on ${physicalUdid(t.id) ? 'an iPhone or iPad' : 'iOS simulators'}: no command removes delivered notifications (swipe them away in Notification Center)`);
+    if (t.platform === 'apple') return {device: t.id, app, cleared: await this.#clearApple(t.id, app)};
     const before = (await notifications(t.a, t.id, app)).filter(n => !n.summary).length;
     const r = await callReceiver(t.a, t.id, app, 'clear');
     if (r.code !== 1) throw new Error(r.data ?? (await missingReceiver(t.a, t.id, app)));
     return {device: t.id, app, cleared: before};
+  }
+
+  async #clearApple(udid: string, app: string): Promise<number> {
+    const host = this.#deps.liveActivity?.();
+    if (!host) throw new Error('push clear on iOS needs the device on this Mac: a remote Mac does not take it');
+    const id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+    // A hook from before `clear` takes the command for a response: the notification it names never exists, so that
+    // hook answers "no delivered notification" instead of tapping one.
+    const cmd = {id, clear: true, notification: CLEAR_SENTINEL};
+    const {outcome} = await deliverToHook<NotificationResponseOutcome>(host, udid, app, {dir: notificationDir, notice: notificationNotice(app)}, cmd, this.#deps.hookWait ?? {waitMs: 2000, afterLaunchMs: 5000, takenMs: 8000});
+    if (!outcome) throw new Error(`${app} took no push clear: its debug build calls PitboxNotifications.start() at launch (docs/push.md#notification-actions)`);
+    if (outcome.ok && typeof outcome.cleared === 'number') return outcome.cleared;
+    if (outcome.ok || outcome.error?.includes(CLEAR_SENTINEL)) throw new Error(`${app}'s PitboxNotifications is older than push clear\nhint: update PitboxConnect in the app and rebuild it`);
+    throw new Error(outcome.error ?? 'the hook gave no reason');
   }
 
   async grant(opts: {device?: string; app?: string}): Promise<{device: string; app: string; note: string}> {

@@ -25,6 +25,8 @@ export type NotificationResponseOutcome = {
   foreground?: boolean;
   /** The delegate called its completion handler. */
   completed?: boolean;
+  /** How many delivered notifications a `clear` removed. */
+  cleared?: number;
   /** The category's actions, `identifier "title"` each. */
   actions?: string[];
   error?: string;

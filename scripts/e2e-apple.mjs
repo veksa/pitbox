@@ -332,6 +332,11 @@ async function runOnDevice(udid) {
     checks.push({name: 'push through the app\'s hook', ok: pushed.code === 0 && /banner shown "Hello device"/.test(pushed.out), ...(pushed.code || !/banner shown/.test(pushed.out) ? {note: pushed.out.split('\n')[0]} : {})});
     const tapped = on(['push', 'respond', 'open', 'title=Hello device']);
     checks.push({name: 'push respond on the device', ok: tapped.code === 0 && /opened "Hello device"/.test(tapped.out), ...(tapped.code ? {note: tapped.out.split('\n')[0]} : {})});
+    // push clear through the same hook: the notification is gone, so a tap on it finds nothing.
+    on(['push', 'title=Clear me', 'body=From the hook']);
+    const cleared = on(['push', 'clear']);
+    const gone = on(['push', 'respond', 'open', 'title=Clear me']);
+    checks.push({name: 'push clear on the device', ok: cleared.code === 0 && /[1-9]\d* notifications? cleared/.test(cleared.out) && gone.code !== 0 && /no delivered notification/.test(gone.out), ...(cleared.code || !/cleared/.test(cleared.out) ? {note: cleared.out.split('\n')[0]} : {})});
     // A Live Activity through the same kind of hook: its state is copied off the device.
     const started = on(['push', 'activity', 'start', 'type=DeliveryAttributes', 'attributes={"order":"42"}', 'state={"status":"Packed","progress":0.2}']);
     const updated = on(['push', 'activity', 'update', 'state={"status":"On the way","progress":0.6}']);

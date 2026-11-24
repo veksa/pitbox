@@ -15,6 +15,13 @@ final class PitboxNotificationTests: XCTestCase {
     XCTAssertThrowsError(try Core.Command.parse(Data(#"{"action":"reply"}"#.utf8)))
   }
 
+  func testReadsAClearCommand() throws {
+    XCTAssertTrue(try Core.Command.parse(Data(#"{"id":"c1","clear":true}"#.utf8)).clear)
+    XCTAssertFalse(try Core.Command.parse(Data(#"{"id":"r1"}"#.utf8)).clear)
+    let answer = try JSONDecoder().decode(Core.Outcome.self, from: JSONEncoder().encode(Core.Outcome(ok: true, cleared: 2)))
+    XCTAssertEqual(answer.cleared, 2)
+  }
+
   func testPicksTheNotificationByIdThenTitleThenTheNewest() {
     let old = Core.Delivered(id: "a", title: "Order shipped", body: "Track it", date: Date(timeIntervalSince1970: 1))
     let new = Core.Delivered(id: "b", title: "New message", body: "From Ann", date: Date(timeIntervalSince1970: 2))

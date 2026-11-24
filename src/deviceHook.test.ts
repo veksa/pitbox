@@ -12,7 +12,7 @@ const UDID = '00008150-0000000000000000';
 const where = {dir: notificationDir, notice: notificationNotice('com.example.app')};
 
 /** A device's container as a map of files, and an app whose hook answers each command it is notified of. */
-const fakeDevice = (opts: {running: boolean}) => {
+const fakeDevice = (opts: {running: boolean; clears?: boolean}) => {
   const files = new Map<string, string>();
   const calls: string[] = [];
   let running = opts.running;
@@ -22,9 +22,16 @@ const fakeDevice = (opts: {running: boolean}) => {
       const m = /^Library\/Caches\/pitbox\/notification\/in\/(.+)\.json$/.exec(rel);
       if (!m) continue;
       files.delete(rel);
-      const cmd = JSON.parse(text) as {id: string; deadline: number; deliver?: {aps?: {alert?: {title?: string}}}};
+      const cmd = JSON.parse(text) as {id: string; deadline: number; clear?: boolean; notification?: string; deliver?: {aps?: {alert?: {title?: string}}}};
       const late = cmd.deadline * 1000 < Date.now();
-      files.set(`Library/Caches/pitbox/notification/out/${m[1]}.json`, JSON.stringify(late ? {ok: false, error: 'late'} : {ok: true, notification: cmd.id, title: cmd.deliver?.aps?.alert?.title}));
+      const answer = late
+        ? {ok: false, error: 'late'}
+        : cmd.clear && opts.clears !== false
+          ? {ok: true, cleared: 2}
+          : cmd.notification
+            ? {ok: false, error: `no delivered notification ${cmd.notification} (2 delivered)`}
+            : {ok: true, notification: cmd.id, title: cmd.deliver?.aps?.alert?.title};
+      files.set(`Library/Caches/pitbox/notification/out/${m[1]}.json`, JSON.stringify(answer));
     }
   };
   const io: HookFiles = {
@@ -86,7 +93,24 @@ describe('push status and clear on a device', () => {
     const r = await center.status({});
     expect(r.lines[0]).toMatch(/notification hook \(PitboxNotifications/);
     expect(r.lines.join('\n')).not.toMatch(/simctl/);
-    await expect(center.clear({})).rejects.toThrow(/unsupported on an iPhone or iPad/);
+  });
+
+  it('clears through the hook, and tells an older hook from a missing one', async () => {
+    const make = (d: ReturnType<typeof fakeDevice>) =>
+      new PushCenter({
+        target: async () => ({platform: 'apple', id: UDID, s: {} as never}),
+        online: async () => ({android: [], apple: [UDID]}),
+        appleApp: () => 'com.example.app',
+        ui: async () => Promise.reject(new Error('no runner')),
+        liveActivity: () => d.host,
+        hookWait: {waitMs: 300, afterLaunchMs: 300, takenMs: 300},
+      });
+    expect(await make(fakeDevice({running: true})).clear({})).toEqual({device: UDID, app: 'com.example.app', cleared: 2});
+    // A hook from before clear reads it as a response to a notification that does not exist: nothing is tapped.
+    await expect(make(fakeDevice({running: true, clears: false})).clear({})).rejects.toThrow(/older than push clear/);
+    const none = fakeDevice({running: false});
+    none.host.launch = async () => undefined;
+    await expect(make(none).clear({})).rejects.toThrow(/took no push clear: .*PitboxNotifications.start\(\)/);
   });
 });
 

@@ -31,7 +31,7 @@ the APNs and FCM requests a server sends, and delivers them to the running devic
 | `push tap [title]` | tap the latest notification (or the one with that text) and check the app came to the front. Android: only the app's own posted notifications are candidates (`dumpsys notification`, by package); the shade is opened and the row found in System UI's own window by that notification's title and text — not another app's row with the same title, not the app behind the shade — and tapped there; another app showing the same title and text word for word is refused, and a screen the runner could not read is never taken for a notification gone. Without a title, the latest one pitbox delivered that is still posted. iOS: the banner, or the notification in Notification Center. `✗ tapped …` with a note when the app did not come to the front |
 | `push tap [title] --expect away` · `expect=away` | a tap that is meant to leave the app — a notification that opens a web page in the browser, or another app: passes when another app comes to the front (`tapped "Sale" → com.example.browser in front`), fails when the app stays in front or nothing opens (the shade only closes to the home screen). `--expect any` takes either the app or another app; the default is `app` |
 | `push respond <action\|open\|dismiss> [title=…] [id=…] [text=…]` | answer a delivered notification with one of its actions, by identifier or title, `text` for a reply ([Notification actions](#notification-actions)); an action the notification does not have is refused with the list of those it has |
-| `push clear` | remove the app's notifications (Android) |
+| `push clear` | remove the app's delivered notifications (Android; iOS through the app's PitboxNotifications hook) |
 | `push grant` | grant POST_NOTIFICATIONS (Android) |
 | `push status` | can the app take pushes here: the receiver, the FCM service, Firebase, the permission |
 | `push log [-n 10] [wait=ms]` | the last pushes (from `push` and from the gateway) with their verdicts; with `wait`, waits up to that long for a new one (a scheduled push, a delivery the server sends through the gateway) and answers as soon as it lands, marking it `new` |
@@ -75,7 +75,8 @@ Limits of the simulator:
 - **No VoIP (PushKit)**: the gateway answers a VoIP push with `400 BadTopic`.
 - **No permission from outside**: iOS gives notification permission only in the app's own prompt
   (`press Allow`); `push grant` is Android-only.
-- **No `push clear`**: no command removes delivered notifications.
+- **`push clear` goes through the app**: no command removes delivered notifications, so the app's
+  PitboxNotifications hook does (`removeAllDeliveredNotifications`); an app without it is told so.
 - **No Notification Service Extension**: `simctl push` hands the payload straight to the system, so a
   `mutable-content` push shows as sent — no rewritten text, no image from `fcm_options.image`. The verdict notes it.
 

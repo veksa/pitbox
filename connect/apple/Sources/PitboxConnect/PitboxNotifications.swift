@@ -12,6 +12,9 @@
 //                `dev.pitbox.notification.<bundle id>`; the hook also drains the folder whenever the app becomes active
 // app → pitbox   out/<id>.json: which notification and action, whether the delegate completed, or what went wrong
 //
+// The same folder takes `deliver` (a push on a physical device, which takes none from the Mac) and `clear` (removes
+// the app's delivered notifications, which no command does from outside).
+//
 // The response object has no public initializer; the hook makes it with UserNotifications' own class method. That
 // is private API, which is why the hook exists only in debug builds of iOS apps: everywhere else every call is a
 // no-op and nothing of it is compiled in.
@@ -56,12 +59,23 @@ public enum PitboxNotifications {
           try? folder.answer(cmd.id, Core.Outcome(ok: false, error: "the command came after pitbox stopped waiting"))
           continue
         }
-        if let payload = cmd.deliver {
+        if cmd.clear {
+          clear { outcome in try? folder.answer(cmd.id, outcome) }
+        } else if let payload = cmd.deliver {
           deliver(cmd.id, payload) { outcome in try? folder.answer(cmd.id, outcome) }
         } else {
           respond(cmd) { outcome in try? folder.answer(cmd.id, outcome) }
         }
       }
+    }
+  }
+
+  /// Removes the app's delivered notifications, which no command outside the app does (`push clear`).
+  static func clear(done: @escaping @Sendable (Core.Outcome) -> Void) {
+    let center = UNUserNotificationCenter.current()
+    center.getDeliveredNotifications { delivered in
+      center.removeAllDeliveredNotifications()
+      done(Core.Outcome(ok: true, cleared: delivered.count))
     }
   }
 

@@ -26,6 +26,8 @@ enum PitboxNotificationCore {
     /// An APNs payload to show as a notification (a physical device, which takes no push from the Mac), as JSON;
     /// nil: a response to a delivered notification.
     var deliver: Data? = nil
+    /// Removes every delivered notification of the app (`push clear`): the system gives no command for it.
+    var clear = false
 
     static func parse(_ data: Data) throws -> Command {
       guard let o = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CoreError("the command is not a JSON object") }
@@ -37,7 +39,8 @@ enum PitboxNotificationCore {
         title: o["title"] as? String,
         text: o["text"] as? String,
         deadline: (o["deadline"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) },
-        deliver: try (o["deliver"] as? [String: Any]).map { try JSONSerialization.data(withJSONObject: $0) }
+        deliver: try (o["deliver"] as? [String: Any]).map { try JSONSerialization.data(withJSONObject: $0) },
+        clear: o["clear"] as? Bool ?? false
       )
     }
 
@@ -63,6 +66,8 @@ enum PitboxNotificationCore {
     /// The actions the notification's category offers, `identifier "title"` each.
     var actions: [String]?
     var error: String?
+    /// How many delivered notifications a `clear` removed.
+    var cleared: Int?
   }
 
   /// A delivered notification as far as picking one goes.

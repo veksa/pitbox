@@ -177,9 +177,9 @@ never takes a simulator's place. Apps, the screen, the UI runner, flows and chec
   (`xctrace`), a few seconds per call; frames are not counted.
 - **Not on a device:** boot, wipe, clone or shut down; screen size and density, animations, permissions granted or
   revoked from the Mac; screen video (`capture`: devicectl records none of an iPhone's screen — `shot` takes
-  stills), the photo library (`library add`), the network (`network`), volume (`audio`), mic, camera and calls, and
-  removing delivered notifications (`push clear`). Each says so with what to do instead. Dark mode and text size
-  work (`settings`).
+  stills), the photo library (`library add`), the network (`network`), volume (`audio`), mic, camera
+  and calls. Each says so with what to do instead. Dark mode and text size work (`settings`); `push clear` works through the
+  app's PitboxNotifications hook, as on a simulator.
 
 ### A remote Mac
 
