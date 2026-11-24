@@ -20,7 +20,7 @@ import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.t
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
 import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
-import {isPhysical} from '../drivers/apple/physical.ts';
+import {isPhysical, physicalUdid as isPhysicalUdid, readSigningIdentities} from '../drivers/apple/physical.ts';
 import {MacRunner, macDevice} from '../drivers/mac/runner.ts';
 import {RemoteApple, RemoteAppleCrashes, RemoteAppleRunner, type AppleDevices} from '../remote/appleRemote.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
@@ -1592,7 +1592,33 @@ export class Engine {
   async ensureForwards(force = false): Promise<{serial: string; ports: number[]}[]> {
     const android = this.android;
     const ports = exposedPorts(this.config);
-    if (!android || !ports.length) return [];
+    if (!ports.length) return [];
+    const physical = await this.#ensureDeviceForwards(ports);
+    if (!android) return physical;
+    return [...physical, ...(await this.#ensureAndroidForwards(android, ports, force))];
+  }
+
+  /**
+   * A physical iPhone or iPad this session holds does not share the Mac's network: the runner relays the exposed
+   * ports on its loopback (`AppleRunner.reverse`). A runner that restarted has none, so they are asked for again.
+   */
+  async #ensureDeviceForwards(ports: number[]): Promise<{serial: string; ports: number[]; via?: string}[]> {
+    const s = this.apple;
+    if (!s || !this.#isLocalApple(s)) return [];
+    const devices = (await s.booted().catch(() => [])).filter(d => isPhysical(d) && this.#leases.holds('apple', d.udid));
+    const applied: {serial: string; ports: number[]; via?: string}[] = [];
+    for (const d of devices) {
+      const ui = await this.ui(d.udid);
+      const runner = ui.runner as unknown as AppleRunner;
+      const missing = ports.filter(p => !runner.reversed.includes(p));
+      if (!missing.length) continue;
+      await runner.reverse(ports);
+      applied.push({serial: d.udid, ports: missing, via: 'runner'});
+    }
+    return applied;
+  }
+
+  async #ensureAndroidForwards(android: AndroidDriver, ports: number[], force: boolean): Promise<{serial: string; ports: number[]}[]> {
     const all = (await android.devices()).filter(d => d.state === 'device');
     for (const s of [...this.#forwarded]) if (!all.some(d => d.serial === s)) this.#forwarded.delete(s);
     // Only the devices this session holds: another session's emulator has its own stand and its own forwards.
@@ -2582,7 +2608,8 @@ export class Engine {
       // A daemon that just started brings the proxy and the forwards up on its first tick, seconds later; an app
       // launched before that asks a port nobody serves and a dev launcher shows "Connection reset".
       if (this.#dev && !this.#dev.proxy.listening) await this.#devUp(false).catch(() => undefined);
-      if (t.platform !== 'apple') await this.ensureForwards().catch(() => undefined);
+      // A physical iPhone needs its forwards (the runner's relay) up before the app asks for the stand, too.
+      if (t.platform !== 'apple' || isPhysicalUdid(t.id)) await this.ensureForwards().catch(() => undefined);
       if (t.platform === 'apple') {
         const bundleId = str(p, 'pkg') ?? this.#appleApp(t.id);
         const target = str(p, 'target') ?? (this.config.app?.connect ? this.connectUrl() : undefined) ?? this.#bundleId(p, t.id);

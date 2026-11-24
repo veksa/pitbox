@@ -51,6 +51,11 @@ type Built = {xctestrun: string; built: boolean; ms: number; team?: string};
 /** One build per platform and source hash for the daemon's life: a failed build is not retried on every call. */
 const builds = new Map<string, Promise<Built>>();
 
+type ReverseRelay = {back: number; ports: number[]; idle: Set<net.Socket>; opening: number; closed: boolean};
+
+/** Idle connections the Mac keeps open to a physical device's relay: as many app connections can start at once. */
+const REVERSE_POOL = 4;
+
 /** A signed build is made again when its provisioning profile has less than this left (a Personal Team's lasts 7 days). */
 const PROFILE_MARGIN_MS = 24 * 3600_000;
 
@@ -320,6 +325,96 @@ export class AppleRunner {
   #physical = false;
   /** The runner app's bundle id on this device (a team's own on a physical one). */
   #runnerId = RUNNER_BUNDLE_ID;
+  /** The Mac's ports on a physical device's loopback: the relayed ones and the idle connections that carry them. */
+  #reverse?: ReverseRelay;
+
+  /** The Mac's ports this runner relays on the device's loopback (a physical device's; none on a simulator). */
+  get reversed(): number[] {
+    return this.#reverse && !this.#reverse.closed ? this.#reverse.ports : [];
+  }
+
+  /**
+   * Makes the Mac's `ports` reachable on a physical device's 127.0.0.1, as `adb reverse` does on Android: the runner
+   * listens there and pairs each app connection with one of a few connections the Mac keeps open to it through
+   * usbmuxd (Reverse.swift). Answers the ports relayed now. A simulator shares the Mac's network: nothing to do.
+   */
+  async reverse(ports: number[]): Promise<number[]> {
+    if (!ports.length) return this.reversed;
+    await this.start();
+    if (!this.#physical) return [];
+    const r = await this.call<{ports: number[]; back: number; failed?: string[]}>('reverse', {ports, back: this.#reverse?.back ?? (await freePort())});
+    if (!this.#reverse || this.#reverse.closed) this.#reverse = {back: r.back, ports: r.ports, idle: new Set(), opening: 0, closed: false};
+    this.#reverse.back = r.back;
+    this.#reverse.ports = r.ports;
+    this.#fillReverse();
+    if (r.failed?.length) throw new AppleError(`could not relay every port to the device: ${r.failed.join('; ')}`, 'another app on the device may listen on that port');
+    return r.ports;
+  }
+
+  /** Keeps a few idle connections open to the runner's back port; each one is used once. */
+  #fillReverse() {
+    const rv = this.#reverse;
+    if (!rv || rv.closed) return;
+    while (rv.idle.size + rv.opening < REVERSE_POOL) {
+      rv.opening++;
+      muxConnect(this.udid, rv.back).then(
+        sock => {
+          rv.opening--;
+          if (rv.closed) return void sock.destroy();
+          rv.idle.add(sock);
+          this.#awaitPairing(rv, sock);
+        },
+        () => {
+          rv.opening--;
+          // The runner is gone or restarting: tried again shortly, while this relay stands.
+          if (!rv.closed) setTimeout(() => this.#fillReverse(), 1000).unref();
+        },
+      );
+    }
+  }
+
+  /** An idle connection: the runner names the Mac port on its first line, and from then on it is that port's. */
+  #awaitPairing(rv: ReverseRelay, sock: net.Socket) {
+    let head = Buffer.alloc(0);
+    const gone = () => {
+      if (!rv.idle.delete(sock)) return;
+      if (!rv.closed) setTimeout(() => this.#fillReverse(), 200).unref();
+    };
+    const onData = (d: Buffer) => {
+      head = Buffer.concat([head, d]);
+      const k = head.indexOf(10);
+      if (k < 0) return;
+      sock.off('data', onData);
+      sock.off('close', gone);
+      sock.pause();
+      rv.idle.delete(sock);
+      this.#fillReverse();
+      const port = Number(head.subarray(0, k).toString());
+      const rest = head.subarray(k + 1);
+      const out = net.connect(port, '127.0.0.1');
+      out.setNoDelay(true);
+      out.once('connect', () => {
+        if (rest.length) out.write(rest);
+        sock.pipe(out);
+        out.pipe(sock);
+        sock.resume();
+      });
+      out.on('error', () => sock.destroy());
+      sock.on('error', () => out.destroy());
+    };
+    sock.on('data', onData);
+    sock.on('close', gone);
+    sock.on('error', () => undefined);
+  }
+
+  #closeReverse() {
+    const rv = this.#reverse;
+    if (!rv) return;
+    rv.closed = true;
+    for (const s of rv.idle) s.destroy();
+    rv.idle.clear();
+    this.#reverse = undefined;
+  }
 
   constructor(driver: AppleDriver, udid: string, bundleId?: string) {
     this.#driver = driver;
@@ -529,6 +624,8 @@ export class AppleRunner {
 
   /** Drops the connection and, unless the caller waits for it itself (`clearStaleRunner`), ends xcodebuild. */
   #teardown(kill = true) {
+    // The relay lives in the runner: a new runner has none until it is asked again.
+    this.#closeReverse();
     this.#socket?.destroy();
     this.#socket = undefined;
     if (kill && this.#child && this.#child.exitCode === null) this.#child.kill();

@@ -160,6 +160,12 @@ final class Commands {
       #endif
       return try image(cmd, req)
     case "relays": return ["relayed": [Int]()]
+    // The Mac's ports on a physical device's loopback (Reverse.swift).
+    case "reverses": return Reverse.state()
+    case "reverse":
+      let ports = (req["ports"] as? [Any] ?? []).compactMap { ($0 as? NSNumber)?.intValue }
+      guard let back = UInt16(exactly: Int(double(req, "back", 0))), back > 0 else { throw RunnerError("reverse needs a back port") }
+      return try Reverse.start(ports: ports, back: back)
     case "banners", "tapBanner":
       // Notification banners: the shell draws them over whatever app is in front, so the tree of that app does
       // not hold them. `tapBanner` taps the newest one whose text holds `text`.
