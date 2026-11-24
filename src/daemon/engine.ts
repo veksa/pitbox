@@ -878,7 +878,9 @@ export class Engine {
     const {online, unread} = shutdown ? await this.#listRunning() : {online: [], unread: new Set<string>()};
     const still = (l: Lease) => !unread.has(l.platform) && stillBootedByPitbox(l, online.find(d => d.platform === l.platform && d.id === l.device));
     const r = await this.#leases.releaseAll(shutdown, still);
+    // A device left running (a physical one always is) keeps its runner's xcodebuild unless the session ends it.
     for (const h of r.released) {
+      await this.#uis.get(h.id)?.stop().catch(() => undefined);
       this.#uis.delete(h.id);
       this.#forwarded.delete(h.id);
     }
