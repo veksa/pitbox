@@ -20,6 +20,7 @@ import {pairByQr, pairingCode, parseCodePairing} from '../drivers/android/wifi.t
 import {AppleDriver, isAppleBundle, pickSimulator, type Simulator} from '../drivers/apple/driver.ts';
 import {AppleRunner} from '../drivers/apple/runner.ts';
 import {AppleCrashWatcher} from '../drivers/apple/crashes.ts';
+import {isPhysical} from '../drivers/apple/physical.ts';
 import {MacRunner, macDevice} from '../drivers/mac/runner.ts';
 import {RemoteApple, RemoteAppleCrashes, RemoteAppleRunner, type AppleDevices} from '../remote/appleRemote.ts';
 import {lineRange, grep, readDoc, section, toc} from '../docs/docs.ts';
@@ -572,7 +573,9 @@ export class Engine {
         this.#apple = token ? new RemoteApple(remote, token) : null;
       } else {
         try {
-          this.#apple = new AppleDriver();
+          const driver = new AppleDriver();
+          driver.signingTeam = this.config.apple?.team;
+          this.#apple = driver;
         } catch {
           this.#apple = null;
         }
@@ -718,7 +721,8 @@ export class Engine {
       if (booted.length && !online.length) return {platform: 'apple', id: await s.resolve(), s};
       if (booted.length) throw new Error(`several devices online\nhint: pass a device: ${[...online.map(d => d.avd ?? d.serial), ...booted.map(b => b.name)].join(', ')}`);
     }
-    const candidates: Candidate[] = [...(local ? booted.map(b => ({platform: 'apple' as const, id: b.udid, name: b.name})) : []), ...online.map(d => ({platform: 'android' as const, id: d.serial, name: d.avd ?? d.model, instance: d.instance}))];
+    // A physical iPhone or iPad is driven only when named: one plugged in to charge never takes a simulator's place.
+    const candidates: Candidate[] = [...(local ? booted.filter(b => !isPhysical(b)).map(b => ({platform: 'apple' as const, id: b.udid, name: b.name})) : []), ...online.map(d => ({platform: 'android' as const, id: d.serial, name: d.avd ?? d.model, instance: d.instance}))];
     if (!candidates.length) {
       // Nothing online: the drivers' own errors say so. adb can answer empty while busy; its resolve asks again,
       // and a device it then finds goes through the same choice.
@@ -908,6 +912,14 @@ export class Engine {
     const sims = await s.simulators();
     const want = pickSimulator(sims, name);
     if (!want) return {...(await s.boot(name, opts)), platform: 'apple'};
+    // A physical device has no twin to fall back on and nothing to boot: leased as it is, or not at all.
+    if (isPhysical(want)) {
+      const h = this.#leases.holderOf('apple', want.udid);
+      if (h && !h.mine) throw new Error(`${want.name} is held by ${describeHolder(h.lease)}`);
+      const r = await s.boot(want.udid, opts);
+      this.#leases.claim('apple', want.udid, {name: want.name});
+      return {...r, platform: 'apple'};
+    }
     const owned = (x: Simulator) => !!this.#leases.holderOf('apple', x.udid)?.mine;
     // Shut down, not on its way up or down: a simulator booting or shutting down is someone's.
     const idle = (x: Simulator) => x.state === 'Shutdown' && !this.#leases.holderOf('apple', x.udid);

@@ -1,4 +1,5 @@
-// Apple driver: iPhone, iPad, Apple TV, Apple Vision Pro and Apple Watch simulators, all through simctl.
+// Apple driver: iPhone, iPad, Apple TV, Apple Vision Pro and Apple Watch simulators through simctl, and physical
+// iPhones and iPads paired with this Mac through devicectl (physical.ts): one list, one set of operations.
 // The agent never calls xcrun itself; every operation it needs is here. Gaps of the simulator tooling are
 // reported as unsupported, never emulated silently.
 
@@ -9,6 +10,7 @@ import {parseStartDate} from '../../lease/lease.ts';
 import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
+import {deviceError, isPhysical, PhysicalDevices, physicalUdid} from './physical.ts';
 import {keepsOverrides, notDisabled, simSlimList, slimSimulator, storeDir, unslimSimulator, type SimSlimOptions} from './slim.ts';
 
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
@@ -200,12 +202,17 @@ export const appProcess = (ps: string, bundle: string): boolean =>
 
 export class AppleDriver {
   readonly xcrun: string;
+  /** Physical devices paired with this Mac (devicectl). */
+  readonly physical: PhysicalDevices;
+  /** The Apple Development team that signs the runner for physical devices (`apple.team`); found from the keychain when unset. */
+  signingTeam?: string;
 
   constructor() {
     if (process.platform !== 'darwin') throw new AppleError('Apple simulators run on macOS only');
     const xcrun = which('xcrun');
     if (!xcrun) throw new AppleError('xcrun not found', 'install Xcode and run `xcode-select -s /Applications/Xcode.app`');
     this.xcrun = xcrun;
+    this.physical = new PhysicalDevices(xcrun);
   }
 
   simctl(args: string[], opts: {timeoutMs?: number; encoding?: 'buffer'; input?: string} = {}): Promise<RunResult & {buffer?: Buffer}> {
@@ -229,7 +236,14 @@ export class AppleDriver {
   /** Where CoreSimulator keeps the default device set; a test points it elsewhere. */
   deviceSet = path.join(os.homedir(), 'Library', 'Developer', 'CoreSimulator', 'Devices');
 
+  /** The simulators and, after them, the physical devices paired with this Mac (runtime `device`). */
   async simulators(): Promise<Simulator[]> {
+    const [sims, devices] = await Promise.all([this.simulatorsOnly(), this.physical?.list() ?? []]);
+    return devices.length ? [...sims, ...devices] : sims;
+  }
+
+  /** The simulators alone. */
+  async simulatorsOnly(): Promise<Simulator[]> {
     const kept = this.kept;
     if (kept && (Date.now() - kept.at < 1500 || (Date.now() - kept.at < KEPT_MAX_MS && kept.stamp !== undefined && kept.stamp === deviceSetStamp(this.deviceSet)))) return kept.sims;
     // Read before the list: a change while simctl answers makes the next call read it again.
@@ -264,6 +278,7 @@ export class AppleDriver {
   /** Forgets the kept list: the set of booted simulators is about to change. */
   forgetList() {
     this.kept = undefined;
+    this.physical?.forget();
   }
 
   async booted(): Promise<Simulator[]> {
@@ -278,9 +293,11 @@ export class AppleDriver {
       if (hit) return hit.udid;
       throw new AppleError(`no booted simulator matches "${selector}"`, booted.length ? `booted: ${booted.map(s => s.name).join(', ')}` : 'boot one with `boot <name>`');
     }
-    if (booted.length === 1) return booted[0]!.udid;
-    if (!booted.length) throw new AppleError('no booted simulator', 'boot one with `boot <name>`');
-    throw new AppleError('several simulators booted', `pass a device: ${booted.map(s => s.udid).join(', ')}`);
+    // A physical device is used only when named.
+    const sims = booted.filter(s => !isPhysical(s));
+    if (sims.length === 1) return sims[0]!.udid;
+    if (!sims.length) throw new AppleError('no booted simulator', booted.length ? `connected devices are used when named: ${booted.map(s => s.name).join(', ')}` : 'boot one with `boot <name>`');
+    throw new AppleError('several simulators booted', `pass a device: ${sims.map(s => s.udid).join(', ')}`);
   }
 
   /**
@@ -293,6 +310,12 @@ export class AppleDriver {
     const sims = await this.simulators();
     const sim = pickSimulator(sims, selector);
     if (!sim) throw new AppleError(`unknown simulator "${selector}"`, `available: ${[...new Set(sims.map(s => s.name))].join(', ') || 'none — create one in Xcode › Devices'}`);
+    // A physical device is on or not: nothing boots it, wipes it or slims it.
+    if (isPhysical(sim)) {
+      if (opts.wipe) throw new AppleError(`${sim.name} is a physical device: pitbox does not erase it`, 'erase it yourself in Settings › General › Transfer or Reset, or use a simulator');
+      if (sim.state !== 'Booted') throw new AppleError(`${sim.name} is not connected`, 'plug it in (or bring it onto the same network) and unlock it');
+      return {udid: sim.udid, name: sim.name, ms: 0, already: true};
+    }
     if (sim.state === 'Booted' && !opts.wipe) {
       const note = opts.headless ? undefined : await this.#showWindow(sim.udid);
       return {udid: sim.udid, name: sim.name, ms: 0, already: true, ...(note ? {note} : {})};
@@ -347,6 +370,7 @@ export class AppleDriver {
    * that one. Named `<name> (pitbox N)` so it is recognisable and found again by the next session.
    */
   async createLike(like: Simulator, name: string): Promise<Simulator> {
+    if (isPhysical(like)) throw new AppleError(`${like.name} is a physical device: it cannot be copied`, 'wait for the session that holds it, or use a simulator');
     if (!like.deviceType) throw new AppleError(`cannot tell the model of ${like.name}`, 'create a simulator in Xcode › Devices and boot it by name');
     this.forgetList();
     const udid = (await this.#ok(['create', name, like.deviceType, like.runtime], 'create', 120_000)).trim();
@@ -358,6 +382,7 @@ export class AppleDriver {
 
   /** A copy of a shut-down simulator (`simctl clone`: copy-on-write on APFS, so a second or two), under `name`. */
   async cloneFrom(source: string, name: string): Promise<Simulator> {
+    if (physicalUdid(source)) throw new AppleError('a physical device cannot be copied', 'use a simulator');
     this.forgetList();
     const udid = (await this.#ok(['clone', source, name], 'clone', 120_000)).trim();
     this.forgetList();
@@ -394,6 +419,7 @@ export class AppleDriver {
   /** Deletes a simulator (one pitbox created for a session); it must be shut down. */
   /** Deletes a simulator and its Mac-side launchd folder (logs, overrides, what slim wrote), which simctl leaves. */
   async delete(udid: string) {
+    if (physicalUdid(udid)) return;
     this.forgetList();
     await this.#ok(['delete', udid], 'delete', 60_000);
     this.forgetList();
@@ -401,6 +427,8 @@ export class AppleDriver {
   }
 
   async shutdown(udid: string): Promise<{ms: number; gone: boolean}> {
+    // A physical device stays on: giving it back only ends what pitbox runs on it.
+    if (physicalUdid(udid)) return {ms: 0, gone: false};
     this.forgetList();
     const t0 = Date.now();
     const r = await this.simctl(['shutdown', udid], {timeoutMs: 60_000});
@@ -410,6 +438,7 @@ export class AppleDriver {
   }
 
   async install(udid: string, bundle: string): Promise<{ms: number; replaced: boolean; bundleId?: string}> {
+    if (physicalUdid(udid)) return this.physical.install(udid, bundle);
     if (!fs.existsSync(bundle)) throw new AppleError(`no such file: ${bundle}`);
     if (/\.ipa$/i.test(bundle)) throw new AppleError('an .ipa is a device build', 'simulators take the .app from a simulator build (Products/Debug-iphonesimulator/MyApp.app)');
     const t0 = Date.now();
@@ -419,6 +448,7 @@ export class AppleDriver {
 
   /** Opens an app by bundle id or a deep link URL. `totalMs` is the time until the app process runs. */
   async open(udid: string, target: string, opts: {relaunch?: boolean; bundleId?: string; args?: string[]} = {}): Promise<{totalMs?: number; pid?: number}> {
+    if (physicalUdid(udid)) return this.physical.open(udid, target, opts);
     const t0 = Date.now();
     if (target.includes('://')) {
       if (opts.relaunch && opts.bundleId) await this.stop(udid, opts.bundleId);
@@ -436,6 +466,7 @@ export class AppleDriver {
   }
 
   async stop(udid: string, bundleId: string) {
+    if (physicalUdid(udid)) return this.physical.stop(udid, bundleId);
     const r = await this.simctl(['terminate', udid, bundleId]);
     // Terminating an app that does not run is fine.
     if (r.code !== 0 && !/found nothing to terminate|not running/i.test(r.stderr)) throw new AppleError(`terminate failed: ${r.stderr.trim()}`);
@@ -443,6 +474,7 @@ export class AppleDriver {
 
   /** Wipes the app's data container (Documents, Library, tmp) — simctl has no `pm clear`. */
   async clear(udid: string, bundleId: string) {
+    if (physicalUdid(udid)) throw new AppleError('an app\'s data on a device cannot be wiped from the Mac', 'reinstall the app (uninstall, then install) for a clean start');
     await this.stop(udid, bundleId);
     const dir = (await this.#ok(['get_app_container', udid, bundleId, 'data'], 'get_app_container')).trim();
     if (!dir || !fs.existsSync(dir) || !dir.includes('/Containers/Data/Application/')) throw new AppleError(`no data container for ${bundleId}`);
@@ -471,6 +503,7 @@ export class AppleDriver {
    * caller can launch it again.
    */
   async appStateSave(udid: string, bundleId: string, name: string): Promise<{wasRunning: boolean}> {
+    if (physicalUdid(udid)) throw new AppleError('named app states are kept for simulators only', 'start from a fresh install on a device, or use a simulator');
     const wasRunning = (await this.pid(udid, bundleId).catch(() => undefined)) !== undefined;
     await this.stop(udid, bundleId);
     const dir = await this.#container(udid, bundleId);
@@ -483,6 +516,7 @@ export class AppleDriver {
 
   /** Brings the app's data back as it was saved, with the app stopped; the next launch starts from it. */
   async appStateRestore(udid: string, bundleId: string, name: string) {
+    if (physicalUdid(udid)) throw new AppleError('named app states are kept for simulators only', 'start from a fresh install on a device, or use a simulator');
     const src = this.#appStateDir(udid, bundleId, name);
     if (!fs.existsSync(src)) throw new AppleError(`no saved app data "${name}" for ${bundleId} on this simulator`);
     await this.stop(udid, bundleId);
@@ -506,22 +540,26 @@ export class AppleDriver {
    * the app sees them on its next launch. Writing to the plist file directly would be lost to cfprefsd's cache.
    */
   async setDefaults(udid: string, bundleId: string, values: Record<string, string>) {
+    if (physicalUdid(udid)) throw new AppleError('an app\'s preferences on a device are not written from the Mac', 'pass them at launch: open with args -<key> <value> (UserDefaults reads launch arguments)');
     const dir = (await this.#ok(['get_app_container', udid, bundleId, 'data'], 'get_app_container')).trim();
     const domain = path.join(dir, 'Library', 'Preferences', bundleId);
     for (const [k, v] of Object.entries(values)) await this.#ok(['spawn', udid, 'defaults', 'write', domain, k, '-string', v], `defaults write ${k}`);
   }
 
   async uninstall(udid: string, bundleId: string) {
+    if (physicalUdid(udid)) return this.physical.uninstall(udid, bundleId);
     await this.#ok(['uninstall', udid, bundleId], 'uninstall', 60_000);
   }
 
   /** The app's data container on this Mac (its Documents, Library, tmp); throws when the app is not installed. */
   dataContainer(udid: string, bundleId: string): Promise<string> {
+    if (physicalUdid(udid)) throw new AppleError('an app\'s data container on a device is not on this Mac', 'use a simulator to read the app\'s files');
     return this.#container(udid, bundleId);
   }
 
   /** The installed .app on this Mac; undefined when the app is not installed. */
   async appBundle(udid: string, bundleId: string): Promise<string | undefined> {
+    if (physicalUdid(udid)) return undefined;
     const r = await this.simctl(['get_app_container', udid, bundleId, 'app']);
     const dir = r.stdout.trim();
     return r.code === 0 && dir && fs.existsSync(dir) ? dir : undefined;
@@ -536,6 +574,7 @@ export class AppleDriver {
    * simulator. Undefined when the app is not installed or the process list cannot be read.
    */
   async appRunning(udid: string, bundleId: string): Promise<boolean | undefined> {
+    if (physicalUdid(udid)) return this.physical.appRunning(udid, bundleId);
     const key = `${udid} ${bundleId}`;
     let dir = this.#bundles.get(key);
     if (!dir || !fs.existsSync(dir)) {
@@ -550,6 +589,7 @@ export class AppleDriver {
 
   /** Posts a Darwin notification inside the simulator (`notifyutil -p`): what an app's observer of that name hears. */
   async notify(udid: string, name: string): Promise<void> {
+    if (physicalUdid(udid)) return this.physical.notify(udid, name);
     if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new AppleError(`not a notification name: ${JSON.stringify(name)}`);
     await this.#ok(['spawn', udid, 'notifyutil', '-p', name], 'notifyutil');
   }
@@ -559,6 +599,7 @@ export class AppleDriver {
    * must have asked for notification permission; the payload names its app in `Simulator Target Bundle`.
    */
   async push(udid: string, bundleId: string, payload: Record<string, unknown>): Promise<void> {
+    if (physicalUdid(udid)) throw new AppleError('a device takes pushes from APNs, not from the Mac', 'send through APNs (sandbox) with the app\'s device token, or test the push on a simulator');
     const r = await this.simctl(['push', udid, bundleId, '-'], {input: JSON.stringify(payload), timeoutMs: 30_000});
     if (r.code !== 0) throw new AppleError(`push failed: ${(r.stderr || r.stdout).trim().split('\n').slice(-2).join(' ')}`);
   }
@@ -573,6 +614,7 @@ export class AppleDriver {
 
   /** Installed user apps (system apps left out). */
   async packages(udid: string, filter?: string): Promise<string[]> {
+    if (physicalUdid(udid)) return this.physical.packages(udid, filter);
     const apps = await this.#apps(udid);
     return Object.entries(apps)
       .filter(([id, a]) => a.ApplicationType === 'User' && (!filter || id.includes(filter)))
@@ -582,6 +624,7 @@ export class AppleDriver {
 
   /** Recent unified-log lines, of one app's process when `bundleId` is given. */
   async logs(udid: string, opts: {bundleId?: string; lines?: number; grep?: string; level?: string; since?: string} = {}): Promise<string[]> {
+    if (physicalUdid(udid)) return ["(a physical device\'s log is not read yet: open Console.app on the Mac and pick the device)"];
     const args = ['spawn', udid, 'log', 'show', '--style', 'compact', '--last', opts.since ?? '5m'];
     const preds: string[] = [];
     if (opts.bundleId) {
@@ -605,6 +648,7 @@ export class AppleDriver {
     udid: string,
     s: {fontScale?: number; dark?: boolean; animations?: boolean; size?: string; density?: string; locale?: string; grant?: {bundleId: string; service: string}; revoke?: {bundleId: string; service: string}; reset?: {bundleId: string; service: string}},
   ): Promise<string[]> {
+    if (physicalUdid(udid)) return this.physical.settings(udid, s, contentSize);
     const done: string[] = [];
     if (s.size || s.density) throw new AppleError('a simulator has a fixed screen size', 'boot another device type instead');
     if (s.animations !== undefined) throw new AppleError('simctl cannot switch animations off', 'leave animations on; the runner waits for them');
@@ -639,6 +683,7 @@ export class AppleDriver {
   }
 
   async screenshot(udid: string, file: string): Promise<{file: string; bytes: number}> {
+    if (physicalUdid(udid)) return this.physical.screenshot(udid, file);
     fs.mkdirSync(path.dirname(file), {recursive: true});
     let r = await this.simctl(['io', udid, 'screenshot', '--type=png', file], {timeoutMs: 20_000});
     // A foldable has two screens and simctl will not pick one: the lit one is what the user sees.
@@ -708,6 +753,7 @@ export class AppleDriver {
    * turned phone and the system sees the new orientation. Rotation in degrees, as on Android.
    */
   async turn(udid: string, rotation: string): Promise<void> {
+    if (physicalUdid(udid)) throw new AppleError('a device is turned by the runner, not its motion input', 'use rotate 0|90|180|270');
     const orientation = TURNS[rotation === 'auto' ? '0' : rotation];
     if (!orientation) throw new AppleError('rotate 0, 90, 180, 270 or auto');
     const {foldTool} = await import('./fold.ts');
@@ -717,6 +763,7 @@ export class AppleDriver {
 
   /** The pid of a running app, from the simulator's launchd. */
   async pid(udid: string, bundleId: string): Promise<number | undefined> {
+    if (physicalUdid(udid)) return this.physical.pid(udid, bundleId);
     const r = await this.simctl(['spawn', udid, 'launchctl', 'list'], {timeoutMs: 10_000});
     const line = r.stdout.split('\n').find(l => l.includes(`UIKitApplication:${bundleId}[`));
     const pid = Number(line?.split('\t')[0]);
@@ -728,6 +775,7 @@ export class AppleDriver {
    * frame counter like Android's gfxinfo: frames stay unknown rather than estimated.
    */
   async perf(udid: string, bundleId: string, reset = false): Promise<{reset?: boolean; memoryMb?: number; note?: string}> {
+    if (physicalUdid(udid)) throw new AppleError('memory of an app on a device is not read yet', 'use Instruments, or a simulator for perf');
     if (reset) return {reset: true, note: 'nothing to reset on a simulator: memory is read live, frames are not counted'};
     const pid = await this.pid(udid, bundleId);
     if (!pid) throw new AppleError(`${bundleId} is not running`, 'open it first');
@@ -737,6 +785,7 @@ export class AppleDriver {
   }
 
   async info(udid: string): Promise<Record<string, string>> {
+    if (physicalUdid(udid)) return this.physical.info(udid);
     const sim = (await this.simulators()).find(s => s.udid === udid);
     if (!sim) throw new AppleError(`unknown simulator ${udid}`);
     const [appearance, size] = await Promise.all([this.simctl(['ui', udid, 'appearance']), this.simctl(['ui', udid, 'content_size'])]);

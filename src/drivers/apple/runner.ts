@@ -1,6 +1,7 @@
 // Host side of the Apple runner: builds the XCUITest bundle once per platform and source hash (a cache under
 // ~/Library/Caches/pitbox, shared by every daemon on the Mac: util/cache.ts), runs it with `xcodebuild test-without-building`, and talks to it over one TCP
-// connection. A simulator shares the Mac's network, so the runner's port is reached directly on 127.0.0.1.
+// connection. A simulator shares the Mac's network, so the runner's port is reached directly on 127.0.0.1; on a
+// physical device the runner is signed with the Mac's Apple Development team and its port is reached through usbmuxd.
 
 import {spawn, type ChildProcess} from 'node:child_process';
 import crypto from 'node:crypto';
@@ -13,7 +14,8 @@ import {gcVersions, markInUse, withBuildLock} from '../../util/cache.ts';
 import {pitboxHome} from '../../lease/lease.ts';
 import {freePort, tcpOpen} from '../../util/net.ts';
 import {run} from '../../util/proc.ts';
-import {AppleError, type AppleDriver, type SimKind} from './driver.ts';
+import {AppleError, type AppleDriver, type SimKind, type Simulator} from './driver.ts';
+import {deviceError, deviceHint, isPhysical, muxConnect, pickTeam, profileExpiry, readSigningIdentities, teamSuffix} from './physical.ts';
 import {hid, hidChord} from './hid.ts';
 
 /** Must match `runnerVersion` in runners/apple/Runner/Commands.swift. */
@@ -44,10 +46,43 @@ export const sourceHash = (dir: string): string => {
   return h.digest('hex').slice(0, 12);
 };
 
-type Built = {xctestrun: string; built: boolean; ms: number};
+type Built = {xctestrun: string; built: boolean; ms: number; team?: string};
 
 /** One build per platform and source hash for the daemon's life: a failed build is not retried on every call. */
 const builds = new Map<string, Promise<Built>>();
+
+/** A signed build is made again when its provisioning profile has less than this left (a Personal Team's lasts 7 days). */
+const PROFILE_MARGIN_MS = 24 * 3600_000;
+
+/**
+ * The runner for a physical iPhone or iPad: signed with the team that can sign here (`apple.team`, or the only one
+ * with an Apple Development certificate), its ids made the team's own, the device registered with the team. One
+ * build per team and device; made again when its profile is about to run out.
+ */
+export const buildDeviceRunner = async (udid: string, configuredTeam?: string): Promise<Built> => {
+  const team = pickTeam(await readSigningIdentities(), configuredTeam);
+  const key = `device:${team}:${udid}:${sourceHash(runnerSources())}`;
+  const cached = builds.get(key);
+  if (cached) {
+    const b = await cached.catch(() => undefined);
+    if (b && (await runnerExpires(b.xctestrun)) > Date.now() + PROFILE_MARGIN_MS) return b;
+    builds.delete(key);
+  }
+  const b = build('phone', {team, udid});
+  builds.set(key, b);
+  return b;
+};
+
+/** When the signed runner app next to an .xctestrun stops launching (its profile's end); 0 when unknown. */
+const runnerExpires = async (xctestrun: string): Promise<number> => {
+  const products = path.dirname(xctestrun);
+  const dir = fs.readdirSync(products).find(d => /-iphoneos$/.test(d));
+  const app = dir ? fs.readdirSync(path.join(products, dir)).find(f => f.endsWith('-Runner.app')) : undefined;
+  return (app ? await profileExpiry(path.join(products, dir!, app)) : undefined) ?? 0;
+};
+
+/** The runner app's bundle id: the simulators' own, or the team's on a device. */
+export const runnerBundleId = (team?: string) => (team ? `dev.pitbox.runner${teamSuffix(team)}.xctrunner` : RUNNER_BUNDLE_ID);
 
 /** Builds (or finds in the cache) the runner for a simulator kind; returns its .xctestrun file. */
 export const buildRunner = (kind: SimKind): Promise<Built> => {
@@ -60,9 +95,9 @@ export const buildRunner = (kind: SimKind): Promise<Built> => {
   return b;
 };
 
-const build = async (kind: SimKind): Promise<Built> => {
+const build = async (kind: SimKind, device?: {team: string; udid: string}): Promise<Built> => {
   const t0 = Date.now();
-  const destination = DESTINATIONS[kind];
+  const destination = device ? `iOS-${device.team}-${device.udid}` : DESTINATIONS[kind];
   const src = runnerSources();
   if (!fs.existsSync(path.join(src, 'PitboxRunner.xcodeproj'))) throw new AppleError(`runner sources missing: ${src}`);
   const xcode = (await run('xcodebuild', ['-version'], {timeoutMs: 20_000})).stdout.match(/Build version (\S+)/)?.[1] ?? 'unknown';
@@ -81,23 +116,36 @@ const build = async (kind: SimKind): Promise<Built> => {
   // Two daemons building into one derived data folder corrupt it: the second waits and finds the build done.
   return withBuildLock(cache, version, async () => {
     const existing = find();
-    if (existing) return {xctestrun: path.join(dir, 'Build', 'Products', existing), built: false, ms: Date.now() - t0};
-    return buildInto(dir, src, destination, find, t0);
+    if (existing) {
+      const xctestrun = path.join(dir, 'Build', 'Products', existing);
+      if (!device || (await runnerExpires(xctestrun)) > Date.now() + PROFILE_MARGIN_MS) return {xctestrun, built: false, ms: Date.now() - t0, ...(device ? {team: device.team} : {})};
+      // Its profile runs out: signed again from scratch, so Xcode fetches a fresh one.
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+    const built = await buildInto(dir, src, destination, find, t0, device);
+    return device ? {...built, team: device.team} : built;
   });
 };
 
-const buildInto = async (dir: string, src: string, destination: string, find: () => string | undefined, t0: number): Promise<Built> => {
+/** xcodebuild's settings for a runner signed by a team for one device; ad hoc (`-`) for simulators. */
+export const signingArgs = (device?: {team: string; udid: string}): string[] =>
+  device
+    ? ['-destination', `id=${device.udid}`, '-allowProvisioningUpdates', '-allowProvisioningDeviceRegistration', 'CODE_SIGN_STYLE=Automatic', `DEVELOPMENT_TEAM=${device.team}`, 'CODE_SIGN_IDENTITY=Apple Development', `PITBOX_ID_SUFFIX=${teamSuffix(device.team)}`]
+    : ['CODE_SIGN_IDENTITY=-'];
+
+const buildInto = async (dir: string, src: string, destination: string, find: () => string | undefined, t0: number, device?: {team: string; udid: string}): Promise<Built> => {
   fs.mkdirSync(dir, {recursive: true});
   const r = await run(
     'xcodebuild',
-    ['build-for-testing', '-project', path.join(src, 'PitboxRunner.xcodeproj'), '-scheme', 'PitboxRunner', '-destination', `generic/platform=${destination}`, '-derivedDataPath', dir, '-quiet', 'CODE_SIGN_IDENTITY=-'],
+    ['build-for-testing', '-project', path.join(src, 'PitboxRunner.xcodeproj'), '-scheme', 'PitboxRunner', ...(device ? [] : ['-destination', `generic/platform=${destination}`]), '-derivedDataPath', dir, '-quiet', ...signingArgs(device)],
     {timeoutMs: 900_000},
   );
   const file = find();
   if (r.code !== 0 || !file) {
     const errors = [...new Set(`${r.stdout}\n${r.stderr}`.split('\n').filter(l => /^\S.*error:/.test(l)).map(l => l.replace(`${src}/`, '')))];
     const why = errors.slice(0, 3).join('\n') || r.stderr.trim().split('\n').slice(-3).join('\n');
-    throw new AppleError(`runner build failed for ${destination}:\n${why}`, /platform.*not installed|Unable to find a destination/i.test(r.stderr) ? `install the ${destination} runtime in Xcode › Settings › Components` : undefined);
+    const where = device ? 'the device' : destination;
+    throw new AppleError(`runner build failed for ${where}:\n${why}`, /platform.*not installed|Unable to find a destination/i.test(r.stderr) && !device ? `install the ${destination} runtime in Xcode › Settings › Components` : deviceHint(`${r.stdout}\n${r.stderr}`));
   }
   return {xctestrun: path.join(dir, 'Build', 'Products', file), built: true, ms: Date.now() - t0};
 };
@@ -209,7 +257,7 @@ export const RUNNER_BUNDLE_ID = 'dev.pitbox.runner.xctrunner';
  * the old process takes the new one with it, and xcodebuild reports "Test crashed with signal kill before
  * establishing connection" — a start that fails once and works on the next call.
  */
-export const clearStaleRunner = async (driver: Pick<AppleDriver, 'stop'>, udid: string, child?: ChildProcess): Promise<void> => {
+export const clearStaleRunner = async (driver: Pick<AppleDriver, 'stop'>, udid: string, child?: ChildProcess, runnerId = RUNNER_BUNDLE_ID): Promise<void> => {
   if (child && child.exitCode === null && child.signalCode === null) {
     const exited = new Promise<void>(r => child.once('exit', () => r()));
     child.kill();
@@ -218,7 +266,7 @@ export const clearStaleRunner = async (driver: Pick<AppleDriver, 'stop'>, udid: 
     await exited;
     clearTimeout(timer);
   }
-  await driver.stop(udid, RUNNER_BUNDLE_ID).catch(() => undefined);
+  await driver.stop(udid, runnerId).catch(() => undefined);
 };
 
 /** Keys whose meaning the runner keeps on visionOS: home (the Digital Crown), enter and del into a text field. */
@@ -268,6 +316,10 @@ export class AppleRunner {
   /** The build the running runner came from, for the record a stopping daemon leaves. */
   #xctestrun?: string;
   #port?: number;
+  /** Whether the device is a physical one: its runner is signed by a team and reached through usbmuxd. */
+  #physical = false;
+  /** The runner app's bundle id on this device (a team's own on a physical one). */
+  #runnerId = RUNNER_BUNDLE_ID;
 
   constructor(driver: AppleDriver, udid: string, bundleId?: string) {
     this.#driver = driver;
@@ -291,11 +343,16 @@ export class AppleRunner {
     this.#answered = false;
     const sim = (await this.#driver.simulators()).find(s => s.udid === this.udid);
     if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
-    if (!sim || sim.state !== 'Booted') throw new AppleError(`simulator ${this.udid} is not booted`);
+    if (!sim || sim.state !== 'Booted') throw new AppleError(sim && isPhysical(sim) ? `device ${this.udid} is not connected` : `simulator ${this.udid} is not booted`, sim && isPhysical(sim) ? 'connect it by cable (or on the same network with "Connect via network" on in Xcode › Devices)' : undefined);
     this.#kind = sim.kind;
-    const {xctestrun} = await buildRunner(sim.kind);
+    const physical = isPhysical(sim);
+    this.#physical = physical;
+    if (physical) await this.#checkUnlocked();
+    const built = physical ? await buildDeviceRunner(this.udid, this.#driver.signingTeam) : await buildRunner(sim.kind);
+    const {xctestrun} = built;
+    this.#runnerId = runnerBundleId(built.team);
     // A runner the last daemon left here, of this build and still answering, is taken over instead of started.
-    const kept = takeKeptRunner(this.udid);
+    const kept = physical ? undefined : takeKeptRunner(this.udid);
     if (kept && !old && kept.xctestrun === xctestrun && kept.version === RUNNER_VERSION && (await tcpOpen(kept.port, '127.0.0.1', 500))) {
       const t0 = Date.now();
       await this.#connect(kept.port).catch(() => undefined);
@@ -308,7 +365,7 @@ export class AppleRunner {
       }
       this.#teardown(false);
     }
-    await clearStaleRunner(this.#driver, this.udid, old);
+    await clearStaleRunner(this.#driver, this.udid, old, this.#runnerId);
     const port = await freePort();
     // xcodebuild boots a shut-down destination: a runner stopped meanwhile (the simulator given back) never starts.
     if (this.#stopped) throw new AppleError(`runner for ${this.udid} was stopped while it started`);
@@ -316,7 +373,7 @@ export class AppleRunner {
     let fallback: string | undefined;
     // Without xcodebuild the runner answers in under half the time: no xcodebuild start, no install of the
     // runner on every start, no launch held while Xcode's tools attach to it. Any failure falls back to xcodebuild.
-    if (AppleRunner.direct && startsDirect(sim) && !directFailed.has(`${xctestrun}|${sim.runtime}`)) {
+    if (!physical && AppleRunner.direct && startsDirect(sim) && !directFailed.has(`${xctestrun}|${sim.runtime}`)) {
       fallback = await this.#startDirect(xctestrun, port).then(
         () => undefined,
         (e: Error) => e.message,
@@ -353,7 +410,7 @@ export class AppleRunner {
         this.#teardown();
         throw new AppleError(`runner for ${this.udid} was stopped while it started`);
       }
-      if (exited) throw new AppleError(`runner exited before it answered: ${output.trim().split('\n').filter(l => /error|fail/i.test(l)).slice(-3).join(' ') || output.trim().split('\n').slice(-2).join(' ')}`);
+      if (exited) throw new AppleError(`runner exited before it answered: ${output.trim().split('\n').filter(l => /error|fail/i.test(l)).slice(-3).join(' ') || output.trim().split('\n').slice(-2).join(' ')}`, physical ? deviceHint(output) : undefined);
       if (Date.now() > deadline) {
         this.#teardown();
         throw new AppleError('runner did not start in 180s', output.trim().split('\n').slice(-3).join(' '));
@@ -409,28 +466,35 @@ export class AppleRunner {
   /** How long a runner launched by simctl gets to answer before xcodebuild starts it instead. */
   static directTimeoutMs = 30_000;
 
+  /** A locked device lets nothing be launched or driven: said up front, not after xcodebuild's minutes of retries. */
+  async #checkUnlocked() {
+    const lock = await this.#driver.physical.lockState(this.udid).catch(() => 'unlocked');
+    if (lock !== 'unlocked') throw new AppleError(`device ${this.udid} is ${lock}`, 'unlock it and keep it awake while testing: Settings › Display & Brightness › Auto-Lock › Never');
+  }
+
   async #afterStart() {
     const notice = runnerNotice(await this.call<{platform?: string; animationWaitOff?: boolean}>('info', {}, 30_000).catch(() => ({})));
     if (notice) this.notices.push(notice);
     if (this.bundleId) await this.call('activate', {}, 30_000).catch(() => undefined);
   }
 
-  #connect(port: number) {
-    return new Promise<void>((resolve, reject) => {
-      const s = net.connect(port, '127.0.0.1');
-      s.setNoDelay(true);
-      s.once('connect', () => {
-        this.#socket = s;
-        s.on('close', () => this.#fail(new AppleError('runner connection closed')));
-        resolve();
-      });
-      s.once('error', e => {
-        s.destroy();
-        if (this.#socket === s) this.#fail(e);
-        reject(e);
-      });
-      s.on('data', (d: Buffer) => this.#onData(d));
-    });
+  /** Connects to the runner's port: the Mac's own for a simulator, the device's loopback through usbmuxd otherwise. */
+  async #connect(port: number) {
+    const s = this.#physical
+      ? await muxConnect(this.udid, port)
+      : await new Promise<net.Socket>((resolve, reject) => {
+          const c = net.connect(port, '127.0.0.1');
+          c.once('connect', () => resolve(c));
+          c.once('error', e => {
+            c.destroy();
+            reject(e);
+          });
+        });
+    s.setNoDelay(true);
+    this.#socket = s;
+    s.on('close', () => this.#fail(new AppleError('runner connection closed')));
+    s.on('error', e => this.#socket === s && this.#fail(e));
+    s.on('data', (d: Buffer) => this.#onData(d));
   }
 
   #onData(d: Buffer) {
@@ -470,7 +534,7 @@ export class AppleRunner {
     if (kill && this.#child && this.#child.exitCode === null) this.#child.kill();
     this.#child = undefined;
     // A runner launched by simctl has no xcodebuild to take it along: the app itself is ended.
-    if (kill && this.#direct) void this.#driver.stop(this.udid, RUNNER_BUNDLE_ID).catch(() => undefined);
+    if (kill && this.#direct) void this.#driver.stop(this.udid, this.#runnerId).catch(() => undefined);
     this.#direct = false;
   }
 

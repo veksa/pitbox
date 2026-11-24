@@ -283,6 +283,11 @@ export const configSchema = z.object({
        * first boot. The first one made for a model is created as before, and its template made in the background.
        */
       templates: z.boolean().optional(),
+      /**
+       * The Apple Development team (`ABCDE12345`) that signs the runner for a physical iPhone or iPad. Without it, the
+       * only team with a development certificate in the keychain; a free Personal Team works.
+       */
+      team: z.string().regex(/^[A-Z0-9]{10}$/).optional(),
     })
     .optional(),
   /**
