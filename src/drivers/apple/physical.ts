@@ -332,6 +332,21 @@ type Settings = {fontScale?: number; dark?: boolean; animations?: boolean; size?
  * What the Apple driver does on a physical device, through devicectl. Gaps of the device tooling are reported as
  * unsupported with what to do instead, never emulated silently.
  */
+/** Where pitbox installed each app on each device from (`<udid> <bundle id>` → path), kept across daemons. */
+const sourcesFile = () => path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'device-installs.json');
+const installSources = (): Record<string, string> => {
+  try {
+    return JSON.parse(fs.readFileSync(sourcesFile(), 'utf8')) as Record<string, string>;
+  } catch {
+    return {};
+  }
+};
+const rememberSource = (udid: string, bundleId: string, from: string) => {
+  const all = {...installSources(), [`${udid} ${bundleId}`]: from};
+  fs.mkdirSync(path.dirname(sourcesFile()), {recursive: true});
+  fs.writeFileSync(sourcesFile(), JSON.stringify(all, null, 1));
+};
+
 export class PhysicalDevices {
   readonly #xcrun: string;
   #kept?: {at: number; list: Promise<Simulator[]>};
@@ -373,7 +388,25 @@ export class PhysicalDevices {
     const r = await this.#json<{installedApplications?: {bundleID?: string; installationURL?: string}[]}>(['device', 'install', 'app', '--device', udid, bundle], 'install', 600_000);
     const app = r.installedApplications?.[0];
     if (app?.bundleID && app.installationURL) this.#urls.set(`${udid} ${app.bundleID}`, app.installationURL);
+    if (app?.bundleID) rememberSource(udid, app.bundleID, path.resolve(bundle));
     return {ms: Date.now() - t0, replaced: false, ...(app?.bundleID ? {bundleId: app.bundleID} : {})};
+  }
+
+  /**
+   * Installs the app again from where pitbox last installed it from, so it gets a new data container. iOS keeps an
+   * app's UserDefaults in memory (cfprefsd) by the container's path and does not notice a plist copied over the one
+   * it read: only a new container makes the app read what is restored. The app's permissions are asked again.
+   */
+  async reinstall(udid: string, bundleId: string) {
+    const from = installSources()[`${udid} ${bundleId}`];
+    if (!from || !fs.existsSync(from)) {
+      throw new AppleError(
+        `restoring ${bundleId}'s data on a device installs the app again, and pitbox does not know where it came from${from ? ` (${from} is gone)` : ''}`,
+        'install it once with `pitbox install <path to MyApp.app or .ipa>`: iOS keeps the app\'s UserDefaults cached until it gets a new container',
+      );
+    }
+    await this.uninstall(udid, bundleId);
+    await this.install(udid, from);
   }
 
   async uninstall(udid: string, bundleId: string) {
@@ -462,6 +495,42 @@ export class PhysicalDevices {
     const since = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
     if (!lines.length) return [`(no lines${exe ? ` from ${exe}` : ''} since ${since}, when pitbox began reading the device's log)`];
     return fresh ? [`(the device's log as read from ${since}: earlier lines are not kept on the device for pitbox)`, ...lines] : lines;
+  }
+
+  /**
+   * The app's data container on the device, through devicectl's file service: copied out to `dir` whole, or
+   * replaced by `dir`'s contents (an empty folder wipes it; the system makes Documents, Library and tmp again).
+   */
+  async containerOut(udid: string, bundleId: string, dir: string) {
+    fs.rmSync(dir, {recursive: true, force: true});
+    fs.mkdirSync(path.dirname(dir), {recursive: true});
+    await this.#json(['device', 'copy', 'from', '--device', udid, '--domain-type', 'appDataContainer', '--domain-identifier', bundleId, '--source', '.', '--destination', dir], 'copy the app\'s data', 120_000).catch(e => {
+      throw this.#containerError(e as AppleError, bundleId);
+    });
+  }
+
+  async containerIn(udid: string, bundleId: string, dir: string) {
+    await this.#json(['device', 'copy', 'to', '--device', udid, '--domain-type', 'appDataContainer', '--domain-identifier', bundleId, '--source', dir, '--destination', '.', '--remove-existing-content', 'true'], 'replace the app\'s data', 120_000).catch(e => {
+      throw this.#containerError(e as AppleError, bundleId);
+    });
+  }
+
+  #containerError(e: AppleError, bundleId: string) {
+    // The file service serves the containers of apps built for development (signed with get-task-allow) only.
+    return /not (be )?found|no such|unknown|not installed|doesn.t exist/i.test(e.message)
+      ? new AppleError(`no data container for ${bundleId} on the device`, 'is the app installed, and a development build? `apps` lists bundle ids')
+      : e;
+  }
+
+  /** Wipes what the app wrote, with the app stopped: its next launch is a first one (its permissions stay). */
+  async clear(udid: string, bundleId: string) {
+    await this.stop(udid, bundleId);
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-empty-'));
+    try {
+      await this.containerIn(udid, bundleId, empty);
+    } finally {
+      fs.rmSync(empty, {recursive: true, force: true});
+    }
   }
 
   async pid(udid: string, bundleId: string): Promise<number | undefined> {

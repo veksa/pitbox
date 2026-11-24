@@ -486,9 +486,9 @@ export class AppleDriver {
     if (r.code !== 0 && !/found nothing to terminate|not running/i.test(r.stderr)) throw new AppleError(`terminate failed: ${r.stderr.trim()}`);
   }
 
-  /** Wipes the app's data container (Documents, Library, tmp) — simctl has no `pm clear`. */
+  /** Wipes the app's data container (Documents, Library, tmp) — simctl has no `pm clear`; on a device, through devicectl. */
   async clear(udid: string, bundleId: string) {
-    if (physicalUdid(udid)) throw new AppleError('an app\'s data on a device cannot be wiped from the Mac', 'reinstall the app (uninstall, then install) for a clean start');
+    if (physicalUdid(udid)) return this.physical.clear(udid, bundleId);
     await this.stop(udid, bundleId);
     const dir = (await this.#ok(['get_app_container', udid, bundleId, 'data'], 'get_app_container')).trim();
     if (!dir || !fs.existsSync(dir) || !dir.includes('/Containers/Data/Application/')) throw new AppleError(`no data container for ${bundleId}`);
@@ -500,7 +500,7 @@ export class AppleDriver {
     for (const sub of ['Documents', 'Library', 'tmp']) fs.mkdirSync(path.join(dir, sub), {recursive: true});
   }
 
-  /** Where a named copy of an app's data lives on this Mac: next to pitbox's other caches, per simulator. */
+  /** Where a named copy of an app's data lives on this Mac: next to pitbox's other caches, per simulator or device. */
   #appStateDir(udid: string, bundleId: string, name: string) {
     return path.join(os.homedir(), 'Library', 'Caches', 'pitbox', 'app-states', udid, bundleId, name);
   }
@@ -512,14 +512,17 @@ export class AppleDriver {
   }
 
   /**
-   * A simulator's side of a named state: a copy of the app's data container (simctl has no snapshot of a whole
-   * simulator). The app is stopped first, so nothing is half written; whether it was running is returned, so the
+   * A simulator's or device's side of a named state: a copy of the app's data container (simctl has no snapshot
+   * of a whole simulator). The app is stopped first, so nothing is half written; whether it was running is returned, so the
    * caller can launch it again.
    */
   async appStateSave(udid: string, bundleId: string, name: string): Promise<{wasRunning: boolean}> {
-    if (physicalUdid(udid)) throw new AppleError('named app states are kept for simulators only', 'start from a fresh install on a device, or use a simulator');
     const wasRunning = (await this.pid(udid, bundleId).catch(() => undefined)) !== undefined;
     await this.stop(udid, bundleId);
+    if (physicalUdid(udid)) {
+      await this.physical.containerOut(udid, bundleId, this.#appStateDir(udid, bundleId, name));
+      return {wasRunning};
+    }
     const dir = await this.#container(udid, bundleId);
     const dest = this.#appStateDir(udid, bundleId, name);
     fs.rmSync(dest, {recursive: true, force: true});
@@ -530,10 +533,13 @@ export class AppleDriver {
 
   /** Brings the app's data back as it was saved, with the app stopped; the next launch starts from it. */
   async appStateRestore(udid: string, bundleId: string, name: string) {
-    if (physicalUdid(udid)) throw new AppleError('named app states are kept for simulators only', 'start from a fresh install on a device, or use a simulator');
     const src = this.#appStateDir(udid, bundleId, name);
-    if (!fs.existsSync(src)) throw new AppleError(`no saved app data "${name}" for ${bundleId} on this simulator`);
+    if (!fs.existsSync(src)) throw new AppleError(`no saved app data "${name}" for ${bundleId} on this ${physicalUdid(udid) ? 'device' : 'simulator'}`);
     await this.stop(udid, bundleId);
+    if (physicalUdid(udid)) {
+      await this.physical.reinstall(udid, bundleId);
+      return this.physical.containerIn(udid, bundleId, src);
+    }
     const dir = await this.#container(udid, bundleId);
     for (const entry of fs.readdirSync(dir)) {
       if (entry.startsWith('.com.apple.mobile_container_manager')) continue;

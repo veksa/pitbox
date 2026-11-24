@@ -1,5 +1,8 @@
-import {describe, expect, it} from 'vitest';
-import {crashFiles, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {describe, expect, it, vi} from 'vitest';
+import {crashFiles, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, PhysicalDevices, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
 import {runnerBundleId, signingArgs} from './drivers/apple/runner.ts';
 import {formatLog, parseSyslog} from './drivers/apple/syslog.ts';
 import {builtinRules} from './doctor/rules.ts';
@@ -153,5 +156,19 @@ describe('physical apple devices', () => {
     expect(formatLog(entries, {exe: 'MyApp'})).toEqual(['10:38:11 N MyApp[123] started', '10:38:12 E MyApp[123] request failed\nsecond line']);
     expect(formatLog(entries, {level: 'error', lines: 1})).toEqual(['10:38:12 E MyApp[123] request failed\nsecond line']);
     expect(formatLog(entries, {exe: 'MyApp', level: 'debug', grep: 'tick'})).toEqual(['10:38:10 D MyApp[123] tick']);
+  });
+  it('restores app data only by installing the app again, and says how when it cannot', async () => {
+    // iOS keeps UserDefaults cached by the container's path: a restore without a new container is a silent no-op.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-home-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(home);
+    try {
+      await expect(new PhysicalDevices('xcrun').reinstall(UDID, 'com.example.app')).rejects.toThrow(/does not know where it came from/);
+      fs.mkdirSync(path.join(home, 'Library', 'Caches', 'pitbox'), {recursive: true});
+      fs.writeFileSync(path.join(home, 'Library', 'Caches', 'pitbox', 'device-installs.json'), JSON.stringify({[`${UDID} com.example.app`]: path.join(home, 'MyApp.app')}));
+      await expect(new PhysicalDevices('xcrun').reinstall(UDID, 'com.example.app')).rejects.toThrow(/is gone/);
+    } finally {
+      vi.restoreAllMocks();
+      fs.rmSync(home, {recursive: true, force: true});
+    }
   });
 });
