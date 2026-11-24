@@ -37,4 +37,16 @@ final class PitboxNotificationTests: XCTestCase {
     XCTAssertEqual(Core.resolve("archive", actions: [reply, read]), .unknown([reply, read]))
     XCTAssertEqual(Core.describe([reply]), [#"REPLY "Reply""#])
   }
+
+  func testReadsAPushToShowOnADevice() throws {
+    let c = try Core.Command.parse(Data(#"{"id":"p1","deliver":{"aps":{"alert":{"title":"Order shipped","body":"Track it"},"category":"ORDER","badge":3,"sound":"default"},"order":42}}"#.utf8))
+    let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(c.deliver)) as? [String: Any])
+    XCTAssertEqual(payload["order"] as? Int, 42)
+    let shown = Core.shown(payload)
+    XCTAssertEqual(shown, Core.Shown(title: "Order shipped", body: "Track it", category: "ORDER", badge: 3, sound: "default"))
+    XCTAssertNil(try Core.Command.parse(Data(#"{"id":"r1"}"#.utf8)).deliver)
+    XCTAssertEqual(Core.shown(["aps": ["alert": "Hi"]]).body, "Hi")
+    XCTAssertTrue(Core.shown(["aps": ["content-available": 1]]).silent)
+    XCTAssertFalse(Core.shown(["aps": ["content-available": 1, "alert": "Hi"]]).silent)
+  }
 }

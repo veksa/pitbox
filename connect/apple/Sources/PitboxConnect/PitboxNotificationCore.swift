@@ -23,6 +23,9 @@ enum PitboxNotificationCore {
     let text: String?
     /// Past it, pitbox no longer waits: the command is answered and not applied.
     let deadline: Date?
+    /// An APNs payload to show as a notification (a physical device, which takes no push from the Mac), as JSON;
+    /// nil: a response to a delivered notification.
+    var deliver: Data? = nil
 
     static func parse(_ data: Data) throws -> Command {
       guard let o = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CoreError("the command is not a JSON object") }
@@ -33,7 +36,8 @@ enum PitboxNotificationCore {
         notification: o["notification"] as? String,
         title: o["title"] as? String,
         text: o["text"] as? String,
-        deadline: (o["deadline"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+        deadline: (o["deadline"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) },
+        deliver: try (o["deliver"] as? [String: Any]).map { try JSONSerialization.data(withJSONObject: $0) }
       )
     }
 
@@ -109,6 +113,38 @@ enum PitboxNotificationCore {
   }
 
   static func describe(_ actions: [Action]) -> [String] { actions.map { "\($0.id) \"\($0.title)\"" } }
+
+  /// What a notification shows of an APNs payload's `aps`, as the system reads it.
+  struct Shown: Equatable {
+    var title = ""
+    var subtitle = ""
+    var body = ""
+    var category = ""
+    var thread = ""
+    var badge: Int?
+    var sound: String?
+    /// `content-available` and nothing to show: the app is woken, no banner.
+    var silent = false
+  }
+
+  static func shown(_ payload: [String: Any]) -> Shown {
+    let aps = payload["aps"] as? [String: Any] ?? [:]
+    var s = Shown()
+    if let alert = aps["alert"] as? String {
+      s.body = alert
+    } else if let alert = aps["alert"] as? [String: Any] {
+      s.title = alert["title"] as? String ?? ""
+      s.subtitle = alert["subtitle"] as? String ?? ""
+      s.body = alert["body"] as? String ?? ""
+    }
+    s.category = aps["category"] as? String ?? ""
+    s.thread = aps["thread-id"] as? String ?? ""
+    s.badge = (aps["badge"] as? NSNumber)?.intValue
+    s.sound = aps["sound"] as? String ?? ((aps["sound"] as? [String: Any])?["name"] as? String)
+    let available = (aps["content-available"] as? NSNumber)?.intValue == 1
+    s.silent = available && s.title.isEmpty && s.subtitle.isEmpty && s.body.isEmpty
+    return s
+  }
 
   /// The folder in the app's caches: in/ (commands), out/ (answers).
   struct Folder {

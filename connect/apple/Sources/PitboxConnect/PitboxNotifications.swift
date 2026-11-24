@@ -56,7 +56,55 @@ public enum PitboxNotifications {
           try? folder.answer(cmd.id, Core.Outcome(ok: false, error: "the command came after pitbox stopped waiting"))
           continue
         }
-        respond(cmd) { outcome in try? folder.answer(cmd.id, outcome) }
+        if let payload = cmd.deliver {
+          deliver(cmd.id, payload) { outcome in try? folder.answer(cmd.id, outcome) }
+        } else {
+          respond(cmd) { outcome in try? folder.answer(cmd.id, outcome) }
+        }
+      }
+    }
+  }
+
+  /// Shows a push on a physical device, where the Mac cannot send one: the payload becomes a local notification with
+  /// the whole payload as its userInfo, so the app's delegate sees it as it sees a push (`willPresent` in front, then
+  /// `didReceive` on a tap). A background push (`content-available` alone) goes to the app delegate's
+  /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`.
+  static func deliver(_ id: String, _ json: Data, done: @escaping @Sendable (Core.Outcome) -> Void) {
+    guard let payload = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any] else {
+      return done(Core.Outcome(ok: false, error: "the payload is not a JSON object"))
+    }
+    let shown = Core.shown(payload)
+    if shown.silent {
+      let app = UIApplication.shared
+      guard let delegate = app.delegate, delegate.responds(to: #selector(UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:))) else {
+        return done(Core.Outcome(ok: false, error: "the app delegate does not implement application(_:didReceiveRemoteNotification:fetchCompletionHandler:): nothing would hear a background push"))
+      }
+      var answered = false
+      let finish = { (completed: Bool) in
+        guard !answered else { return }
+        answered = true
+        done(Core.Outcome(ok: true, notification: id, completed: completed))
+      }
+      delegate.application?(app, didReceiveRemoteNotification: payload) { _ in DispatchQueue.main.async { finish(true) } }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finish(false) }
+      return
+    }
+    let content = UNMutableNotificationContent()
+    content.title = shown.title
+    content.subtitle = shown.subtitle
+    content.body = shown.body
+    content.categoryIdentifier = shown.category
+    content.threadIdentifier = shown.thread
+    if let badge = shown.badge { content.badge = NSNumber(value: badge) }
+    if let sound = shown.sound { content.sound = sound == "default" ? .default : UNNotificationSound(named: UNNotificationSoundName(sound)) }
+    content.userInfo = payload
+    let center = UNUserNotificationCenter.current()
+    center.getNotificationSettings { settings in
+      guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral else {
+        return done(Core.Outcome(ok: false, error: "the app may not show notifications (\(settings.authorizationStatus.rawValue)): it has to ask and be allowed first, as for a real push"))
+      }
+      center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
+        done(error.map { Core.Outcome(ok: false, error: "the notification was not added: \($0.localizedDescription)") } ?? Core.Outcome(ok: true, notification: id, title: shown.title.isEmpty ? nil : shown.title, category: shown.category.isEmpty ? nil : shown.category))
       }
     }
   }
