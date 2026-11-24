@@ -65,7 +65,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   named `state` keeps the app's data instead of a snapshot (a debug build, through `run-as`). `network offline` turns airplane mode on and removes the stand's forwards too — USB carries
   `adb reverse` past airplane mode — and `network online` brings both back; over wireless adb it is refused,
   airplane mode would cut adb itself. Phones that keep adb from granting permissions or injecting taps (HyperOS,
-  MIUI: "USB debugging (Security settings)", then a reboot) are named in the error.
+  MIUI: "USB debugging (Security settings)", then a reboot) are named in the error. An install that Google Play
+  Protect holds with "Scan app?" fails after 30 s saying so, instead of hanging; answered, it finishes on its own.
 - **TV:** `key` with up/down/left/right/center/back and remote keys (play, next, channel_up, guide…);
   `inspect what=focus`; `inspect what=focus_map` audits D-pad reachability.
 - **Foldables, tablets, desktops:** `device action=posture value=closed|half|open|reset`, `device action=rotate

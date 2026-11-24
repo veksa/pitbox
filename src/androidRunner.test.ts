@@ -5,7 +5,7 @@
 import net from 'node:net';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {AndroidDriver} from './drivers/android/driver.ts';
-import {AndroidError, installFailure, securityHint, wirelessSerial} from './drivers/android/driver.ts';
+import {AndroidDriver as Driver, AndroidError, installFailure, securityHint, wirelessSerial} from './drivers/android/driver.ts';
 import {AndroidRunner, RUNNER_VERSION, retriedRead} from './drivers/android/runner.ts';
 
 type Device = {
@@ -190,5 +190,36 @@ describe('wireless adb', () => {
     expect(wirelessSerial('adb-0123456789-AbCdEf._adb-tls-connect._tcp')).toBe(true);
     expect(wirelessSerial('0123abcd')).toBe(false);
     expect(wirelessSerial('emulator-5554')).toBe(false);
+  });
+});
+
+describe("Google Play Protect's question at install", () => {
+  const focus = (protect: boolean) =>
+    protect ? '  mCurrentFocus=Window{1a2b u0 com.android.vending/com.google.android.finsky.protectdialogs.activity.PlayProtectDialogsActivity}\n' : '  mCurrentFocus=Window{1a2b u0 com.example.app/com.example.app.MainActivity}\n';
+  const driver = (protect: () => boolean, installMs: number) => {
+    const d = new Driver('/usr/bin/false', {playProtect: {pollMs: 20, waitMs: 150}});
+    d.adb = async (args: string[]) => {
+      if (args[0] === 'install') {
+        await new Promise(r => setTimeout(r, installMs));
+        return {code: 0, stdout: 'Performing Streamed Install\nSuccess\n', stderr: ''};
+      }
+      return {code: 0, stdout: focus(protect()), stderr: ''};
+    };
+    return d;
+  };
+  const apk = new URL('../package.json', import.meta.url).pathname;
+
+  it('says the install waits on it once it has stayed up, instead of hanging silently', async () => {
+    const err = await driver(() => true, 5000).install('0123abcd', apk).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AndroidError);
+    expect(String((err as AndroidError).message)).toMatch(/waits on Google Play Protect/);
+    expect((err as AndroidError).hint).toMatch(/Verify apps over USB/);
+  });
+
+  it('lets an install through when the question was answered in time, or never came', async () => {
+    let up = true;
+    setTimeout(() => (up = false), 60);
+    expect(await driver(() => up, 300).install('0123abcd', apk)).toMatchObject({replaced: false});
+    expect(await driver(() => false, 300).install('0123abcd', apk)).toMatchObject({replaced: false});
   });
 });

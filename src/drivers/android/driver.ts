@@ -424,6 +424,9 @@ export const mergeConnectPrefs = (xml: string, hosts: Record<string, string>): s
 /** A link no activity on the device takes (`am start` says «unable to resolve Intent»): a build without its handler. */
 export const isUnresolvedLink = (error: unknown): boolean => /unable to resolve Intent/i.test(error instanceof Error ? error.message : String(error));
 
+/** Google Play Protect's question about an app from adb ("Scan app for security?"), as the focused window. */
+const PLAY_PROTECT = /com\.android\.vending\/\S*(protectdialogs|PlayProtect)/i;
+
 export class AndroidDriver {
   readonly adbPath: string;
   readonly #runningDirs: string[];
@@ -431,10 +434,12 @@ export class AndroidDriver {
   readonly #kill: (pid: number) => void;
   readonly #start: (pid: number) => number | undefined;
   readonly #cacheMs: number;
+  readonly #playProtect: {pollMs: number; waitMs: number};
 
-  /** `adbPath`, `runningDirs`, `alive`, `kill`, `start` and `cacheMs` stand in for the machine's (tests). */
-  constructor(adbPath?: string, opts: {runningDirs?: string[]; alive?: (pid: number) => boolean; kill?: (pid: number) => void; start?: (pid: number) => number | undefined; cacheMs?: number} = {}) {
+  /** `adbPath`, `runningDirs`, `alive`, `kill`, `start`, `cacheMs` and `playProtect` stand in for the machine's (tests). */
+  constructor(adbPath?: string, opts: {runningDirs?: string[]; alive?: (pid: number) => boolean; kill?: (pid: number) => void; start?: (pid: number) => number | undefined; cacheMs?: number; playProtect?: {pollMs: number; waitMs: number}} = {}) {
     this.#cacheMs = opts.cacheMs ?? 1500;
+    this.#playProtect = opts.playProtect ?? {pollMs: 3000, waitMs: 30_000};
     this.#runningDirs = opts.runningDirs ?? runningDirs();
     this.#alive = opts.alive ?? emulatorAlive;
     this.#kill = opts.kill ?? killTree;
@@ -766,12 +771,12 @@ export class AndroidDriver {
     const t0 = Date.now();
     let grant = ['-g'];
     let note: string | undefined;
-    let r = await this.adb(['install', '-r', '-d', ...grant, apk], serial, {timeoutMs: 600_000});
+    let r = await this.#installApk(serial, ['install', '-r', '-d', ...grant, apk]);
     // A phone that will not let adb grant permissions at install: the app goes in without them, and asks as it would.
     if (/INSTALL_GRANT_RUNTIME_PERMISSIONS/.test(`${r.stdout}${r.stderr}`)) {
       grant = [];
       note = `permissions not granted at install: the phone refuses it, so the app asks for them\nhint: ${SECURITY_SETTINGS_HINT}`;
-      r = await this.adb(['install', '-r', '-d', apk], serial, {timeoutMs: 600_000});
+      r = await this.#installApk(serial, ['install', '-r', '-d', apk]);
     }
     const out = `${r.stdout}\n${r.stderr}`;
     let replaced = false;
@@ -783,7 +788,7 @@ export class AndroidDriver {
         throw new AndroidError(why, `pass replace=true to uninstall ${pkg ?? 'it'} first (its data is lost)`);
       }
       await this.adb(['uninstall', pkg], serial, {timeoutMs: 60_000});
-      r = await this.adb(['install', '-r', '-d', ...grant, apk], serial, {timeoutMs: 600_000});
+      r = await this.#installApk(serial, ['install', '-r', '-d', ...grant, apk]);
       replaced = true;
     }
     if (!/Success/.test(`${r.stdout}${r.stderr}`)) {
@@ -792,6 +797,37 @@ export class AndroidDriver {
       throw new AndroidError(`install failed: ${reason}`, /INSUFFICIENT_STORAGE/.test(reason) ? 'free space on /data: uninstall something or wipe the emulator' : userRefused ? 'the phone asked whether to install over USB and was not answered: allow it on the phone, or turn on "Install via USB" in Developer options' : securityHint(reason));
     }
     return {ms: Date.now() - t0, replaced, ...(note ? {note} : {})};
+  }
+
+  /**
+   * `adb install`, watched for Google Play Protect: on a device with Play, an app from adb that Play does not know
+   * may bring up "Scan app for security?", and the install waits for that answer without a word — for as long as
+   * nobody is at the device. Once the question has been on screen for 30 s (a person at the device answers sooner), the install is
+   * reported as waiting on it; it still goes on in the background and finishes as soon as someone answers.
+   */
+  async #installApk(serial: string, args: string[]) {
+    const install = this.adb(args, serial, {timeoutMs: 600_000});
+    let done = false;
+    const watch = (async () => {
+      let since: number | undefined;
+      while (!done) {
+        await new Promise(r => setTimeout(r, this.#playProtect.pollMs));
+        if (done) return;
+        const focus = await this.adb(['shell', 'dumpsys window | grep -E "mCurrentFocus|mFocusedApp"'], serial, {timeoutMs: 10_000}).catch(() => undefined);
+        if (done) return;
+        if (!focus || !PLAY_PROTECT.test(focus.stdout)) {
+          since = undefined;
+          continue;
+        }
+        since ??= Date.now();
+        if (Date.now() - since >= this.#playProtect.waitMs) throw new AndroidError('the install waits on Google Play Protect: the device asks whether to scan the app', 'answer it on the device ("Don\'t scan" or "Scan app"), and the install finishes; to stop the question for good, turn off "Verify apps over USB" in Developer options');
+      }
+    })();
+    try {
+      return await Promise.race([install, watch.then(() => install)]);
+    } finally {
+      done = true;
+    }
   }
 
   /**
