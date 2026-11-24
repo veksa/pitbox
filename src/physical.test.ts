@@ -171,7 +171,8 @@ describe('physical apple devices', () => {
       fs.rmSync(home, {recursive: true, force: true});
     }
   });
-  it('keeps devicectl\'s own flags before the launched app\'s arguments', async () => {
+  // A shell script stands in for xcrun, which is only on a Mac anyway.
+  it.skipIf(process.platform === 'win32')('keeps devicectl\'s own flags before the launched app\'s arguments', async () => {
     // `-AppleLanguages (fr)` after the bundle id reads as devicectl's flags unless it follows `--`.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-xcrun-'));
     const fake = path.join(dir, 'xcrun');
