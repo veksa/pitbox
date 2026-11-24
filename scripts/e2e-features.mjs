@@ -114,6 +114,22 @@ export const featureChecks = async ({pitbox, device, dir, platform, bin}) => {
   on(['clear-app']);
   check('clear-app', fresh().code === 0);
 
+  // ---- notifications (iOS): allowed in the app's own prompt, a push from simctl, cleared through the debug hook ----
+  if (!android) {
+    fresh();
+    on(['press', 'id=notifications']);
+    // The prompt is the system's, with no ids on its buttons: its last one allows.
+    const prompt = on(['snapshot', '--system']).out.split('— com.apple.springboard')[1] ?? '';
+    const allow = [...prompt.matchAll(/^(@e\d+) button /gm)].pop()?.[1];
+    if (allow) on(['press', allow]);
+    on(['wait', 'text="notifications allowed"', '10']);
+    const pushed = on(['push', 'title=Clear me', 'body=From simctl']);
+    const cleared = on(['push', 'clear']);
+    const gone = on(['push', 'respond', 'open', 'title=Clear me']);
+    head(cleared.out, 1);
+    check('push clear removes the delivered notification', pushed.code === 0 && cleared.code === 0 && /[1-9]\d* notifications? cleared/.test(cleared.out) && gone.code !== 0 && /no delivered notification/.test(gone.out), [pushed, cleared, gone].map(r => r.out.split('\n')[0]).join(' | '));
+  }
+
   // ---- Live Activities (iOS): started, updated and ended through the example's debug hook ----
   if (!android) {
     fresh();
