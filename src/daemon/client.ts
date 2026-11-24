@@ -2,6 +2,7 @@
 
 import {spawn} from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findConfig} from '../config/load.ts';
@@ -23,17 +24,31 @@ export class DaemonClient {
   }
 
   async call<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 15 * 60_000): Promise<T> {
-    const res = await fetch(`http://127.0.0.1:${this.info.port}/`, {
-      method: 'POST',
-      headers: {'content-type': 'application/json', 'x-pitbox-token': this.info.token, [VERSION_HEADER]: VERSION},
-      body: JSON.stringify({method, params}),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const body = (await res.json()) as {ok: boolean; result?: T; error?: string};
-    if (!body.ok) throw new DaemonError(body.error ?? `daemon error (${res.status})`);
+    const {status, text} = await post(this.info.port, {'content-type': 'application/json', 'x-pitbox-token': this.info.token, [VERSION_HEADER]: VERSION}, JSON.stringify({method, params}), timeoutMs);
+    const body = JSON.parse(text) as {ok: boolean; result?: T; error?: string};
+    if (!body.ok) throw new DaemonError(body.error ?? `daemon error (${status})`);
     return body.result as T;
   }
 }
+
+/**
+ * One call to the daemon over plain http, not fetch: fetch gives up on any answer that takes over five minutes
+ * (undici's headers timeout) with only "fetch failed", and an install that waits on the phone, a native build or a
+ * long flow takes longer. The call's own timeout is the only limit.
+ */
+const post = (port: number, headers: Record<string, string>, body: string, timeoutMs: number) =>
+  new Promise<{status: number; text: string}>((resolve, reject) => {
+    const req = http.request({host: '127.0.0.1', port, method: 'POST', path: '/', headers: {...headers, 'content-length': Buffer.byteLength(body)}}, res => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8')}));
+      res.on('error', reject);
+    });
+    const timer = setTimeout(() => req.destroy(new Error(`the daemon did not answer within ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+    req.on('close', () => clearTimeout(timer));
+    req.on('error', reject);
+    req.end(body);
+  });
 
 const readInfo = (stateDir: string): DaemonInfo | undefined => {
   try {
