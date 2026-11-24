@@ -125,16 +125,21 @@ export type LiveActivityHost = {
 export const liveActivityDir = (container: string) => path.join(container, 'Library', 'Caches', 'pitbox', 'liveactivity');
 export const liveActivityNotification = (bundleId: string) => `dev.pitbox.liveactivity.${bundleId}`;
 
-/** The hook's state for an app on a simulator; undefined when the app has no hook (or is not installed). */
+/**
+ * The hook's state for an app; undefined when the app has no hook (or is not installed). A simulator's is read from
+ * the Mac's disk, a physical device's copied off the device.
+ */
 export const readLiveActivityState = async (host: LiveActivityHost, udid: string, bundleId: string): Promise<LiveActivityState | undefined> => {
-  let dir: string;
+  let text: string | undefined;
   try {
-    dir = liveActivityDir(await host.container(udid, bundleId));
+    const files = host.files?.(udid, bundleId);
+    text = files ? await files.get(path.posix.join(liveActivityDir(''), 'state.json')) : fs.readFileSync(path.join(liveActivityDir(await host.container(udid, bundleId)), 'state.json'), 'utf8');
   } catch {
     return undefined;
   }
+  if (text === undefined) return undefined;
   try {
-    const s = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')) as Partial<LiveActivityState>;
+    const s = JSON.parse(text) as Partial<LiveActivityState>;
     return {version: Number(s.version ?? 1), types: Array.isArray(s.types) ? s.types : [], tokens: Array.isArray(s.tokens) ? s.tokens : [], activities: Array.isArray(s.activities) ? s.activities : []};
   } catch {
     return undefined;

@@ -4,7 +4,7 @@
 
 import {describe, expect, it} from 'vitest';
 import type {HookFiles} from './drivers/apple/driver.ts';
-import {deliverToHook, type LiveActivityHost} from './push/liveactivity.ts';
+import {deliverToHook, readLiveActivityState, type LiveActivityHost} from './push/liveactivity.ts';
 import {PushCenter} from './push/push.ts';
 import {notificationDir, notificationNotice} from './push/respond.ts';
 
@@ -87,5 +87,20 @@ describe('push status and clear on a device', () => {
     expect(r.lines[0]).toMatch(/notification hook \(PitboxNotifications/);
     expect(r.lines.join('\n')).not.toMatch(/simctl/);
     await expect(center.clear({})).rejects.toThrow(/unsupported on an iPhone or iPad/);
+  });
+});
+
+describe('live activity state on a device', () => {
+  it('copies the hook\'s state off the device, and reads none when the app has no hook', async () => {
+    const files = new Map([['Library/Caches/pitbox/liveactivity/state.json', JSON.stringify({version: 1, types: ['DeliveryAttributes'], tokens: [], activities: []})]]);
+    const host = {
+      container: async () => Promise.reject(new Error('no simulator container on a device')),
+      notify: async () => undefined,
+      launch: async () => undefined,
+      files: () => ({put: async () => undefined, get: async (rel: string) => files.get(rel)}),
+    } as LiveActivityHost;
+    expect((await readLiveActivityState(host, UDID, 'com.example.app'))?.types).toEqual(['DeliveryAttributes']);
+    files.clear();
+    expect(await readLiveActivityState(host, UDID, 'com.example.app')).toBeUndefined();
   });
 });
