@@ -264,3 +264,28 @@ describe('mic on an iOS simulator', () => {
     expect(fs.existsSync(path.join(dir, 'mic-input.json'))).toBe(false);
   });
 });
+
+describe('media on a physical iPhone', () => {
+  const udid = '00008150-000A1B2C3D4E5F60';
+  const center = new MediaCenter({
+    target: async () => ({platform: 'apple', id: udid, s: {xcrun: 'xcrun', simctl: async () => ({code: 1, stdout: '', stderr: 'Invalid device'})}} as unknown as MediaTarget),
+    root: () => os.tmpdir(),
+    stateDir: () => os.tmpdir(),
+  } as unknown as ConstructorParameters<typeof MediaCenter>[0]);
+
+  it('says what the device cannot do instead of a simulator tool\'s error', async () => {
+    await expect(center.capture(udid, 'start', {what: 'screen'})).rejects.toThrow(/records no video of an iPhone's or iPad's screen.*\nhint: QuickTime/s);
+    await expect(center.capture(udid, 'start', {what: 'audio'})).rejects.toThrow(/stays on the device/);
+    const pic = path.join(os.tmpdir(), 'pitbox-device-pic.png');
+    fs.writeFileSync(pic, '');
+    try {
+      await expect(center.library(udid, `add ${pic}`)).rejects.toThrow(/no way into an iPhone's or iPad's photo library/);
+    } finally {
+      fs.rmSync(pic);
+    }
+    await expect(center.audio(udid, 'volume music 5')).rejects.toThrow(/set with its buttons/);
+    await expect(center.mic(udid, 'tone 440 200ms')).rejects.toThrow(/records its own microphone/);
+    await expect(center.camera(udid, 'image a.png')).rejects.toThrow(/sees the room/);
+    await expect(center.call(udid, 'incoming')).rejects.toThrow(/no call to an iPhone/);
+  });
+});

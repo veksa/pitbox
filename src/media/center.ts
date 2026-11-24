@@ -19,6 +19,7 @@ import {analyze, convert, decodeWav, describe, dominantFreq, encodeWav, parseDb,
 import {describeSound, parseMic, renderSound, type MicCommand} from './sound.ts';
 import {DEFAULT_LOOPBACK, InputSwitch, inSimulator, noLoopback, outputIndex, playTo, switchAudio, type HostInput, type Recorder, type Restored} from './loopback.ts';
 import {RemoteApple} from '../remote/appleRemote.ts';
+import {physicalUdid} from '../drivers/apple/physical.ts';
 
 export type MediaTarget = {platform: 'android'; id: string; a: AndroidDriver} | {platform: 'apple'; id: string; s: AppleDevices};
 
@@ -47,6 +48,17 @@ export const CANNOT = {
   appleCall: 'an iOS simulator has no phone: nothing places or ends a call\nhint: drive the interruption from the app side (AVAudioSession interruption notifications in a test)',
   appleVolume: 'an iOS simulator follows the Mac\'s volume; simctl sets none',
   device: 'only an emulator has this: a phone takes it from the world around it',
+} as const;
+
+/** The same for a physical iPhone or iPad: it takes these from the world around it, and the Mac reaches none of them. */
+export const CANNOT_ON_DEVICE = {
+  appleMic: 'an iPhone or iPad records its own microphone: the Mac plays nothing into it\nhint: play the sound next to the device, or give the app audio behind a test seam; a simulator takes mic sounds',
+  appleAudioOut: 'the sound an iPhone or iPad plays stays on the device: the Mac records none of it\nhint: assert on the app\'s own player state',
+  appleCamera: 'an iPhone\'s or iPad\'s camera sees the room: pitbox feeds it nothing\nhint: point it at a picture, or give the app images behind a test seam',
+  appleCall: 'the Mac places no call to an iPhone\nhint: call it from another phone, or drive the interruption from the app side',
+  appleVolume: 'an iPhone\'s or iPad\'s volume is set with its buttons or Control Center: nothing on the Mac sets or reads it',
+  screen: 'devicectl records no video of an iPhone\'s or iPad\'s screen (its screen-record is for other devices)\nhint: QuickTime Player › New Movie Recording with the device as the camera, a simulator for capture, or `shot` for stills',
+  library: 'the Mac has no way into an iPhone\'s or iPad\'s photo library\nhint: add the pictures on the device (AirDrop), or put files in the app\'s data; a simulator takes library add',
 } as const;
 
 type Mic = {label: string; secs: number; started: number; abort: AbortController; done: Promise<unknown>; heardBy?: string[]};
@@ -161,7 +173,7 @@ export class MediaCenter {
 
   async #android(device: string | undefined, what: keyof typeof CANNOT): Promise<{serial: string; a: AndroidDriver}> {
     const t = await this.#d.target(device);
-    if (t.platform === 'apple') throw new Error(CANNOT[what]);
+    if (t.platform === 'apple') throw new Error(physicalUdid(t.id) ? CANNOT_ON_DEVICE[what as keyof typeof CANNOT_ON_DEVICE] ?? CANNOT[what] : CANNOT[what]);
     return {serial: t.id, a: t.a};
   }
 
@@ -170,6 +182,7 @@ export class MediaCenter {
   async mic(device: string | undefined, value: string): Promise<Record<string, unknown>> {
     const cmd = parseMic(value);
     const t = await this.#d.target(device);
+    if (t.platform === 'apple' && physicalUdid(t.id) && cmd.op !== 'status' && cmd.op !== 'stop' && cmd.op !== 'wait') throw new Error(CANNOT_ON_DEVICE.appleMic);
     if (t.platform === 'apple') return this.#appleMic(t.id, t.s, cmd);
     const serial = t.id;
     const playing = this.#mics.get(serial);
@@ -433,7 +446,7 @@ export class MediaCenter {
     const name = typeof o.name === 'string' ? o.name.replace(/[^\w.-]/g, '_') : `${stamp()}-${(t.id.length > 16 ? t.id.slice(0, 8) : t.id).replace(/[^\w-]/g, '_')}`;
     const notes: string[] = [];
     if (what === 'audio') {
-      if (t.platform === 'apple') throw new Error(CANNOT.appleAudioOut);
+      if (t.platform === 'apple') throw new Error(physicalUdid(t.id) ? CANNOT_ON_DEVICE.appleAudioOut : CANNOT.appleAudioOut);
       if (!isEmulator(t.id)) throw new Error(`audio capture: ${t.id} is not an emulator\nhint: ${CANNOT.device}`);
       if (t.a.running().find(x => x.serial === t.id)?.audio === false) throw new Error(`audio capture: ${t.id} runs without audio\nhint: boot it again with audio=true`);
       const audio = await captureAudio(t.id);
@@ -442,6 +455,7 @@ export class MediaCenter {
       return {device: t.id, capture: 'audio', file: c.file};
     }
     if (t.platform === 'apple') {
+      if (physicalUdid(t.id)) throw new Error(CANNOT_ON_DEVICE.screen);
       const s = t.s as AppleDevices & {xcrun?: string};
       if (!s.xcrun) throw new Error('screen capture of a remote Mac\'s simulator is not supported: run it on that Mac');
       const file = path.join(this.#dir(), `${name}.mov`);
@@ -657,6 +671,7 @@ export class MediaCenter {
     const abs = files.map(f => path.resolve(this.#d.root(), f));
     for (const f of abs) if (!fs.existsSync(f)) throw new Error(`library: no file ${f}`);
     if (t.platform === 'apple') {
+      if (physicalUdid(t.id)) throw new Error(CANNOT_ON_DEVICE.library);
       const s = t.s as AppleDevices & {simctl?: (args: string[], o?: {timeoutMs?: number}) => Promise<{code: number | null; stderr: string; stdout: string}>};
       if (!s.simctl) throw new Error('library add on a remote Mac\'s simulator is not supported');
       const r = await s.simctl(['addmedia', t.id, ...abs], {timeoutMs: 120_000});
