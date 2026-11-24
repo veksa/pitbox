@@ -1,12 +1,14 @@
 // App crashes on a simulator. A crashing simulator app leaves a crash report (.ips) in the Mac's
 // ~/Library/Logs/DiagnosticReports a few seconds after it dies; there is no log stream to watch. So an action
-// notes whether the app was running when it began, and when the app is gone afterwards, waits for the report.
+// notes whether the app was running when it began, and when the app is gone afterwards, waits for the report. A
+// physical device keeps its reports itself: they are copied from it into a folder of its own and read the same way.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type {AppEvent} from '../android/events.ts';
 import type {AppleDriver} from './driver.ts';
+import {physicalUdid} from './physical.ts';
 
 type Frame = {imageIndex?: number; symbol?: string; sourceFile?: string; sourceLine?: number; imageOffset?: number};
 type Ips = {
@@ -41,7 +43,8 @@ export const parseIps = (text: string, bundleId: string | undefined, udid: strin
   }
   // 309 is a crash; hangs, jetsam and the like have other types.
   if (header.bug_type !== '309') return undefined;
-  if (udid ? !body.procPath?.includes(`/CoreSimulator/Devices/${udid}/`) : !body.procPath || body.procPath.includes('/CoreSimulator/')) return undefined;
+  // A physical device's reports come from its own folder: any app process there is the device's.
+  if (physicalUdid(udid) ? !body.procPath || body.procPath.includes('/CoreSimulator/') : udid ? !body.procPath?.includes(`/CoreSimulator/Devices/${udid}/`) : !body.procPath || body.procPath.includes('/CoreSimulator/')) return undefined;
   const id = header.bundleID ?? body.bundleInfo?.CFBundleIdentifier;
   if (bundleId && id !== bundleId) return undefined;
   const images = body.usedImages ?? [];
@@ -120,6 +123,9 @@ export class AppleCrashWatcher {
   #wasRunning?: Promise<boolean>;
   /** Each report read so far, with the mtime and size it had: a file touched or rewritten later is read again. */
   readonly #seen = new Map<string, {stamp: string; event?: AppEvent; written?: number}>();
+  /** A physical device's: copies its new reports of the app into `#dir`. */
+  readonly #pull?: () => Promise<unknown>;
+  #pulledAt = 0;
 
   /** `driver` reads a simulator; a probe stands for a Mac app (`udid` empty). */
   constructor(driver: AppleDriver | CrashProbe, udid: string, bundleId?: string, dir = reportsDir()) {
@@ -140,6 +146,18 @@ export class AppleCrashWatcher {
     this.#udid = udid;
     this.#bundleId = bundleId;
     this.#dir = dir;
+    if ('physical' in driver && physicalUdid(udid) && bundleId) {
+      const own = path.join(os.tmpdir(), 'pitbox-device-crashes', udid);
+      this.#dir = own;
+      this.#pull = () => driver.physical.pullCrashes(udid, bundleId, own);
+    }
+  }
+
+  /** A physical device's reports, copied at most once a second (a listing takes a third of one). */
+  async #pullNow() {
+    if (!this.#pull || Date.now() - this.#pulledAt < 1000) return;
+    this.#pulledAt = Date.now();
+    await this.#pull().catch(() => undefined);
   }
 
   start() {}
@@ -214,7 +232,7 @@ export class AppleCrashWatcher {
    * How long a report is waited for once the app is gone: briefly after each action, longer on visionOS and when a
    * flow has failed — under load the reporter takes close to a minute on every platform.
    */
-  static waitMs = {quick: 8000, long: 60_000, atLimit: 4000};
+  static waitMs = {quick: 8000, long: 60_000, atLimit: 4000, device: 20_000};
 
   /** How many crash reports of one process macOS keeps in its reports directory; past that it saves almost no more. */
   static keptReports = 25;
@@ -242,12 +260,14 @@ export class AppleCrashWatcher {
       // Past its limit macOS still saves a report now and then (the log says "26 of max 25"): the wait is cut short,
       // not skipped — it ends when an old report is touched instead, or after a few seconds.
       const atLimit = !found.length && !!this.#notSaved();
-      const wait = slow || final ? AppleCrashWatcher.waitMs.long : AppleCrashWatcher.waitMs.quick;
+      // A device writes its report and then lets it be copied: longer than a simulator's reporter.
+      const wait = slow || final ? AppleCrashWatcher.waitMs.long : this.#pull ? AppleCrashWatcher.waitMs.device : AppleCrashWatcher.waitMs.quick;
       const deadline = Date.now() + (atLimit ? Math.min(wait, AppleCrashWatcher.waitMs.atLimit) : wait);
       const seen = {touched: false};
       let touchedAt: number | undefined;
       while (!found.length && !why && Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 400));
+        await this.#pullNow();
         found = this.#scan(since, seen);
         // An old report of the app touched: macOS took the crash for one it has a report of and saved none. A
         // moment more for a new report that comes with it, then the answer.

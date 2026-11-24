@@ -132,6 +132,18 @@ export const devicePid = (result: unknown, appUrl: string): number | undefined =
   return hit?.processIdentifier;
 };
 
+/**
+ * Of a device's crash report names (`MyApp-2026-01-02-100000.ips`, local time), the top-level ones of the process
+ * `exe` (any process when unknown) written within `windowMs` of `now`.
+ */
+export const crashFiles = (names: string[], exe: string | undefined, now: number, windowMs: number): string[] =>
+  names.filter(n => {
+    const m = /^([^/]+)-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})\.ips$/.exec(n);
+    if (!m || (exe && m[1] !== exe)) return false;
+    const at = new Date(Number(m[2]), Number(m[3]) - 1, Number(m[4]), Number(m[5]), Number(m[6]), Number(m[7])).getTime();
+    return at >= now - windowMs && at <= now + 60_000;
+  });
+
 /** One Apple Development identity on this Mac: its team and when it runs out. */
 export type SigningIdentity = {team: string; name: string; expires: number; sha1: string};
 
@@ -368,6 +380,22 @@ export class PhysicalDevices {
       .map(a => a.bundleId)
       .filter(id => !id.startsWith('com.apple.') && (!filter || id.includes(filter)))
       .sort();
+  }
+
+  /**
+   * Copies the app's crash reports written on the device in the last `windowMs` into `dir`, each once. A device keeps
+   * its reports itself (`systemCrashLogs`); they are named after the process (the app's executable) and the time.
+   */
+  async pullCrashes(udid: string, bundleId: string, dir: string, now = Date.now(), windowMs = 10 * 60_000): Promise<number> {
+    const url = await this.#appUrl(udid, bundleId);
+    const exe = url ? path.basename(url.replace(/\/+$/, ''), '.app') : undefined;
+    const r = await this.#json<{files?: {relativePath?: string}[]}>(['device', 'info', 'files', '--device', udid, '--domain-type', 'systemCrashLogs'], 'list crash reports', 20_000);
+    const want = crashFiles((r.files ?? []).map(f => f.relativePath ?? ''), exe, now, windowMs).filter(f => !fs.existsSync(path.join(dir, f)));
+    fs.mkdirSync(dir, {recursive: true});
+    for (const f of want) {
+      await this.#json(['device', 'copy', 'from', '--device', udid, '--domain-type', 'systemCrashLogs', '--source', f, '--destination', path.join(dir, f)], 'copy a crash report', 20_000).catch(() => undefined);
+    }
+    return want.length;
   }
 
   async #appUrl(udid: string, bundleId: string): Promise<string | undefined> {
