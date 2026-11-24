@@ -134,6 +134,7 @@ named `devserver` in `status`, `up`, `down`, `restart`; do not name a service th
 | `remote` | a Mac that serves its simulators to this machine: `http://mac.example.test:7700` |
 | `token` | the device host's token; better in `PITBOX_REMOTE_TOKEN` than in the config |
 | `slim` | slim simulators, default `true` (iPhone and iPad on iOS 18.5+, booted by pitbox from shut down): launchd daemons an app under test does not need are disabled before the boot — Siri and Apple Intelligence, Spotlight, Mail, Screen Time and Family, the Health app, Home, Fitness, News, Weather, lock screen posters, ads and diagnostics. Kept: SpringBoard and the keyboard, notifications and push, widgets and Live Activities, location, privacy prompts, the photo library, accessibility, universal links, keychain, contacts, calendars and reminders, HealthKit, Wallet, StoreKit, Game Center (the UI runner's launch waits on it). `false` (or `boot --stock`) puts back exactly what pitbox changed. `{keep: [...], disable: [...]}` takes launchd labels (`com.apple.newsd`) and the group `widgets` (home screen widgets and Live Activities, on by default; off saves about 0.6 GB). The boot reads the state back from launchd and says it (`slim: 51 background services off`) ([Working in parallel](parallel.md#slim-devices)) |
+| `team` | the Apple Development team (`ABCDE12345`) that signs the UI runner for a physical iPhone or iPad; without it, the only team with a development certificate in the keychain. A free Personal Team works ([Physical devices](#physical-iphones-and-ipads)) |
 | `templates` | warm templates, default `true`: a simulator pitbox creates for a session (the one asked for is another session's) is a clone of a template of its model and runtime — a simulator booted once until it is quiet, then shut down (`pitbox template · iPhone 17 · iOS 27.2` in Xcode's list) — so it skips the busy first boot. The first one created for a model is created as before, and its template is made in the background when the Mac has room. `devices clean --all` deletes the templates; `false` neither makes nor clones them ([Working in parallel](parallel.md#warm-templates)) |
 
 Simulators share the Mac's network, so exposed ports need no forwarding. The UI runner (XCUITest) drives iOS,
@@ -141,6 +142,27 @@ iPadOS, tvOS, watchOS and visionOS simulators; it is built on first use per plat
 rebuilds it. On iOS and iPadOS 17+ it is launched with simctl (`PITBOX_RUNNER_XCODEBUILD=1` in the daemon's
 environment starts it with xcodebuild, as on the other platforms) and outlives a daemon restart
 ([Working in parallel](parallel.md#the-ui-runners-start)).
+
+### Physical iPhones and iPads
+
+A device paired with the Mac (on its cable, or on the network with "Connect via network" in Xcode › Devices) is
+listed by `devices` as `physical` and driven when named — `--device <udid>` or its name; one plugged in to charge
+never takes a simulator's place. Apps, the screen, the UI runner, flows and checks work as on a simulator, through
+`devicectl`:
+
+- **Signing.** The UI runner is built for the device and signed with the Mac's Apple Development certificate
+  (`apple.team`, or the only team with one): its ids get the team's suffix (`dev.pitbox.runner.t<team>`), the
+  device is registered with the team, and it is built again when its profile is about to run out (a Personal
+  Team's lasts 7 days). A Personal Team signs at most 3 apps on a device at a time and no push.
+- **Once, on the device:** Developer Mode on (Settings › Privacy & Security), the developer trusted and the app
+  verified (Settings › General › VPN & Device Management), and the device unlocked while it runs tests (Auto-Lock
+  › Never). `doctor` checks each of these, and an error names the one that stopped it.
+- **Exposed ports** reach the device's own `localhost` through the runner (as `adb reverse` does on Android): an
+  app asks `http://localhost:4100` on a simulator and on a device alike, without the Local Network permission.
+- **Crashes** come from the device's own reports, copied from it when the app dies during a step.
+- **Not on a device:** boot, wipe, clone or shut down; clearing app data and app states; pushes, locale, screen
+  size and density, animations, permissions granted or revoked from the Mac; app logs (Console.app shows them).
+  Dark mode and text size work (`settings`).
 
 ### A remote Mac
 

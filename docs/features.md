@@ -34,6 +34,9 @@ compact text.
   it has no activation point, a tap at its coordinates reaches no window and is reported as an error, and the
   simulator's pointer messages arrive without a target), and game controllers (the simulator accepts a gamepad
   message, and no app receives it).
+- **Physical iPhones and iPads** — on a cable or the network, named to be used: apps, the UI runner, flows,
+  checks, screenshots, rotation, crashes with their stack, the stand on the device's own localhost; the runner
+  signed by the Mac's Apple Development team, a free Personal Team included ([config.md](config.md#physical-iphones-and-ipads)).
 - **Web apps** — a browser through Playwright as one more device (`web:<name>`): the same snapshots,
   selectors, actions, checks and flows as on a phone, page errors reported with the action that caused them.
   One flow can switch between a web app and a phone. A phone in the browser — a Playwright device preset or a
