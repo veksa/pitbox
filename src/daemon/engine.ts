@@ -1753,8 +1753,10 @@ export class Engine {
     for (const port of ports) {
       const host = await httpAlive(`http://127.0.0.1:${port}/`, 1500);
       if (host.status === undefined) continue;
+      // nc's input stays open a moment after the request: a phone's adb reverse over USB drops the whole connection
+      // once the device side half-closes it, and a server slower than that never gets its answer through.
       const out = await android
-        .shell(serial, `printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' | toybox nc -w 4 127.0.0.1 ${port} | head -c 12`, 15_000)
+        .shell(serial, `(printf 'GET / HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n'; sleep 1) | toybox nc -w 4 127.0.0.1 ${port} | head -c 12`, 15_000)
         .catch(() => '');
       // Every HTTP port: one working forward must not hide a dead one.
       if (!out.trim().length) return false;
