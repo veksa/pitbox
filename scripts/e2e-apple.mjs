@@ -303,6 +303,17 @@ async function runOnDevice(udid) {
     // What the app keeps between launches (a launch counter in UserDefaults): wiped, saved and brought back.
     const on = args => pitbox([...args, '--device', udid]);
     const launches = n => (on(['open', '--relaunch']), on(['wait', `text="launches ${n}"`, '20']).code === 0);
+    // A context menu's list runs past the bottom of the screen: a swipe over it must start on the screen, not at
+    // the bottom edge, where the system takes it for the gesture that goes to the Home Screen.
+    on(['open', '--relaunch']);
+    on(['longpress', 'id=menu_target']);
+    on(['swipe', 'up']);
+    const menu = on(['snapshot']).out;
+    checks.push({name: 'swipe over a context menu stays in the app', ok: /button "Copy"/.test(menu) && !/Home screen icons/.test(menu), ...(/Home screen icons/.test(menu) ? {note: 'the swipe went to the Home Screen'} : {})});
+    // Memory and CPU come from an Activity Monitor recording (xctrace): ps on the Mac does not see a device's apps.
+    on(['open', '--relaunch']);
+    const perf = on(['perf']);
+    checks.push({name: 'perf on the device', ok: perf.code === 0 && /memory [1-9]\d* MB/.test(perf.out), ...(perf.code ? {note: perf.out.split('\n')[0]} : {})});
     // A push, which a device takes only from APNs: the app's debug hook shows it, its banner is read, and the tap
     // reaches the app's notification delegate through the same hook. Before the restore below, which reinstalls the
     // app and so takes its notification permission away.
@@ -317,6 +328,11 @@ async function runOnDevice(udid) {
     checks.push({name: 'push through the app\'s hook', ok: pushed.code === 0 && /banner shown "Hello device"/.test(pushed.out), ...(pushed.code || !/banner shown/.test(pushed.out) ? {note: pushed.out.split('\n')[0]} : {})});
     const tapped = on(['push', 'respond', 'open', 'title=Hello device']);
     checks.push({name: 'push respond on the device', ok: tapped.code === 0 && /opened "Hello device"/.test(tapped.out), ...(tapped.code ? {note: tapped.out.split('\n')[0]} : {})});
+    // A Live Activity through the same kind of hook: its state is copied off the device.
+    const started = on(['push', 'activity', 'start', 'type=DeliveryAttributes', 'attributes={"order":"42"}', 'state={"status":"Packed","progress":0.2}']);
+    const updated = on(['push', 'activity', 'update', 'state={"status":"On the way","progress":0.6}']);
+    const ended = on(['push', 'activity', 'end', 'dismissal=0']);
+    checks.push({name: 'a Live Activity on the device', ok: /✓ .*Live Activity started/.test(started.out) && /✓ .*Live Activity updated/.test(updated.out) && /✓ .*Live Activity ended/.test(ended.out), ...([started, updated, ended].find(r => !/✓/.test(r.out)) ? {note: [started, updated, ended].find(r => !/✓/.test(r.out)).out.split('\n')[0]} : {})});
     on(['clear-app']);
     checks.push({name: 'clear-app', ok: launches(1)});
     on(['state', 'save', 'e2e-device']);
