@@ -610,7 +610,13 @@ export const swipeArea = (snap: Snapshot | undefined, width: number, height: num
   const largest = scrollables.filter(n => n.w === top).sort((a, b) => size(b.b) - size(a.b))[0];
   const root = largest ? snap.nodes.find(n => n.w === largest.w && n.p === -1) : undefined;
   // Large within its own window: a small strip that happens to scroll (a chip row) is not the content.
-  if (largest && size(largest.b) >= (root ? size(root.b) : width * height) * 0.3) area = [...largest.b];
+  // Clipped to the screen: a view that runs past it (an iOS context menu's list does) would start the swipe off the
+  // screen, at its bottom edge, where the system takes it for the gesture that goes to the Home Screen.
+  if (largest && size(largest.b) >= (root ? size(root.b) : width * height) * 0.3) {
+    const [l, t, r, b] = largest.b;
+    const clipped: Bounds = [Math.max(0, l), Math.max(0, t), Math.min(width, r), Math.min(height, b)];
+    if (size(clipped) > 0) area = clipped;
+  }
   const imeTop = keyboardTop(snap, height) ?? Infinity;
   if (Number.isFinite(imeTop) && imeTop > area[1] + 100 && imeTop < area[3]) area = [area[0], area[1], area[2], imeTop];
   return area;

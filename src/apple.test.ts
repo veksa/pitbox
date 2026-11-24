@@ -296,6 +296,14 @@ describe('apple driver', () => {
     expect(swipeArea(snap, 402, 874)).toEqual([0, 0, 402, 583]);
   });
 
+  it('keeps a swipe on the screen when the list runs past it', () => {
+    // An iOS context menu's list reaches below the screen: a swipe from its lower part would start at the bottom
+    // edge and go to the Home Screen.
+    const app = {type: 'app', title: 'MyApp', pkg: 'com.example.app'};
+    const snap = buildSnapshot([app], [{p: -1, w: 0, c: 'Window', b: [0, 0, 402, 874]}, {p: 0, w: 0, c: 'CollectionView', b: [16, 452, 266, 1326], f: 's'}]);
+    expect(swipeArea(snap, 402, 874)).toEqual([16, 452, 266, 874]);
+  });
+
   it('tells a tap that only closed the keyboard from one that reached the control', () => {
     const app = {type: 'app', title: 'MyApp', pkg: 'com.example.app'};
     const field = {p: 0, w: 0, c: 'TextField', b: [16, 80, 386, 110], f: 'eF', t: 'Ada'} as const;
