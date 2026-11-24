@@ -2855,6 +2855,7 @@ export class Engine {
 
     network: async (p: Params) => {
       const t = await this.#target(str(p, 'device'));
+      if (t.platform === 'apple' && isPhysicalUdid(t.id)) throw new Error('an iPhone\'s or iPad\'s own network is switched on the device (Airplane Mode, Control Center): nothing on the Mac switches it\nhint: use `net` rules on the dev server, or the Network Link Conditioner in the device\'s Developer settings');
       if (t.platform === 'apple') throw new Error('a simulator shares the Mac\'s network\nhint: use `net` rules on the dev server, or the Network Link Conditioner on the Mac');
       return {serial: t.id, applied: await t.a.network(t.id, req(p, 'profile') as NetworkProfile)};
     },
