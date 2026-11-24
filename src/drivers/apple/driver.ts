@@ -211,6 +211,9 @@ export const deviceSetStamp = (dir: string): string | undefined => {
 export const appProcess = (ps: string, bundle: string): boolean =>
   ps.split('\n').some(l => l.startsWith(`${bundle}/`) && !l.slice(bundle.length + 1).split(' ')[0]!.includes('/'));
 
+/** Files of an app's container reached one by one (a device's, through devicectl): `rel` from the container's root. */
+export type HookFiles = {put(rel: string, text: string): Promise<void>; get(rel: string): Promise<string | undefined>};
+
 export class AppleDriver {
   readonly xcrun: string;
   /** Physical devices paired with this Mac (devicectl). */
@@ -608,6 +611,12 @@ export class AppleDriver {
   }
 
   /** Posts a Darwin notification inside the simulator (`notifyutil -p`): what an app's observer of that name hears. */
+  /** A device's app container file by file (a debug hook's folder); undefined for a simulator, whose is on this disk. */
+  hookFiles(udid: string, bundleId: string): HookFiles | undefined {
+    if (!physicalUdid(udid)) return undefined;
+    return {put: (rel, text) => this.physical.putFile(udid, bundleId, rel, text), get: rel => this.physical.getFile(udid, bundleId, rel)};
+  }
+
   async notify(udid: string, name: string): Promise<void> {
     if (physicalUdid(udid)) return this.physical.notify(udid, name);
     if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new AppleError(`not a notification name: ${JSON.stringify(name)}`);

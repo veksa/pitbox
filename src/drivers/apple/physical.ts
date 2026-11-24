@@ -518,6 +518,36 @@ export class PhysicalDevices {
     });
   }
 
+  /** Writes one file of the app's container (`rel` from its root; folders are made), as devicectl writes it: whole. */
+  async putFile(udid: string, bundleId: string, rel: string, text: string) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-put-'));
+    try {
+      const file = path.join(dir, path.basename(rel));
+      fs.writeFileSync(file, text);
+      await this.#json(['device', 'copy', 'to', '--device', udid, '--domain-type', 'appDataContainer', '--domain-identifier', bundleId, '--source', file, '--destination', rel], 'copy to the app', 30_000).catch(e => {
+        throw this.#containerError(e as AppleError, bundleId);
+      });
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  }
+
+  /** One file of the app's container; undefined when there is none. */
+  async getFile(udid: string, bundleId: string, rel: string): Promise<string | undefined> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-get-'));
+    try {
+      const file = path.join(dir, path.basename(rel));
+      await this.#json(['device', 'copy', 'from', '--device', udid, '--domain-type', 'appDataContainer', '--domain-identifier', bundleId, '--source', rel, '--destination', file], 'copy from the app', 30_000);
+      return fs.readFileSync(file, 'utf8');
+    } catch (e) {
+      // CoreDeviceError 7000: no such file.
+      if (/7000|file node/i.test((e as Error).message)) return undefined;
+      throw this.#containerError(e as AppleError, bundleId);
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  }
+
   #containerError(e: AppleError, bundleId: string) {
     // The file service serves the containers of apps built for development (signed with get-task-allow) only.
     return /not (be )?found|no such|unknown|not installed|doesn.t exist/i.test(e.message)

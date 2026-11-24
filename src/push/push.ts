@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {AndroidDriver} from '../drivers/android/driver.ts';
+import {physicalUdid} from '../drivers/apple/physical.ts';
 import type {AppleDevices} from '../remote/appleRemote.ts';
 import type {ActResult, DeviceUi} from '../ui/device.ts';
 import {appState, assertPackage, callReceiver, grantNotifications, homePackage, missingReceiver, notifications, notificationsAllowed, pickAction, shadeButton, shadeRow, shadeTitles, type AppState, type PostedNotification} from './android.ts';
@@ -295,18 +296,25 @@ export class PushCenter {
     // The shell's banners read once before the push: a first read during the banner's arrival can come back empty.
     if (!msg.silent) await ui?.runner.call('banners').catch(() => undefined);
     if (yes(opts.grant)) notes.push('iOS has no way to grant notifications from outside: allow them in the app\'s prompt (press "Allow")');
-    if (msg.collapseId) notes.push('simctl push has no apns-collapse-id: the simulator shows each push on its own');
-    if (msg.silent) notes.push('a background push may not wake a suspended app on the simulator');
-    if (msg.aps?.['mutable-content'] === 1 || msg.aps?.['mutable-content'] === true) notes.push('the Notification Service Extension does not run for simctl push: the banner shows the payload as sent' + (msg.image ? ', without its image' : ''));
+    const device = physicalUdid(udid);
+    if (msg.collapseId && !device) notes.push('simctl push has no apns-collapse-id: the simulator shows each push on its own');
+    if (msg.silent && !device) notes.push('a background push may not wake a suspended app on the simulator');
+    if (!device && (msg.aps?.['mutable-content'] === 1 || msg.aps?.['mutable-content'] === true)) notes.push('the Notification Service Extension does not run for simctl push: the banner shows the payload as sent' + (msg.image ? ', without its image' : ''));
     const base = {id, platform: 'apple' as const, device: udid, app: bundleId, sent: describe(msg), title: msg.title ?? msg.body};
-    try {
-      await s.push(udid, bundleId, toApns(msg, bundleId, id));
-    } catch (e) {
-      // UNErrorDomain 2003: the app has no notification permission (never asked, prompt unanswered, or denied).
-      if (/code=2003|not authorized/i.test((e as Error).message)) {
-        return {...base, ok: false, verdict: 'not delivered: notifications are not allowed for the app — it must ask, and the prompt be answered "Allow"', notes};
+    if (device) {
+      const shown = await this.#deviceHook(udid, bundleId, msg, id);
+      notes.push(...shown.notes);
+      if (!shown.ok) return {...base, ok: false, verdict: shown.verdict, notes};
+    } else {
+      try {
+        await s.push(udid, bundleId, toApns(msg, bundleId, id));
+      } catch (e) {
+        // UNErrorDomain 2003: the app has no notification permission (never asked, prompt unanswered, or denied).
+        if (/code=2003|not authorized/i.test((e as Error).message)) {
+          return {...base, ok: false, verdict: 'not delivered: notifications are not allowed for the app — it must ask, and the prompt be answered "Allow"', notes};
+        }
+        throw e;
       }
-      throw e;
     }
     if (msg.silent) return {...base, ok: true, verdict: 'delivered (background push: nothing shown)', notes};
     const title = msg.title ?? msg.body;
@@ -322,6 +330,26 @@ export class PushCenter {
       verdict: inFront ? "delivered; no banner — the app is in front and its notification handler shows none" : 'delivered; no banner seen — notifications may be off for the app, or its banners turned off',
       notes,
     };
+  }
+
+  /**
+   * A push on a physical device, which takes none from the Mac (APNs only): the app's PitboxNotifications hook shows
+   * the payload as a local notification with the payload as its userInfo, so the app's delegate sees what a push
+   * brings, or hands a background push to its app delegate. A Notification Service Extension does not run.
+   */
+  async #deviceHook(udid: string, bundleId: string, msg: PushMessage, id: string): Promise<{ok: boolean; verdict: string; notes: string[]}> {
+    const host = this.#deps.liveActivity?.();
+    if (!host) return {ok: false, verdict: 'a push to a physical device goes through the app on a device of this Mac', notes: []};
+    const {outcome, launched} = await deliverToHook<NotificationResponseOutcome>(host, udid, bundleId, {dir: notificationDir, notice: notificationNotice(bundleId)}, {id, deliver: toApns(msg, bundleId, id)}, this.#deps.hookWait ?? {waitMs: 2000, afterLaunchMs: 5000, takenMs: 8000});
+    const notes = [
+      'a physical device takes pushes only from APNs: the app showed this one itself, through its PitboxNotifications hook',
+      ...(launched ? ['the app was launched to take it (it was not running or suspended): a real push would show without that'] : []),
+      ...(msg.aps?.['mutable-content'] === 1 || msg.aps?.['mutable-content'] === true ? ['the Notification Service Extension does not run for it'] : []),
+      ...(outcome?.completed === false ? ['the app delegate did not call its fetch completion handler within 5 s'] : []),
+    ];
+    if (!outcome) return {ok: false, verdict: `not delivered: ${bundleId} took no push — on a device its debug build calls PitboxNotifications.start() at launch (docs/push.md#notification-actions)`, notes};
+    if (!outcome.ok) return {ok: false, verdict: `not delivered: ${outcome.error ?? 'the hook gave no reason'}`, notes};
+    return {ok: true, verdict: 'delivered', notes};
   }
 
   /**

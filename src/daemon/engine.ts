@@ -178,6 +178,7 @@ export class Engine {
         container: (udid, bundleId) => s.dataContainer(udid, bundleId),
         notify: (udid, name) => s.notify(udid, name),
         launch: async (udid, bundleId) => void (await s.open(udid, bundleId)),
+        files: (udid, bundleId) => s.hookFiles(udid, bundleId),
         apsEnvironment: async (udid, bundleId) => {
           const app = await s.appBundle(udid, bundleId);
           return app ? hasApsEnvironment(app) : undefined;

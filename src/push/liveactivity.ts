@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type {HookFiles} from '../drivers/apple/driver.ts';
 
 type Obj = Record<string, unknown>;
 
@@ -117,6 +118,8 @@ export type LiveActivityHost = {
   launch: (udid: string, bundleId: string) => Promise<void>;
   /** Whether the installed app carries the aps-environment entitlement (undefined: cannot tell). */
   apsEnvironment?: (udid: string, bundleId: string) => Promise<boolean | undefined>;
+  /** A physical device's container, file by file; undefined: a simulator's, on this Mac's disk (`container`). */
+  files?: (udid: string, bundleId: string) => HookFiles | undefined;
 };
 
 export const liveActivityDir = (container: string) => path.join(container, 'Library', 'Caches', 'pitbox', 'liveactivity');
@@ -187,6 +190,8 @@ export const deliverToHook = async <O>(
   cmd: {id: string} & Obj,
   opts: {waitMs?: number; afterLaunchMs?: number; takenMs?: number} = {},
 ): Promise<{outcome?: O; launched: boolean}> => {
+  const device = host.files?.(udid, bundleId);
+  if (device) return deliverToDeviceHook<O>(host, device, udid, bundleId, where, cmd, opts);
   const dir = where.dir(await host.container(udid, bundleId));
   const inbox = path.join(dir, 'in');
   const outDir = path.join(dir, 'out');
@@ -242,6 +247,58 @@ export const deliverToHook = async <O>(
       // The hook took it: it is running.
     }
     if (!claimed) outcome = await answer(opts.takenMs ?? 10_000);
+  }
+  return {outcome, launched};
+};
+
+/**
+ * The same exchange with a physical device's app, its files copied one at a time through devicectl. pitbox cannot
+ * delete a file there, so it cannot take a command back: the command's deadline is when pitbox stops waiting, and a
+ * hook that reads it later answers without applying it. A device has no "the hook took it" either: a command not
+ * answered in `waitMs` launches the app (the hook drains its folder when it starts).
+ */
+const deliverToDeviceHook = async <O>(
+  host: LiveActivityHost,
+  files: HookFiles,
+  udid: string,
+  bundleId: string,
+  where: {dir: (container: string) => string; notice: string; launchFirst?: boolean},
+  cmd: {id: string} & Obj,
+  opts: {waitMs?: number; afterLaunchMs?: number; takenMs?: number},
+): Promise<{outcome?: O; launched: boolean}> => {
+  const dir = where.dir('');
+  const waitMs = opts.waitMs ?? 2000;
+  const afterLaunchMs = opts.afterLaunchMs ?? 4000;
+  // Each copy takes a moment; the launch, a few seconds more.
+  const deadline = Math.ceil((Date.now() + waitMs + afterLaunchMs + 8000) / 1000);
+  await files.put(path.posix.join(dir, 'in', `${cmd.id}.json`), JSON.stringify({...cmd, deadline}));
+  const outFile = path.posix.join(dir, 'out', `${cmd.id}.json`);
+  const answer = async (ms: number) => {
+    for (const end = Date.now() + ms; ; ) {
+      const text = await files.get(outFile).catch(() => undefined);
+      if (text) {
+        try {
+          return JSON.parse(text) as O;
+        } catch {
+          // read while it was written: the next copy has it whole
+        }
+      }
+      if (Date.now() >= end) return undefined;
+      await sleep(250);
+    }
+  };
+  let launched = false;
+  if (where.launchFirst) {
+    await host.launch(udid, bundleId);
+    launched = true;
+  }
+  await host.notify(udid, where.notice);
+  let outcome = await answer(waitMs);
+  if (!outcome && !launched) {
+    await host.launch(udid, bundleId);
+    launched = true;
+    await host.notify(udid, where.notice).catch(() => undefined);
+    outcome = await answer(afterLaunchMs);
   }
   return {outcome, launched};
 };
