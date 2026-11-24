@@ -171,9 +171,15 @@ never takes a simulator's place. Apps, the screen, the UI runner, flows and chec
 - **Pushes** reach a device only from APNs. `push` hands the payload to the app's `PitboxNotifications` hook,
   which shows it as a local notification carrying the payload as its `userInfo` (or passes a background push to
   the app delegate). The banner, `push tap` and `push respond` work as on a simulator; a Notification Service
-  Extension does not run, and an app with no hook gets nothing.
+  Extension does not run, and an app with no hook gets nothing. Live Activities go through `PitboxLiveActivity`
+  as on a simulator.
+- **Perf** (`perf`) reads the app's memory footprint and CPU from a one-second Activity Monitor recording
+  (`xctrace`), a few seconds per call; frames are not counted.
 - **Not on a device:** boot, wipe, clone or shut down; screen size and density, animations, permissions granted or
-  revoked from the Mac. Dark mode and text size work (`settings`).
+  revoked from the Mac; screen video (`capture`: devicectl records none of an iPhone's screen — `shot` takes
+  stills), the photo library (`library add`), the network (`network`), volume (`audio`), mic, camera and calls, and
+  removing delivered notifications (`push clear`). Each says so with what to do instead. Dark mode and text size
+  work (`settings`).
 
 ### A remote Mac
 
