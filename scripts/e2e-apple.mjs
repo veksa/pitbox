@@ -8,7 +8,8 @@
 //   PITBOX_E2E_EXAMPLES=react-native yarn e2e:apple            only examples/react-native, on a phone
 //   PITBOX_E2E_DEVICE=<udid> yarn e2e:apple          examples/apple on a physical iPhone (connected, unlocked):
 //                                                    signed with the Mac's Apple Development team (PITBOX_E2E_TEAM
-//                                                    when several), its ids made the team's own, push left out
+//                                                    when several), its ids made the team's own; pushes go through the
+//                                                    app's PitboxNotifications hook (no APNs entitlement)
 
 import {execFileSync, spawn, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -299,6 +300,37 @@ async function runOnDevice(udid) {
     checks.push({name: 'crash (fails with the crash)', ok: r.out.startsWith('✗') && /app crashed/.test(r.out)});
     // The report is copied off the device: the crash names its frames, not only that the app stopped.
     checks.push({name: 'crash report pulled', ok: /app crashed/.test(r.out) && !/no crash report yet/.test(r.out)});
+    // What the app keeps between launches (a launch counter in UserDefaults): wiped, saved and brought back.
+    const on = args => pitbox([...args, '--device', udid]);
+    const launches = n => (on(['open', '--relaunch']), on(['wait', `text="launches ${n}"`, '20']).code === 0);
+    // A push, which a device takes only from APNs: the app's debug hook shows it, its banner is read, and the tap
+    // reaches the app's notification delegate through the same hook. Before the restore below, which reinstalls the
+    // app and so takes its notification permission away.
+    // The prompt is the system's, in the device's language and with no ids on its buttons: its last one allows.
+    on(['open', '--relaunch']);
+    on(['press', 'id=notifications']);
+    const prompt = on(['snapshot', '--system']).out.split('— com.apple.springboard')[1] ?? '';
+    const allow = [...prompt.matchAll(/^(@e\d+) button /gm)].pop()?.[1];
+    if (allow) on(['press', allow]);
+    on(['wait', 'text="notifications allowed"', '10']);
+    const pushed = on(['push', 'title=Hello device', 'body=From the hook']);
+    checks.push({name: 'push through the app\'s hook', ok: pushed.code === 0 && /banner shown "Hello device"/.test(pushed.out), ...(pushed.code || !/banner shown/.test(pushed.out) ? {note: pushed.out.split('\n')[0]} : {})});
+    const tapped = on(['push', 'respond', 'open', 'title=Hello device']);
+    checks.push({name: 'push respond on the device', ok: tapped.code === 0 && /opened "Hello device"/.test(tapped.out), ...(tapped.code ? {note: tapped.out.split('\n')[0]} : {})});
+    on(['clear-app']);
+    checks.push({name: 'clear-app', ok: launches(1)});
+    on(['state', 'save', 'e2e-device']);
+    const saved = launches(3);
+    on(['state', 'restore', 'e2e-device']);
+    checks.push({name: 'app state saved and restored', ok: saved && launches(2)});
+    on(['state', 'rm', 'e2e-device']);
+    // The device's own language stays: the app gets it in the arguments of pitbox's launches.
+    on(['settings', 'locale=fr']);
+    const french = (on(['open', '--relaunch']), on(['wait', 'text="fr"', '20']).code === 0);
+    on(['settings', 'locale=']);
+    checks.push({name: 'locale', ok: french && (on(['open', '--relaunch']), on(['wait', 'text="fr"', '3']).code !== 0)});
+    const logs = on(['app-logs', '--lines', '20']);
+    checks.push({name: 'app logs', ok: logs.code === 0 && /PitboxExample\[\d+\]/.test(logs.out), ...(logs.code ? {note: logs.out.split('\n')[0]} : {})});
   } catch (e) {
     checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
   } finally {

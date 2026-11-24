@@ -20,6 +20,8 @@ struct ExampleApp: App {
   @State private var detail: String?
 
   init() {
+    // Kept in UserDefaults: `clear-app` and `state restore` are seen in it on the next launch.
+    UserDefaults.standard.set(UserDefaults.standard.integer(forKey: "launches") + 1, forKey: "launches")
     #if os(iOS)
     // The delivery Live Activity, for `push activity` and the push gateway: started, updated and ended by pitbox.
     if #available(iOS 16.2, *) {
@@ -117,6 +119,7 @@ struct MainView: View {
   @State private var confirming = false
   @State private var removed = ""
   @State private var camera = ""
+  @AppStorage("launches") private var launches = 0
 
   var body: some View {
     GeometryReader { g in
@@ -124,7 +127,13 @@ struct MainView: View {
       VStack(alignment: .leading, spacing: 16) {
         Text("pitbox example").font(.title).accessibilityIdentifier("title")
         // What only some devices do: turning (phones, tablets), a pointer and a keyboard (tablets).
-        Text(g.size.width > g.size.height ? "landscape" : "portrait").accessibilityIdentifier("orientation")
+        // One row, so the buttons below stay on the first screen: the orientation, how many times the app started
+        // (`clear-app`, `state`) and the language it runs in (`settings locale`; on a device, pitbox's launch arguments).
+        HStack {
+          Text(g.size.width > g.size.height ? "landscape" : "portrait").accessibilityIdentifier("orientation")
+          Text("launches \(launches)").accessibilityIdentifier("launches")
+          Text(Locale.preferredLanguages.first ?? "").accessibilityIdentifier("language")
+        }
         #if os(iOS)
         Text(hovered ? "hovered" : "hover here").accessibilityIdentifier("hover_target").onHover { hovered = $0 }
         Button("Shortcut ⌘K") { shortcut = "shortcut pressed" }.keyboardShortcut("k", modifiers: .command).accessibilityIdentifier("shortcut")
