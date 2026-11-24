@@ -38,7 +38,7 @@ export const fmtServices = (services: ServiceState[]): string[] => {
   });
 };
 
-export type SimRow = {udid: string; name: string; os: string; kind?: string; state?: string; holder?: string};
+export type SimRow = {udid: string; name: string; os: string; kind?: string; state?: string; holder?: string; physical?: boolean};
 
 /** A device row's lease: `[yours]`, `[held by "label" (…)]`. */
 const held = (d: {holder?: string}) => (d.holder ? `  [${d.holder}]` : '');
@@ -47,14 +47,16 @@ export const fmtDevices = (devices: (AndroidDevice & {holder?: string})[], avds?
   const out = devices.map(d => `${d.state === 'device' ? '✓' : '✗'} ${d.serial}${d.avd ? `  ${d.avd}` : ''}${d.kind ? ` (${d.kind})` : ''}${d.model ? `  ${d.model}` : ''}${d.state !== 'device' ? `  ${d.state}` : ''}${held(d)}`);
   const booted = sims.filter(s => !s.state || s.state === 'Booted');
   // Booted simulators are online devices too; the udid is there for names that repeat.
-  out.push(...booted.map(s => `✓ ${s.name}  ${s.os}${s.kind && s.kind !== 'phone' ? ` (${s.kind})` : ''}  ${s.udid}${held(s)}`));
+  out.push(...booted.map(s => `✓ ${s.name}  ${s.os}${s.kind && s.kind !== 'phone' ? ` (${s.kind})` : ''}${s.physical ? '  physical' : ''}  ${s.udid}${held(s)}`));
+  // A physical device that is paired but not connected: named, so it is not taken for a simulator to boot.
+  out.push(...sims.filter(s => s.physical && s.state && s.state !== 'Booted').map(s => `✗ ${s.name}  ${s.os}  physical  ${s.udid}  ${(s.state ?? '').toLowerCase()}`));
   if (!devices.length && !booted.length) out.push('no devices online');
   if (avds) {
     const running = new Set(devices.map(d => d.avd));
     const idle = avds.filter(a => !running.has(a.name));
     if (idle.length) out.push(`avds: ${idle.map(a => `${a.name}${a.kind !== 'phone' ? `(${a.kind})` : ''}`).join(', ')}`);
   }
-  const idleSims = [...new Set(sims.filter(s => s.state && s.state !== 'Booted').map(s => s.name))];
+  const idleSims = [...new Set(sims.filter(s => !s.physical && s.state && s.state !== 'Booted').map(s => s.name))];
   if (idleSims.length) out.push(`simulators: ${idleSims.join(', ')}`);
   return out;
 };

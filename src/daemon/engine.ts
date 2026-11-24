@@ -2389,7 +2389,7 @@ export class Engine {
         avds: a ? a.avds() : [],
         ...(this.config.web ? {web: Object.entries(this.config.web).map(([name, w]) => ({name: `web:${name}`, url: w.url}))} : {}),
         ...(this.config.mac ? {mac: Object.entries(this.config.mac).map(([name, m]) => ({name: `mac:${name}`, app: m.app}))} : {}),
-        ...(s ? {simulators: sims.map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state, ...(this.#isLocalApple(s) ? this.#holderTag('apple', x.udid, undefined, x.state === 'Booted') : {})}))} : {}),
+        ...(s ? {simulators: sims.map(x => ({udid: x.udid, name: x.name, os: x.os, kind: x.kind, state: x.state, ...(isPhysical(x) ? {physical: true} : {}), ...(this.#isLocalApple(s) ? this.#holderTag('apple', x.udid, undefined, x.state === 'Booted') : {})}))} : {}),
         ...(simError ? {simulatorsError: simError} : {}),
       };
     },

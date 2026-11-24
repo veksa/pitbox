@@ -15,7 +15,18 @@ import {keepsOverrides, notDisabled, simSlimList, slimSimulator, storeDir, unsli
 
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
 
-export type Simulator = {udid: string; name: string; state: string; runtime: string; os: string; kind: SimKind; available: boolean; deviceType?: string};
+export type Simulator = {
+  udid: string;
+  name: string;
+  state: string;
+  runtime: string;
+  os: string;
+  kind: SimKind;
+  available: boolean;
+  deviceType?: string;
+  /** What keeps a physical device from running tests (`Developer Mode is off`). */
+  note?: string;
+};
 
 /** One screen of a simulator; a foldable has two, and only one is lit at a time. */
 export type Display = {id: number; name: string; active: boolean; primary: boolean; width: number; height: number};
