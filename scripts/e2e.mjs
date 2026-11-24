@@ -10,6 +10,7 @@
 //   PITBOX_E2E_EXAMPLES=react-native yarn e2e
 //   PITBOX_E2E_KINDS=phone,tv yarn e2e
 //   PITBOX_E2E_AVD_TV=My_TV yarn e2e           a given AVD for a kind
+//   PITBOX_E2E_DEVICE=<serial> yarn e2e        a phone on USB instead of a phone AVD (the other kinds are skipped)
 
 import {execFileSync, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -72,6 +73,14 @@ const gradlew = dir => path.join(dir, process.platform === 'win32' ? 'gradlew.ba
  * the AVD's name would also match the other session's emulator.
  */
 const deviceOf = (kind, pitbox, json) => {
+  const phone = process.env.PITBOX_E2E_DEVICE;
+  if (phone) {
+    if (kind !== 'phone') return {skip: 'a phone on USB runs only the phone plan'};
+    step(`${kind}: ${phone} (a device on USB)`);
+    const listed = json(['devices']).devices.find(d => d.serial === phone);
+    if (!listed || listed.state !== 'device') throw new Error(`${phone} is not online: ${listed?.state ?? 'not listed'} (unlock it and allow USB debugging)`);
+    return {avd: phone, name: listed.model ?? phone, booted: false};
+  }
   const {devices, avds} = json(['devices']);
   const named = process.env[`PITBOX_E2E_AVD_${kind.toUpperCase()}`];
   const running = devices.find(d => d.state === 'device' && /^yours\b/.test(d.holder ?? '') && (named ? d.avd === named : d.kind === kind));
