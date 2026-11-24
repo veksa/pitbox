@@ -5,7 +5,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {crashFiles, devicectlJson, deviceHint, devicePid, isPhysical, muxDeviceId, muxPacket, parseDeviceApps, parseProcessLive, PhysicalDevices, parsePhysicalDevices, physicalUdid, pickTeam, signingIdentities} from './drivers/apple/physical.ts';
 import {runnerBundleId, signingArgs} from './drivers/apple/runner.ts';
 import {formatLog, parseSyslog} from './drivers/apple/syslog.ts';
-import {builtinRules} from './doctor/rules.ts';
+import {builtinRules, displayLeftovers} from './doctor/rules.ts';
 import type {DoctorContext} from './doctor/types.ts';
 
 const UDID = '00008150-0000000000000000';
@@ -199,5 +199,24 @@ describe('physical apple devices', () => {
     expect(parseProcessLive(xml.replace(rows[2]!, ''), 321)).toEqual({footprint: 25165824, cpu: 2.5});
     expect(parseProcessLive(xml, 9)).toEqual({footprint: 1048576});
     expect(parseProcessLive(xml, 77)).toBeUndefined();
+  });
+});
+
+describe('display leftovers', () => {
+  const display = (size: string, density: string, scale = '1.0') =>
+    `${scale}\nPhysical size: 1440x3200\n${size ? `Override size: ${size}\n` : ''}Physical density: 560\n${density ? `Override density: ${density}\n` : ''}`;
+
+  it('leaves a phone at its own lower resolution alone', () => {
+    expect(displayLeftovers(display('1080x2400', '420'), false)).toEqual([]);
+  });
+
+  it('reports the same override on an emulator, where no user chose it', () => {
+    expect(displayLeftovers(display('1080x2400', '420'), true)).toEqual(['display size overridden', 'density overridden']);
+  });
+
+  it('reports a size or density a run set on a phone', () => {
+    expect(displayLeftovers(display('1080x1920', '420'), false)).toEqual(['display size overridden', 'density overridden']);
+    expect(displayLeftovers(display('', '480'), false)).toEqual(['density overridden']);
+    expect(displayLeftovers(display('', '', '1.3'), false)).toEqual(['font scale 1.3']);
   });
 });

@@ -197,6 +197,31 @@ const ciDevServer: Rule = {
   },
 };
 
+/**
+ * What of a device's display (`settings get system font_scale; wm size; wm density`) is not at its default. A phone's
+ * own resolution setting (HyperOS, One UI: WQHD+ / FHD+) is an override of size and density by one factor: the
+ * user's choice, not a run's leftover, so on hardware it is left alone.
+ */
+export const displayLeftovers = (out: string, emulator: boolean): string[] => {
+  const scale = Number(out.split('\n')[0]);
+  const pair = (re: RegExp) => re.exec(out)?.slice(1).map(Number);
+  const physSize = pair(/Physical size: (\d+)x(\d+)/);
+  const overSize = pair(/Override size: (\d+)x(\d+)/);
+  const physDensity = pair(/Physical density: (\d+)/)?.[0];
+  const overDensity = pair(/Override density: (\d+)/)?.[0];
+  const factor = physSize && overSize ? overSize[0]! / physSize[0]! : NaN;
+  const resolution =
+    !emulator &&
+    !!physSize && !!overSize && !!physDensity && !!overDensity &&
+    Math.abs(overSize[1]! / physSize[1]! - factor) < 0.01 &&
+    Math.abs(overDensity / physDensity - factor) < 0.01;
+  const found: string[] = [];
+  if (Number.isFinite(scale) && scale !== 1) found.push(`font scale ${scale}`);
+  if (overSize && !resolution) found.push('display size overridden');
+  if (overDensity && !resolution) found.push('density overridden');
+  return found;
+};
+
 /** A run that stopped half-way (a matrix, a font-size check) leaves the device enlarged or resized for the next. */
 const leftoverDisplay: Rule = {
   id: 'device-display',
@@ -206,21 +231,19 @@ const leftoverDisplay: Rule = {
     const findings: Finding[] = [];
     for (const d of await ownDevices(ctx)) {
       const out = await ctx.android.shell(d.serial, 'settings get system font_scale; wm size; wm density').catch(() => '');
-      const scale = Number(out.split('\n')[0]);
-      const sizeOverride = /Override size:/.test(out);
-      const densityOverride = /Override density:/.test(out);
-      if ((Number.isFinite(scale) && scale !== 1) || sizeOverride || densityOverride) {
-        findings.push({
-          rule: 'device-display',
-          severity: 'warn',
-          message: `${d.avd ?? d.serial}: ${[scale !== 1 && Number.isFinite(scale) ? `font scale ${scale}` : '', sizeOverride ? 'display size overridden' : '', densityOverride ? 'density overridden' : ''].filter(Boolean).join(', ')}`,
-          hint: 'probably left by an interrupted run; every screen and selector looks different until reset',
-          fix: async () => {
-            await ctx.android!.shell(d.serial, 'settings put system font_scale 1; wm size reset; wm density reset');
-            return `${d.avd ?? d.serial}: font scale 1, display size and density reset`;
-          },
-        });
-      }
+      const found = displayLeftovers(out, d.emulator);
+      if (!found.length) continue;
+      const resetsDisplay = found.some(f => !f.startsWith('font scale'));
+      findings.push({
+        rule: 'device-display',
+        severity: 'warn',
+        message: `${d.avd ?? d.serial}: ${found.join(', ')}`,
+        hint: 'probably left by an interrupted run; every screen and selector looks different until reset',
+        fix: async () => {
+          await ctx.android!.shell(d.serial, `settings put system font_scale 1${resetsDisplay ? '; wm size reset; wm density reset' : ''}`);
+          return `${d.avd ?? d.serial}: font scale 1${resetsDisplay ? ', display size and density reset' : ''}`;
+        },
+      });
     }
     return findings;
   },
