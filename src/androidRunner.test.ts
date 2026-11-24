@@ -3,6 +3,7 @@
 // as it is. Installing or force-stopping the runner on a real device kills it mid-call for whoever uses it.
 
 import net from 'node:net';
+import {fileURLToPath} from 'node:url';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {AndroidDriver} from './drivers/android/driver.ts';
 import {AndroidDriver as Driver, AndroidError, installFailure, securityHint, wirelessSerial} from './drivers/android/driver.ts';
@@ -207,7 +208,7 @@ describe("Google Play Protect's question at install", () => {
     };
     return d;
   };
-  const apk = new URL('../package.json', import.meta.url).pathname;
+  const apk = fileURLToPath(new URL('../package.json', import.meta.url));
 
   it('says the install waits on it once it has stayed up, instead of hanging silently', async () => {
     const err = await driver(() => true, 5000).install('0123abcd', apk).catch((e: unknown) => e);
