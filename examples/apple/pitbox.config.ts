@@ -1,9 +1,11 @@
 import {defineConfig} from '@veksa/pitbox';
 
 export default defineConfig({
-  app: {apple: 'dev.pitbox.example'},
+  // A build signed for a physical iPhone has ids of its team's own (`yarn e2e:apple` with PITBOX_E2E_DEVICE).
+  app: {apple: process.env.PITBOX_EXAMPLE_APPLE_ID ?? 'dev.pitbox.example'},
   services: {
-    stand: {start: 'node stand/server.mjs', health: 'http://127.0.0.1:4100/health'},
+    // Exposed: a physical iPhone reaches it on its own localhost through the runner's relay.
+    stand: {start: 'node stand/server.mjs', health: 'http://127.0.0.1:4100/health', expose: 4100},
   },
   tools: {
     reset: {description: 'Zero the stand counter', run: `node -e "fetch('http://127.0.0.1:4100/reset').then(r => r.text()).then(console.log)"`},

@@ -6,6 +6,9 @@
 //   PITBOX_E2E_KINDS=phone,tv yarn e2e:apple
 //   PITBOX_E2E_SIM_TV="Apple TV 4K (at 1080p)" yarn e2e:apple   a given simulator (name or udid) for a kind
 //   PITBOX_E2E_EXAMPLES=react-native yarn e2e:apple            only examples/react-native, on a phone
+//   PITBOX_E2E_DEVICE=<udid> yarn e2e:apple          examples/apple on a physical iPhone (connected, unlocked):
+//                                                    signed with the Mac's Apple Development team (PITBOX_E2E_TEAM
+//                                                    when several), its ids made the team's own, push left out
 
 import {execFileSync, spawn, spawnSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -66,9 +69,18 @@ const results = [];
 /** The simulator a kind runs on: the named one, else a booted one, else the newest runtime's. */
 const simFor = kind => {
   const named = process.env[`PITBOX_E2E_SIM_${kind.toUpperCase()}`];
-  const ofKind = simulators.filter(s => (named ? s.name === named || s.udid === named : s.kind === kind)).sort(newer);
+  // A physical device is listed too: it runs only in the device mode.
+  const ofKind = simulators.filter(s => !s.physical && (named ? s.name === named || s.udid === named : s.kind === kind)).sort(newer);
   return ofKind.find(s => s.state === 'Booted') ?? ofKind[0];
 };
+
+// The device mode: examples/apple on a physical iPhone, and nothing else.
+const deviceUdid = process.env.PITBOX_E2E_DEVICE;
+if (deviceUdid) {
+  await runOnDevice(deviceUdid);
+  summary();
+  process.exit(process.exitCode ?? 0);
+}
 
 if (examples.includes('apple')) step('stand');
 // A daemon left from an older build would answer with the older code.
@@ -230,9 +242,71 @@ if (examples.includes('react-native') && rnSim) {
   results.push({kind: 'rn phone', sim: rnSim.name, status: checks.every(c => c.ok) ? 'pass' : 'fail', checks});
 }
 
-step('summary');
-for (const r of results) {
-  const detail = r.checks ? r.checks.map(c => `${c.ok ? '✓' : '✗'} ${c.name}${c.note ? ` — ${c.note}` : ''}`).join(', ') : r.note;
-  console.log(`${r.status === 'pass' ? '✓' : r.status === 'skip' ? '·' : '✗'} ${r.kind.padEnd(9)} ${r.sim ?? ''}  ${detail}`);
+summary();
+
+function summary() {
+  step('summary');
+  for (const r of results) {
+    const detail = r.checks ? r.checks.map(c => `${c.ok ? '✓' : '✗'} ${c.name}${c.note ? ` — ${c.note}` : ''}`).join(', ') : r.note;
+    console.log(`${r.status === 'pass' ? '✓' : r.status === 'skip' ? '·' : '✗'} ${r.kind.padEnd(9)} ${r.sim ?? ''}  ${detail}`);
+  }
+  if (results.some(r => r.status === 'fail')) process.exitCode = 1;
 }
-if (results.some(r => r.status === 'fail')) process.exitCode = 1;
+
+/**
+ * examples/apple on a physical iPhone: built for iphoneos and signed by the Mac's team (a free Personal Team signs
+ * no push, so the app's entitlements are left out, and registers no id another team has, so the ids get the team's
+ * suffix, as the runner's do). The stand is reached on the phone's own localhost through the runner's relay.
+ */
+async function runOnDevice(udid) {
+  const {pickTeam, readSigningIdentities, teamSuffix} = await import('../src/drivers/apple/physical.ts');
+  const team = pickTeam(await readSigningIdentities(), process.env.PITBOX_E2E_TEAM);
+  const bundleId = `dev.pitbox.example${teamSuffix(team)}`;
+  // The daemon reads the app id from the example's config, which takes it from here; one left from an older build
+  // would answer with the older code.
+  process.env.PITBOX_EXAMPLE_APPLE_ID = bundleId;
+  must(['daemon', 'restart']);
+  const dev = JSON.parse(must(['devices', '--json'])).simulators?.find(s => s.udid === udid && s.physical);
+  if (!dev) {
+    results.push({kind: 'device', status: 'fail', checks: [{name: 'setup', ok: false, note: `no physical device ${udid} (pitbox devices lists them)`}]});
+    return;
+  }
+  step(`device: ${dev.name} (${dev.os})`);
+  const checks = [];
+  try {
+    console.log(must(['up']));
+    // Xcode reads the target's entitlements for the profile whatever the build is told: an empty set of its own.
+    const entitlements = path.join(example, 'build', 'device.entitlements');
+    fs.mkdirSync(path.dirname(entitlements), {recursive: true});
+    fs.writeFileSync(entitlements, '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n');
+    execFileSync(
+      'xcodebuild',
+      ['build', '-project', path.join(example, 'PitboxExample.xcodeproj'), '-scheme', 'PitboxExample', '-destination', `id=${udid}`, '-derivedDataPath', path.join(example, 'build'), '-quiet', '-allowProvisioningUpdates', '-allowProvisioningDeviceRegistration', 'CODE_SIGN_STYLE=Automatic', `DEVELOPMENT_TEAM=${team}`, 'CODE_SIGN_IDENTITY=Apple Development', `PITBOX_ID_SUFFIX=${teamSuffix(team)}`, `CODE_SIGN_ENTITLEMENTS=${entitlements}`],
+      {stdio: 'inherit'},
+    );
+    const app = path.join(products, 'Debug-iphoneos', 'PitboxExample.app');
+    if (!fs.existsSync(app)) throw new Error('the build left no Debug-iphoneos/PitboxExample.app');
+    // A fresh install: the camera permission is asked again (a device's answers cannot be reset from the Mac).
+    pitbox(['uninstall', '--device', udid, '--pkg', bundleId]);
+    console.log(must(['install', app, '--device', udid]));
+    for (const flow of ['permission', 'smoke', 'modal', 'rotate']) {
+      const r = pitbox(['run', flow, '--device', udid]);
+      console.log(r.out.split('\n').slice(0, 6).join('\n'));
+      checks.push({name: flow, ok: r.code === 0 && r.out.startsWith('✓')});
+    }
+    const r = pitbox(['run', 'crash', '--device', udid]);
+    console.log(r.out.split('\n').slice(0, 6).join('\n'));
+    checks.push({name: 'crash (fails with the crash)', ok: r.out.startsWith('✗') && /app crashed/.test(r.out)});
+    // The report is copied off the device: the crash names its frames, not only that the app stopped.
+    checks.push({name: 'crash report pulled', ok: /app crashed/.test(r.out) && !/no crash report yet/.test(r.out)});
+  } catch (e) {
+    checks.push({name: 'setup', ok: false, note: e.message.split('\n').slice(0, 4).join(' ')});
+  } finally {
+    pitbox(['down']);
+    pitbox(['daemon', 'stop']);
+  }
+  // The device stays on after `down`: its runner's xcodebuild must end with the session, not outlive it.
+  const left = spawnSync('pgrep', ['-f', `test-without-building.*id=${udid}`], {encoding: 'utf8'}).stdout.trim();
+  checks.push({name: 'runner ends with down', ok: !left, ...(left ? {note: `xcodebuild still running: ${left.split('\n').join(', ')}`} : {})});
+  results.push({kind: 'device', sim: dev.name, status: checks.every(c => c.ok) ? 'pass' : 'fail', checks});
+}

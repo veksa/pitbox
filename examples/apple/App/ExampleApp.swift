@@ -175,7 +175,8 @@ struct MainView: View {
     }
   }
 
-  /// The stand runs on the Mac, and a simulator shares the Mac's network: localhost is the stand.
+  /// The stand runs on the Mac. A simulator shares the Mac's network, and a physical iPhone has it on its own
+  /// localhost through the runner's relay: localhost is the stand either way.
   private func ask() async {
     response = "asking…"
     do {
