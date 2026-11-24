@@ -591,7 +591,7 @@ export const formatResult = (method: string, r: unknown): string => {
       return `${what} · ${x.inputs} native inputs${variant}${waited}${dropped}${inst ? `\ninstalled on ${inst.on} in ${seconds(inst.ms)}` : `\n${x.artifact}`}`;
     }
     case 'install':
-      return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}`;
+      return `installed${x.bundleId ? ` ${x.bundleId}` : ''} on ${x.serial ?? x.udid} in ${seconds(x.ms as number)}${x.replaced ? ' (uninstalled the old build first)' : ''}${x.note ? `\nnote: ${x.note}` : ''}`;
     case 'open':
     {
       const b = x.bundle as {kind: string; kb: number; ms: number; note?: string} | undefined;

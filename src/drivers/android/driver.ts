@@ -369,6 +369,24 @@ export const bootArgs = (avd: string, opts: BootOptions, readOnly: boolean): str
   return args;
 };
 
+/**
+ * Xiaomi's MIUI and HyperOS (Xiaomi, Redmi, POCO) keep adb from tapping (`INJECT_EVENTS`) and from granting
+ * permissions at install (`INSTALL_GRANT_RUNTIME_PERMISSIONS`) until a second switch in Developer options is on.
+ */
+export const SECURITY_SETTINGS_HINT = 'turn on "USB debugging (Security settings)" in Developer options (Xiaomi, Redmi and POCO phones keep adb from tapping and from granting permissions without it)';
+
+/** The hint for a refusal of the phone's own (a vendor's extra switch), if the text is one. */
+export const securityHint = (text: string): string | undefined => (/INJECT_EVENTS|INSTALL_GRANT_RUNTIME_PERMISSIONS/.test(text) ? SECURITY_SETTINGS_HINT : undefined);
+
+/** Why `adb install` failed: its `Failure [...]`, else the exception's message, not the last line of its stack. */
+export const installFailure = (out: string): string => {
+  const failure = /Failure \[([^\]]+)\]/.exec(out)?.[1];
+  if (failure) return failure;
+  const exception = /\b(?:java\.lang\.)?(\w+Exception: .+)/.exec(out)?.[1];
+  if (exception) return exception.trim();
+  return out.split('\n').map(l => l.trim()).filter(l => l && !/^at /.test(l)).pop() ?? 'no reason given';
+};
+
 export class AndroidError extends Error {
   readonly hint?: string;
 
@@ -740,10 +758,18 @@ export class AndroidDriver {
     return {ms: Date.now() - t0, gone: false};
   }
 
-  async install(serial: string, apk: string, opts: {replace?: boolean; pkg?: string} = {}): Promise<{ms: number; replaced: boolean}> {
+  async install(serial: string, apk: string, opts: {replace?: boolean; pkg?: string} = {}): Promise<{ms: number; replaced: boolean; note?: string}> {
     if (!fs.existsSync(apk)) throw new AndroidError(`no such file: ${apk}`);
     const t0 = Date.now();
-    let r = await this.adb(['install', '-r', '-d', '-g', apk], serial, {timeoutMs: 600_000});
+    let grant = ['-g'];
+    let note: string | undefined;
+    let r = await this.adb(['install', '-r', '-d', ...grant, apk], serial, {timeoutMs: 600_000});
+    // A phone that will not let adb grant permissions at install: the app goes in without them, and asks as it would.
+    if (/INSTALL_GRANT_RUNTIME_PERMISSIONS/.test(`${r.stdout}${r.stderr}`)) {
+      grant = [];
+      note = `permissions not granted at install: the phone refuses it, so the app asks for them\nhint: ${SECURITY_SETTINGS_HINT}`;
+      r = await this.adb(['install', '-r', '-d', apk], serial, {timeoutMs: 600_000});
+    }
     const out = `${r.stdout}\n${r.stderr}`;
     let replaced = false;
     // Another signature, or a higher version code on a build that is not debuggable: only uninstalling helps.
@@ -754,14 +780,15 @@ export class AndroidDriver {
         throw new AndroidError(why, `pass replace=true to uninstall ${pkg ?? 'it'} first (its data is lost)`);
       }
       await this.adb(['uninstall', pkg], serial, {timeoutMs: 60_000});
-      r = await this.adb(['install', '-r', '-d', '-g', apk], serial, {timeoutMs: 600_000});
+      r = await this.adb(['install', '-r', '-d', ...grant, apk], serial, {timeoutMs: 600_000});
       replaced = true;
     }
     if (!/Success/.test(`${r.stdout}${r.stderr}`)) {
-      const reason = /Failure \[([^\]]+)\]/.exec(`${r.stdout}${r.stderr}`)?.[1] ?? r.stderr.trim().split('\n').pop();
-      throw new AndroidError(`install failed: ${reason}`, /INSUFFICIENT_STORAGE/.test(reason ?? '') ? 'free space on /data: uninstall something or wipe the emulator' : undefined);
+      const reason = installFailure(`${r.stdout}\n${r.stderr}`);
+      const userRefused = /INSTALL_FAILED_USER_RESTRICTED/.test(reason);
+      throw new AndroidError(`install failed: ${reason}`, /INSUFFICIENT_STORAGE/.test(reason) ? 'free space on /data: uninstall something or wipe the emulator' : userRefused ? 'the phone asked whether to install over USB and was not answered: allow it on the phone, or turn on "Install via USB" in Developer options' : securityHint(reason));
     }
-    return {ms: Date.now() - t0, replaced};
+    return {ms: Date.now() - t0, replaced, ...(note ? {note} : {})};
   }
 
   /**

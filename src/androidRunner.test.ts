@@ -5,7 +5,7 @@
 import net from 'node:net';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {AndroidDriver} from './drivers/android/driver.ts';
-import {AndroidError} from './drivers/android/driver.ts';
+import {AndroidError, installFailure, securityHint} from './drivers/android/driver.ts';
 import {AndroidRunner, RUNNER_VERSION, retriedRead} from './drivers/android/runner.ts';
 
 type Device = {
@@ -171,4 +171,15 @@ describe('the android runner while windows are in transition', () => {
       await r.stop();
     }
   }, 30_000);
+});
+
+describe('a phone that keeps adb from tapping and granting', () => {
+  it('names the switch for a refusal, and the reason of a failed install', () => {
+    const stack = 'Performing Streamed Install\nadb: failed to install app.apk: \nException occurred while executing \'install\':\njava.lang.SecurityException: You need the android.permission.INSTALL_GRANT_RUNTIME_PERMISSIONS permission to use the PackageManager.INSTALL_GRANT_ALL_REQUESTED_PERMISSIONS flag\n\tat com.android.server.pm.PackageInstallerService.createSessionInternal(PackageInstallerService.java:900)';
+    expect(installFailure(stack)).toBe('SecurityException: You need the android.permission.INSTALL_GRANT_RUNTIME_PERMISSIONS permission to use the PackageManager.INSTALL_GRANT_ALL_REQUESTED_PERMISSIONS flag');
+    expect(installFailure('adb: failed to install app.apk: Failure [INSTALL_FAILED_USER_RESTRICTED: Install canceled by user]')).toBe('INSTALL_FAILED_USER_RESTRICTED: Install canceled by user');
+    expect(securityHint(stack)).toMatch(/USB debugging \(Security settings\)/);
+    expect(securityHint('SecurityException: Injecting input events requires the caller (or the source of the instrumentation, if any) to have the INJECT_EVENTS permission.')).toMatch(/Security settings/);
+    expect(securityHint('Failure [INSUFFICIENT_STORAGE]')).toBeUndefined();
+  });
 });

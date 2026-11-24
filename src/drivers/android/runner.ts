@@ -8,7 +8,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {leaseKey, machineLock} from '../../lease/lease.ts';
 import type {AndroidDriver} from './driver.ts';
-import {AndroidError} from './driver.ts';
+import {AndroidError, installFailure, securityHint} from './driver.ts';
 
 export const RUNNER_PACKAGE = 'dev.pitbox.runner';
 /** Must match `versionCode` in runners/android/build.gradle.kts. */
@@ -108,7 +108,7 @@ export class AndroidRunner {
       await this.#driver.adb(['uninstall', RUNNER_PACKAGE], this.serial, {timeoutMs: 60_000}).catch(() => undefined);
       r = await this.#driver.adb(['install', '-t', '-d', apk], this.serial, {timeoutMs: 120_000});
     }
-    if (!/Success/.test(r.stdout + r.stderr)) throw new AndroidError(`runner install failed: ${(r.stdout + r.stderr).trim().split('\n').pop()}`);
+    if (!/Success/.test(r.stdout + r.stderr)) throw new AndroidError(`runner install failed: ${installFailure(`${r.stdout}\n${r.stderr}`)}`, securityHint(r.stdout + r.stderr));
   }
 
   start(): Promise<void> {
@@ -219,7 +219,7 @@ export class AndroidRunner {
       this.#pending.delete(Number(msg.id));
       clearTimeout(p.timer);
       if (msg.ok) p.resolve(msg);
-      else p.reject(new AndroidError(`runner: ${msg.error}`));
+      else p.reject(new AndroidError(`runner: ${msg.error}`, securityHint(String(msg.error))));
     }
   }
 
