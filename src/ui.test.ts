@@ -404,6 +404,34 @@ describe('a permission request over the app', () => {
   it('says so when a selector finds nothing under it', () => {
     expect(() => resolveTarget(snap, 'id=home')).toThrow(/nothing matches "id=home" — a permission request is on top: "Allow MyApp/);
   });
+
+  it("finds its Allow and Don't allow named in English when the device is in another language", () => {
+    const ru = buildSnapshot(perm, [
+      {p: -1, w: 0, c: 'FrameLayout', b: [0, 0, 1080, 2400]},
+      {p: 0, w: 0, c: 'Button', b: [40, 1100, 1040, 1200], t: 'Разрешить', id: 'permission_allow_button', f: 'c'},
+      {p: 0, w: 0, c: 'Button', b: [40, 1200, 1040, 1300], t: 'Запретить', id: 'permission_deny_button', f: 'c'},
+    ]);
+    expect(resolveTarget(ru, 'text="Allow"').node?.id).toBe('permission_allow_button');
+    expect(resolveTarget(ru, 'text="Don’t allow"').node?.id).toBe('permission_deny_button');
+  });
+
+  it("finds the shell alert's button by its translation, and only in the alert", () => {
+    const shell: UiWindow[] = [
+      {type: 'app', title: '', pkg: 'com.example.app'},
+      {type: 'app', title: '', pkg: 'com.apple.springboard'},
+    ];
+    const alert = buildSnapshot(shell, [
+      {p: -1, w: 0, c: 'Button', b: [0, 0, 300, 100], t: 'Разрешить', f: 'c'},
+      {p: -1, w: 1, c: 'Button', b: [0, 500, 150, 600], t: 'Не разрешать', f: 'c'},
+      {p: -1, w: 1, c: 'Button', b: [150, 500, 300, 600], t: 'Разрешить', f: 'c'},
+    ]);
+    expect(resolveTarget(alert, 'text="Allow"').node?.b).toEqual([150, 500, 300, 600]);
+    expect(resolveTarget(alert, 'label=Allow').node?.b).toEqual([150, 500, 300, 600]);
+    expect(resolveTarget(alert, "text=\"Don't Allow\"").node?.t).toBe('Не разрешать');
+    const app = buildSnapshot(shell.slice(0, 1), [{p: -1, w: 0, c: 'Button', b: [0, 0, 300, 100], t: 'Разрешить', f: 'c'}]);
+    expect(() => resolveTarget(app, 'text=Allow')).toThrow(/nothing matches/);
+    expect(() => resolveTarget(alert, 'text~=Allow')).toThrow(/nothing matches/);
+  });
 });
 
 describe('visual diff', () => {

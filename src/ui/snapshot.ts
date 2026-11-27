@@ -43,6 +43,18 @@ export const shellAlertButtonStays = (before: Pick<Snapshot, 'windows'>, n: UiNo
   return alert(before.windows[n.w]?.pkg ?? '') && after.nodes.some(m => alert(after.windows[m.w]?.pkg ?? '') && m.c === n.c && m.id === n.id && m.t === n.t && m.d === n.d);
 };
 
+/**
+ * A system alert's buttons that flows name in English, found in the device's language too: Android's permission
+ * request by its button's id, the shell's alert (an Apple runner's permission request) by the button's text in the
+ * languages below. Apostrophes compare as `'`.
+ */
+const ALERT_BUTTONS = new Map<string, {ids: string[]; words: string[]}>([
+  ['allow', {ids: ['permission_allow_button'], words: ['allow', 'разрешить', 'дозволити', 'erlauben', 'autoriser', 'permitir', 'consenti', 'toestaan']}],
+  ["don't allow", {ids: ['permission_deny_button'], words: ["don't allow", 'не разрешать', 'запретить', 'не дозволяти', 'nicht erlauben', 'ne pas autoriser', 'no permitir', 'non consentire', 'niet toestaan']}],
+  ['allow full access', {ids: [], words: ['allow full access', 'разрешить полный доступ']}],
+]);
+const apostrophes = (s: string) => s.replace(/[‘’ʼ]/g, "'");
+
 /** The question of a runtime permission request over the app ("Allow MyApp to send you notifications?"), if any. */
 export const permissionPrompt = (snap: Pick<Snapshot, 'windows' | 'nodes'>): string | undefined => {
   const w = snap.windows.findIndex(x => PERMISSION_APP.test(x.pkg));
@@ -386,7 +398,17 @@ export const resolveTarget = (snap: Snapshot, selector: string): Target => {
     const exact = (n: UiNode, i: number) => lower(n.id) === v || lower(quoted(n, i)) === v || lower(n.d) === v;
     match = snap.nodes.some(exact) ? exact : (n, i) => lower(quoted(n, i)).includes(v) || lower(n.d).includes(v) || lower(n.id).includes(v);
   }
-  const hits = snap.nodes.map((n, i) => ({n, i})).filter(({n, i}) => match(n, i));
+  // An exact text or label (or bare words) naming a system alert's button in English matches that button in any
+  // language: `press? text="Allow"` answers a permission request on a device set to another language.
+  const asked = m ? (m[2] === '=' && m[1] !== 'id' ? m[3]! : undefined) : sel;
+  const button = asked === undefined ? undefined : ALERT_BUTTONS.get(apostrophes(lower(asked.replace(/^["']|["']$/g, ''))));
+  const inAlert = (n: UiNode) => {
+    const pkg = snap.windows[n.w]?.pkg ?? '';
+    return SHELL_ALERT.test(pkg) || PERMISSION_APP.test(pkg);
+  };
+  const alertButton = (n: UiNode, i: number) =>
+    !!button && inAlert(n) && (button.ids.includes(n.id ?? '') || [quoted(n, i), n.t, n.d].some(s => s !== undefined && button.words.includes(apostrophes(lower(s)))));
+  const hits = snap.nodes.map((n, i) => ({n, i})).filter(({n, i}) => match(n, i) || alertButton(n, i));
   if (!hits.length) {
     const prompt = permissionPrompt(snap);
     throw new Error(`nothing matches "${sel}"${prompt ? ` — a permission request is on top: "${prompt}"` : missHint(snap, sel)}`);
