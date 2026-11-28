@@ -870,6 +870,18 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       if (snap.lines.join('\n') === prev) break;
     }
     if (!matches(snap, selector)) throw new Error(`scrolled ${direction} but "${selector}" never appeared`);
+    // Quiet for 200 ms is not still: a flung list shows the target while it still glides. Followed until two looks
+    // have every node where it was, so a press next lands on the target and not on a moving list (which spends the
+    // tap on stopping the scroll: Android fires the press-in, never the press).
+    const end = Date.now() + FOLLOW_MS * 2;
+    for (;;) {
+      await new Promise(res => setTimeout(res, LOOK_MS));
+      const next = await this.snapshot();
+      const still = sameScreen(next, snap);
+      snap = next;
+      if (still || Date.now() > end) break;
+    }
+    if (!matches(snap, selector)) throw new Error(`scrolled ${direction} but "${selector}" went past and off the screen`);
     this.record(`scroll ${direction} until ${selector}`);
     return {action: 'scroll', target: selector, diff: diffSnapshots(start, snap), idle: true, ms: Date.now() - t0, trace: this.#trace, phases: this.phases, ...(await this.#end(t0))};
   }

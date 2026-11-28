@@ -482,6 +482,36 @@ describe('a window still moving when an action starts', () => {
   });
 });
 
+describe('scroll until a target shows', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+
+  it('returns once a flung list has stopped, with the target where it comes to rest', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    // After the swipe the list glides on: 300 px further at every look, the target in view from the first one,
+    // until it rests at 800. A text-only comparison takes the first look for the settled screen.
+    let looks = -1;
+    const row = (y: number): UiNode => ({p: -1, w: 0, c: 'Button', b: [0, y, 1080, y + 120], t: 'Row 20', f: 'c'});
+    const list: UiNode = {p: -1, w: 0, c: 'ScrollView', b: [0, 0, 1080, 2400], f: 's'};
+    const runner = {
+      call: async (cmd: string) => {
+        if (cmd === 'swipe') looks = 0;
+        if (cmd === 'tree') {
+          if (looks < 0) return {windows: app, nodes: [list]};
+          const y = Math.max(800, 2000 - 300 * looks++);
+          return {windows: app, nodes: [list, {...row(y), p: 0}]};
+        }
+        if (cmd === 'info') return {width: 1080, height: 2400};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+    const ui = new DeviceUi('dev', runner as never);
+    await ui.scrollUntil('down', 'text=Row 20');
+    const snap = ui.last!;
+    expect(snap.nodes.find(n => n.t === 'Row 20')?.b[1]).toBe(800);
+  });
+});
+
 describe('a tap at a point', () => {
   const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
   const play: UiNode = {p: -1, w: 0, c: 'Button', b: [100, 100, 200, 200], t: 'Play', f: 'c'};
