@@ -673,7 +673,8 @@ describe('preferences of a simulator pitbox creates', () => {
     expect(defaultsArgs(simPrefs()[0]!)).toEqual(['defaults', 'write', '-g', 'AppleLanguages', '-array', 'en-US']);
   });
 
-  it('are written into the data folder over what the Mac left there', async () => {
+  // plutil comes with macOS only, where simulators run.
+  it.skipIf(process.platform !== 'darwin')('are written into the data folder over what the Mac left there', async () => {
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-simprefs-'));
     try {
       const dir = path.join(data, 'Library', 'Preferences');
