@@ -30,7 +30,8 @@ describe('config', () => {
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {encoding: 'utf8'});
     expect(r.stdout.trim()).toBe('com.example.app');
     expect(r.stderr).not.toMatch(/MODULE_TYPELESS_PACKAGE_JSON|Reparsing as ES module/);
-  });
+    // A fresh node that compiles the loader: 20 s and more on a busy Windows runner.
+  }, 60_000);
 
   it('loads a TypeScript config and resolves the state dir next to it', async () => {
     const dir = tmp();
