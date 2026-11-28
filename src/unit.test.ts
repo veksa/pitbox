@@ -250,8 +250,14 @@ describe('cli', () => {
     expect(toCall(parseArgs(['settings', 'fontScale=1.3', 'dark=true'])).params).toMatchObject({fontScale: '1.3', dark: 'true'});
     expect(toCall(parseArgs(['wait', 'id=player', '30'])).params).toMatchObject({target: 'id=player', timeout: '30'});
     expect(toCall(parseArgs(['wait', 'gone', 'text=Loading', '5'])).params).toMatchObject({gone: true, target: 'text=Loading', timeout: '5'});
-    expect(toCall(parseArgs(['wait', 'text=Page 2'])).params).toMatchObject({target: 'text=Page 2'});
+    expect(toCall(parseArgs(['wait', 'text=Page 2'])).params).toMatchObject({target: 'text=Page 2'});  });
+
+  it('takes the user of as bare or as user=, like the MCP tool', () => {
+    expect(toCall(parseArgs(['as', 'user=reader@example.test'])).params).toMatchObject({user: 'reader@example.test'});
+    expect(toCall(parseArgs(['as', 'reader@example.test', '--device', 'emulator-5554'])).params).toEqual({device: 'emulator-5554', user: 'reader@example.test'});
+    expect(() => toCall(parseArgs(['as']))).toThrow(/as <user>/);
   });
+
 });
 
 describe('runner version', () => {

@@ -297,8 +297,12 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
       return {method: 'matrix', params: {device, flow: rest[0], steps: flags.steps, params: kv(rest.slice(1))}};
     case 'goto':
       return {method: 'goto', params: {device, route: rest[0], params: kv(rest.slice(1))}};
-    case 'as':
-      return {method: 'as', params: {device, user: rest[0]}};
+    case 'as': {
+      // `as <user>` or, as the MCP tool names it, `as user=<user>`.
+      const user = rest.join(' ').replace(/^user=/, '');
+      if (!user) throw new Error('as <user>');
+      return {method: 'as', params: {device, user}};
+    }
     case 'state': {
       const [sub, name] = rest;
       const method = ({save: 'stateSave', restore: 'stateRestore', list: 'stateList', rm: 'stateDelete'} as Record<string, string>)[sub ?? 'list'];
