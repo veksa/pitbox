@@ -11,7 +11,7 @@ setup
   init [--dry-run] [--force]    a first pitbox.config.ts from the project's files; lets Android debug builds use plain HTTP
   serve-devices [--listen host:port]  serve this Mac's simulators to a pitbox on another machine (apple.remote there)
 
-stand
+stand                           (also as the MCP tool names it: stand up, stand action=up services=a,b)
   up [service…]                 start the stand (all autostart services, the LLM mock) or the named services
   down [service…] [--keep-daemon]   stop what pitbox started; the whole stand down also gives the devices back and stops
                                 the project's daemon with the browsers it started (--keep-daemon keeps it)
@@ -151,6 +151,19 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
   const pkg = flags.pkg as string | undefined;
   const common = {device, pkg};
   switch (cmd) {
+    case 'stand': {
+      // The MCP tool's form (`stand up`, `stand action=up services=api,db`), so a skill's call can be pasted.
+      const named = rest.filter(r => /^\w+=/.test(r));
+      const given: Record<string, string> = kv(named);
+      const bare = rest.filter(r => !/^\w+=/.test(r));
+      const action = given.action ?? bare.shift();
+      const list = (v?: string) => (v ? v.split(',').map(x => x.trim()).filter(Boolean) : []);
+      const keep = given.keep === 'true' || !!flags.keep;
+      if (action === 'up' || action === 'restart') return {method: action, params: {services: [...list(given.services), ...bare]}};
+      if (action === 'down') return {method: 'down', params: {services: [...list(given.services), ...bare], ...(keep || flags['keep-daemon'] ? {keepDaemon: true} : {})}};
+      if (action === 'logs') return {method: 'logs', params: {name: given.name ?? bare[0], lines: given.lines ?? flags.lines, grep: given.grep ?? flags.grep}};
+      throw new Error('stand up|down|restart|logs|stop [<services…>] (also stand action=up services=a,b)');
+    }
     case 'down':
       return {method: cmd, params: {services: rest, ...(flags['keep-daemon'] ? {keepDaemon: true} : {})}};
     case 'up':
@@ -394,8 +407,12 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
   }
 };
 
+/** `stand stop` / `stand action=stop`, the MCP tool's form, is `daemon stop`. */
+export const standStop = (args: Args): Args =>
+  args.positional[0] === 'stand' && ['stop', 'action=stop'].includes(args.positional[1] ?? '') ? {...args, positional: ['daemon', 'stop']} : args;
+
 export const main = async () => {
-  const args = parseArgs(process.argv.slice(2));
+  const args = standStop(parseArgs(process.argv.slice(2)));
   const [cmd, sub] = args.positional;
   const config = args.flags.config as string | undefined;
   if (!cmd || cmd === 'help' || args.flags.help) {

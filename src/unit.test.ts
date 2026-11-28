@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it} from 'vitest';
-import {failed, parseArgs, toCall} from './cli.ts';
+import {failed, parseArgs, standStop, toCall} from './cli.ts';
 import {num} from './daemon/engine.ts';
 import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
@@ -257,6 +257,17 @@ describe('cli', () => {
     expect(toCall(parseArgs(['as', 'user=reader@example.test'])).params).toMatchObject({user: 'reader@example.test'});
     expect(toCall(parseArgs(['as', 'reader@example.test', '--device', 'emulator-5554'])).params).toEqual({device: 'emulator-5554', user: 'reader@example.test'});
     expect(() => toCall(parseArgs(['as']))).toThrow(/as <user>/);
+  });
+
+  it('maps the MCP stand actions under stand, bare or as action=', () => {
+    expect(toCall(parseArgs(['stand', 'up']))).toEqual(toCall(parseArgs(['up'])));
+    expect(toCall(parseArgs(['stand', 'action=up', 'services=api,db']))).toEqual({method: 'up', params: {services: ['api', 'db']}});
+    expect(toCall(parseArgs(['stand', 'restart', 'api']))).toEqual({method: 'restart', params: {services: ['api']}});
+    expect(toCall(parseArgs(['stand', 'action=down', 'keep=true']))).toEqual({method: 'down', params: {services: [], keepDaemon: true}});
+    expect(toCall(parseArgs(['stand', 'logs', 'api', '-n', '20'])).params).toMatchObject({name: 'api', lines: '20'});
+    expect(() => toCall(parseArgs(['stand']))).toThrow(/stand up\|down/);
+    expect(standStop(parseArgs(['stand', 'action=stop'])).positional).toEqual(['daemon', 'stop']);
+    expect(standStop(parseArgs(['stand', 'up'])).positional).toEqual(['stand', 'up']);
   });
 
   it('maps the MCP device actions under device, so device boot reaches the boot and its unknown-AVD error', () => {
