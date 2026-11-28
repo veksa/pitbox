@@ -1,6 +1,7 @@
 // The engine the daemon serves: config, stand, Android driver, doctor and docs behind one method table.
 // The CLI and the MCP server call these methods over the daemon's RPC.
 
+import {simPrefs} from '../drivers/apple/simPrefs.ts';
 import {WebRunner, type WebDialogs} from '../drivers/web/runner.ts';
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
@@ -986,7 +987,8 @@ export class Engine {
     try {
       const cfg = this.config.apple?.slim;
       const slim = (opts.slim ?? cfg !== false) ? (typeof cfg === 'object' ? cfg : true) : false;
-      const r = await s.boot(pick.udid, {...opts, slim});
+      // A simulator pitbox made starts in the project's language, not the Mac's; one of the user's is left alone.
+      const r = await s.boot(pick.udid, {...opts, slim, ...(created ? {prefs: simPrefs(this.config.apple?.locale)} : {})});
       // The boot pitbox made, on the lease: only while the simulator still runs it may a release or the reaper shut
       // it down (not one booted again later by hand or by Xcode on the same udid).
       if (!r.already && this.#leases.holderOf('apple', pick.udid)?.lease.booted) await this.#markAppleBoot(pick.udid);
@@ -1060,7 +1062,9 @@ export class Engine {
     if (!sim) return;
     try {
       const cfg = this.config.apple?.slim;
-      await s.boot(sim.udid, {headless: true, slim: cfg === false ? false : typeof cfg === 'object' ? cfg : true});
+      // A template is the Mac's, for every project: English and no keyboard introduction; a clone gets its project's
+      // language when it boots.
+      await s.boot(sim.udid, {headless: true, slim: cfg === false ? false : typeof cfg === 'object' ? cfg : true, prefs: simPrefs()});
       await Engine.templateQuiet(sim.udid);
       await s.shutdown(sim.udid);
       recordTemplate({udid: sim.udid, name: sim.name, deviceType, runtime: like.runtime, at: Date.now(), ready: true});

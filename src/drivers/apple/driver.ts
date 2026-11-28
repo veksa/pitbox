@@ -11,6 +11,7 @@ import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
 import {deviceError, isPhysical, PhysicalDevices, physicalUdid} from './physical.ts';
+import {defaultsArgs, writeSimPrefs, type SimPref} from './simPrefs.ts';
 import {keepsOverrides, notDisabled, simSlimList, slimSimulator, storeDir, unslimSimulator, watchLinkOff, type SimSlimOptions} from './slim.ts';
 
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
@@ -318,7 +319,7 @@ export class AppleDriver {
    * Boots a simulator. `slim` (iPhone and iPad on iOS 18.5+, booted from shut down): `true` or the list's options
    * slim it, `false` puts back what pitbox disabled; the answer's `slim` says what was done.
    */
-  async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number; slim?: boolean | SimSlimOptions} = {}): Promise<{udid: string; name: string; ms: number; already: boolean; note?: string; slim?: string}> {
+  async boot(selector: string, opts: {headless?: boolean; wipe?: boolean; timeoutMs?: number; slim?: boolean | SimSlimOptions; prefs?: SimPref[]} = {}): Promise<{udid: string; name: string; ms: number; already: boolean; note?: string; slim?: string}> {
     this.forgetList();
     const t0 = Date.now();
     const sims = await this.simulators();
@@ -351,12 +352,22 @@ export class AppleDriver {
       if (s.error) slim = `failed: ${s.error}`;
       else labels = simSlimList(o);
     }
+    // Preferences go into the data folder while it is shut down, so the first screen is already in that language.
+    if (opts.prefs?.length) await writeSimPrefs(path.join(this.deviceSet, sim.udid, 'data'), opts.prefs).catch(() => undefined);
     const r = await this.simctl(['boot', sim.udid], {timeoutMs: 120_000});
     if (r.code !== 0 && !/current state: Booted/i.test(r.stderr)) throw new AppleError(`boot failed: ${r.stderr.trim().split('\n').pop()}`);
     const timeoutMs = opts.timeoutMs ?? 240_000;
     const status = await this.simctl(['bootstatus', sim.udid, '-b'], {timeoutMs});
     if (status.timedOut) throw new AppleError(`${sim.name} did not finish booting in ${Math.round(timeoutMs / 1000)}s`, 'try `boot --wipe`');
     this.forgetList();
+    // A first boot can set the language from the Mac over what was written: read back, and written again through the
+    // simulator's own cfprefsd when it did (an app launched from now on reads it).
+    const lang = opts.prefs?.find(p => p.key === 'AppleLanguages')?.value;
+    if (opts.prefs?.length) {
+      const read = await this.simctl(['spawn', sim.udid, 'defaults', 'read', '-g', 'AppleLanguages'], {timeoutMs: 15_000});
+      const first = /"?([\w-]+)"?/.exec(read.stdout.replace(/[()\s,]+/g, ' ').trim())?.[1];
+      if (!Array.isArray(lang) || first !== lang[0]) for (const p of opts.prefs) await this.simctl(['spawn', sim.udid, ...defaultsArgs(p)], {timeoutMs: 15_000});
+    }
     if (labels.length) {
       // Read back from launchd: a runtime that ignored the overrides is said, not taken for slim.
       const printed = await this.simctl(['spawn', sim.udid, 'launchctl', 'print-disabled', 'system'], {timeoutMs: 30_000});

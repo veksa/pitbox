@@ -1,3 +1,4 @@
+import {execFileSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,6 +6,7 @@ import {describe, expect, it, vi} from 'vitest';
 import {AppleRunner, runnerNotice, sourceHash} from './drivers/apple/runner.ts';
 import {AppleCrashWatcher, keptReports, parseIps} from './drivers/apple/crashes.ts';
 import {fmtDevices} from './format.ts';
+import {defaultsArgs, simPrefs, writeSimPrefs} from './drivers/apple/simPrefs.ts';
 import {buildSnapshot, menuOutside, onlyClosedKeyboard, swipeArea} from './ui/snapshot.ts';
 import {AppleDriver, appProcess, contentSize, foldState, isAppleBundle, parseDisplays, parseSimulatorBoots, parseSimulators, pickSimulator, runtimeName, simKind, simulatorWindowApp, listFailure} from './drivers/apple/driver.ts';
 
@@ -659,5 +661,31 @@ describe('apple runner kept for the next daemon', () => {
     const runner = new AppleRunner({simulators: async () => []} as never, 'SIM-N', 'com.example.app');
     await runner.detach();
     expect(fs.existsSync(keptRunnerFile('SIM-N'))).toBe(false);
+  });
+});
+
+describe('preferences of a simulator pitbox creates', () => {
+  it('en-US by default, system keeps the Mac language, anything else is refused', () => {
+    expect(simPrefs().slice(0, 2).map(p => p.value)).toEqual([['en-US'], 'en_US']);
+    expect(simPrefs('zh-Hans-CN').slice(0, 2).map(p => p.value)).toEqual([['zh-Hans-CN'], 'zh_Hans_CN']);
+    expect(simPrefs('system').map(p => p.key)).toEqual(['DidShowContinuousPathIntroduction']);
+    expect(() => simPrefs('English')).toThrow(/not a locale/);
+    expect(defaultsArgs(simPrefs()[0]!)).toEqual(['defaults', 'write', '-g', 'AppleLanguages', '-array', 'en-US']);
+  });
+
+  it('are written into the data folder over what the Mac left there', async () => {
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-simprefs-'));
+    try {
+      const dir = path.join(data, 'Library', 'Preferences');
+      fs.mkdirSync(dir, {recursive: true});
+      const global = path.join(dir, '.GlobalPreferences.plist');
+      fs.writeFileSync(global, '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>AppleLocale</key><string>ru_CY</string><key>AppleLanguages</key><array><string>ru-CY</string></array><key>Other</key><true/></dict></plist>');
+      await writeSimPrefs(data, simPrefs());
+      const read = (f: string) => JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', f], {encoding: 'utf8'}));
+      expect(read(global)).toEqual({AppleLocale: 'en_US', AppleLanguages: ['en-US'], Other: true});
+      expect(read(path.join(dir, 'com.apple.keyboard.preferences.plist'))).toEqual({DidShowContinuousPathIntroduction: true});
+    } finally {
+      fs.rmSync(data, {recursive: true, force: true});
+    }
   });
 });

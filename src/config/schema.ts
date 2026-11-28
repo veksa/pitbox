@@ -285,6 +285,12 @@ export const configSchema = z.object({
        */
       templates: z.boolean().optional(),
       /**
+       * Language and region of the simulators pitbox creates (session copies, templates): `en-US` (default), `fr-FR`;
+       * `system` keeps the Mac's. Set before their first boot, with the keyboard's "Slide to Type" introduction
+       * marked as shown. A simulator of yours is left as it is (`settings locale=` changes it).
+       */
+      locale: z.string().regex(/^(system|[a-z]{2,3}([-_][A-Za-z]{4})?([-_]([A-Z]{2}|\d{3}))?)$/, 'a locale like en-US, or system').optional(),
+      /**
        * The Apple Development team (`ABCDE12345`) that signs the runner for a physical iPhone or iPad. Without it, the
        * only team with a development certificate in the keychain; a free Personal Team works.
        */

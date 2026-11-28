@@ -45,8 +45,11 @@ class FakeApple {
     if (b.length !== 1) throw new Error(`no booted simulator matches "${sel ?? ''}"`);
     return b[0]!.udid;
   };
-  boot = async (sel: string) => {
+  /** udid -> the preferences its boot was asked to set before it started. */
+  prefs = new Map<string, unknown>();
+  boot = async (sel: string, opts: {prefs?: unknown} = {}) => {
     const s = this.sims.find(x => x.udid === sel || x.name === sel)!;
+    if (opts.prefs) this.prefs.set(s.udid, opts.prefs);
     const already = s.state === 'Booted';
     s.state = 'Booted';
     if (!already) this.marks.set(s.udid, `launchd_sim:${100 + ++this.#boots}@1700000000`);
@@ -255,6 +258,21 @@ describe('simulators', () => {
     expect(await b.methods.release({})).toMatchObject({released: 'iPhone 17 (pitbox 2)', gone: true});
     expect(apple.deleted).toEqual(['NEW2']);
     expect(apple.sims.find(s => s.udid === 'U1')?.state).toBe('Booted');
+  });
+
+  it("starts a simulator it created in the project's language with no keyboard introduction, and leaves the user's alone", async () => {
+    const apple = new FakeApple([{}]);
+    const a = await session('alice', {apple});
+    const b = await session('bob', {apple}, {apple: {locale: 'fr-FR'}});
+    await a.methods.boot({avd: 'iPhone 17'});
+    expect(((await b.methods.boot({avd: 'iPhone 17'})) as {udid: string}).udid).toBe('NEW2');
+    expect(apple.prefs.has('U1')).toBe(false);
+    expect(apple.prefs.get('NEW2')).toEqual([
+      {domain: '.GlobalPreferences', key: 'AppleLanguages', value: ['fr-FR']},
+      {domain: '.GlobalPreferences', key: 'AppleLocale', value: 'fr_FR'},
+      {domain: 'com.apple.keyboard.preferences', key: 'DidShowContinuousPathIntroduction', value: true},
+    ]);
+    await b.methods.release({});
   });
 
   it('starts no ui runner (a real xcodebuild) at the boot of a stand-in simulator', async () => {
