@@ -60,7 +60,7 @@ services: {
 | `start` | command that runs the service. A command that exits with 0 after launching something in the background (`docker compose up -d`) is fine: pitbox keeps waiting for the probe. Omit it for a service pitbox only watches |
 | `stop` | command for `down`, for services started detached |
 | `cwd`, `env` | working directory and extra environment |
-| `health` | probe: `http(s)://…` (any answer below 500), `tcp:<port>` / `tcp:<host>:<port>`, `docker:<container>` (running, and healthy when it has a health check), `cmd:<command>` (exit 0) |
+| `health` | probe: `http(s)://…` (any answer below 500), `tcp:<port>` / `tcp:<host>:<port>`, `docker:<container>` (running, and healthy when it has a health check), `compose:<project>` (every container of that compose project running and healthy — a stopped or unhealthy one is named; a finished job with exit 0 is fine), `cmd:<command>` (exit 0) |
 | `expose` | host port(s) devices must reach; forwarded to every device |
 | `dependsOn` | services that start first (and stop after). When a service fails, `up` skips only the services that depend on it; the rest still start |
 | `startTimeout` | seconds to wait for the probe (default 120) |

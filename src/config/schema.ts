@@ -10,9 +10,10 @@ const ports = z.union([z.number().int().positive(), z.array(z.number().int().pos
  * - `http://…` / `https://…` — any answer below 500;
  * - `tcp:3000` or `tcp:host:3000` — the port accepts a connection;
  * - `docker:<container>` — the container is running (and healthy, when it has a health check);
+ * - `compose:<project>` — every container of the compose project is (a finished job with exit 0 aside);
  * - `cmd:<command>` — the command exits with 0.
  */
-const probe = z.string().regex(/^(https?:\/\/|tcp:|docker:|cmd:)/, 'probe must start with http(s)://, tcp:, docker: or cmd:');
+const probe = z.string().regex(/^(https?:\/\/|tcp:|docker:|compose:|cmd:)/, 'probe must start with http(s)://, tcp:, docker:, compose: or cmd:');
 
 export const serviceSchema = z.object({
   description: z.string().optional(),

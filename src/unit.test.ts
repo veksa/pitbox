@@ -5,12 +5,12 @@ import {describe, expect, it} from 'vitest';
 import {failed, parseArgs, standStop, toCall} from './cli.ts';
 import {num} from './daemon/engine.ts';
 import {loadConfig} from './config/load.ts';
-import {exposedPorts} from './config/schema.ts';
+import {configSchema, exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
 import {AndroidDriver, CONNECT_PREFS, isUnresolvedLink, mergeConnectPrefs} from './drivers/android/driver.ts';
 import {deadTree, instrumentCommand} from './drivers/android/runner.ts';
 import {shownPath} from './format.ts';
-import {parseProbe, probePort} from './stand/health.ts';
+import {composeVerdict, parseProbe, probePort} from './stand/health.ts';
 import {pickReply} from './stand/llmMock.ts';
 import {orderServices, restartOrder, stopOrder} from './stand/services.ts';
 import {quoteArg} from './util/proc.ts';
@@ -187,6 +187,17 @@ describe('probes', () => {
     expect(parseProbe('docker:db')).toEqual({kind: 'docker', container: 'db'});
     expect(probePort('http://localhost:8081/status')).toBe(8081);
     expect(probePort('docker:db')).toBeUndefined();
+    expect(parseProbe('compose:my-stack')).toEqual({kind: 'compose', project: 'my-stack'});
+    expect(() => parseProbe('compose:')).toThrow(/bad compose probe/);
+  });
+
+  it('take a compose project as healthy only when every container of it is', () => {
+    const up = 'stack-db-1\trunning\tUp 5 minutes (healthy)\nstack-cache-1\trunning\tUp 5 minutes\nstack-migrate-1\texited\tExited (0) 4 minutes ago';
+    expect(composeVerdict('stack', up)).toEqual({ok: true, detail: '3 containers up'});
+    expect(composeVerdict('stack', 'stack-db-1\trunning\tUp 5 minutes (healthy)\nstack-cache-1\texited\tExited (137) 2 minutes ago')).toEqual({ok: false, detail: 'stack-cache-1 exited (137)'});
+    expect(composeVerdict('stack', 'stack-db-1\trunning\tUp 3 seconds (health: starting)\nstack-api-1\trunning\tUp 1 minute (unhealthy)')).toEqual({ok: false, detail: 'stack-db-1 starting, stack-api-1 unhealthy'});
+    expect(composeVerdict('stack', '')).toEqual({ok: false, detail: 'no containers of compose project stack'});
+    expect(configSchema.safeParse({services: {stack: {start: 'docker compose up -d', health: 'compose:stack'}}}).success).toBe(true);
   });
 });
 

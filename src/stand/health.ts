@@ -9,6 +9,7 @@ export type ParsedProbe =
   | {kind: 'http'; url: string}
   | {kind: 'tcp'; host: string; port: number}
   | {kind: 'docker'; container: string}
+  | {kind: 'compose'; project: string}
   | {kind: 'cmd'; command: string};
 
 export const parseProbe = (probe: string): ParsedProbe => {
@@ -21,6 +22,11 @@ export const parseProbe = (probe: string): ParsedProbe => {
     return {kind: 'tcp', host: parts.join(':') || '127.0.0.1', port};
   }
   if (probe.startsWith('docker:')) return {kind: 'docker', container: probe.slice(7)};
+  if (probe.startsWith('compose:')) {
+    const project = probe.slice(8);
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) throw new Error(`bad compose probe: ${probe} (a compose project name: lowercase letters, digits, - and _)`);
+    return {kind: 'compose', project};
+  }
   if (probe.startsWith('cmd:')) return {kind: 'cmd', command: probe.slice(4)};
   throw new Error(`unknown probe: ${probe}`);
 };
@@ -47,6 +53,24 @@ export const localProbePort = (probe: string | undefined): number | undefined =>
   return host !== undefined && LOOPBACK.has(host) ? probePort(probe) : undefined;
 };
 
+/**
+ * The verdict on a compose project's containers, from `docker ps -a` lines of `name<TAB>state<TAB>status`: healthy when
+ * there is one at least and each runs (and is healthy, when it has a health check) or is a job that finished with 0.
+ */
+export const composeVerdict = (project: string, out: string): ProbeResult => {
+  const rows = out.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const [name = '', state = '', status = ''] = l.split('\t');
+    return {name, state, status};
+  });
+  if (!rows.length) return {ok: false, detail: `no containers of compose project ${project}`};
+  const bad = rows.filter(r => {
+    if (r.state === 'exited') return !/^Exited \(0\)/.test(r.status);
+    return r.state !== 'running' || /\((unhealthy|health: starting)\)/.test(r.status);
+  });
+  const why = (r: (typeof rows)[number]) => `${r.name} ${r.state === 'running' ? (/unhealthy/.test(r.status) ? 'unhealthy' : 'starting') : r.status.replace(/\s+\d+ \w+ ago$/, '').toLowerCase() || r.state}`;
+  return bad.length ? {ok: false, detail: bad.map(why).join(', ')} : {ok: true, detail: `${rows.length} container${rows.length === 1 ? '' : 's'} up`};
+};
+
 export const checkProbe = async (probe: string, opts: {cwd?: string; shell?: string} = {}): Promise<ProbeResult> => {
   const p = parseProbe(probe);
   switch (p.kind) {
@@ -64,6 +88,12 @@ export const checkProbe = async (probe: string, opts: {cwd?: string; shell?: str
       const [state, health] = r.stdout.trim().split(/\s+/);
       const ok = state === 'running' && (!health || health === 'healthy');
       return {ok, detail: health ? `${state}/${health}` : (state ?? 'unknown')};
+    }
+    case 'compose': {
+      // Every container of the project, the ones that stopped too: a project is up only when none of it is down.
+      const r = await run('docker', ['ps', '-a', '--filter', `label=com.docker.compose.project=${p.project}`, '--format', '{{.Names}}\t{{.State}}\t{{.Status}}'], {timeoutMs: 5000});
+      if (r.code !== 0) return {ok: false, detail: r.stderr.trim().split('\n')[0] || 'docker ps failed'};
+      return composeVerdict(p.project, r.stdout);
     }
     case 'cmd': {
       const r = await runShell(p.command, {cwd: opts.cwd, shell: opts.shell, timeoutMs: 15000});
