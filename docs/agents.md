@@ -31,7 +31,8 @@ server keeps its own footprint small: frequent actions have a tool each, rarer o
   nothing answers 0.6 s after its input: an effect that comes later shows in the next `snapshot` — look before
   pressing again — and a flow step whose target it brings waits a second for it. A press whose target has
   something painted over its centre (a floating button, an overlay) taps an uncovered part of it and says so in a
-  `note`; a permission request over the app is named in the error of a selector that finds nothing.
+  `note`; one covered all over (a floating tab bar over a list's last row) is scrolled out from under it in its
+  scroller, or refused with the cover named — never pressed through to the cover; a permission request over the app is named in the error of a selector that finds nothing.
 - **Selectors:** `@e12` from the last snapshot, `id=…` (testID), `text=…` (the string a line quotes), `label=…`,
   plain words, or `x,y`.
   Prefer ids: they survive copy changes and locales.

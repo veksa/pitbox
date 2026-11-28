@@ -561,6 +561,54 @@ describe('a target with something drawn over its centre', () => {
   });
 });
 
+describe('a target under a control listed after it, in a tree with no painting order (an Apple runner)', () => {
+  const app: UiWindow[] = [{type: 'app', title: '', pkg: 'com.example.app'}];
+  const list: UiNode = {p: -1, w: 0, c: 'ScrollView', b: [0, 0, 400, 800], f: 's'};
+  const tab: UiNode = {p: -1, w: 0, c: 'Button', b: [100, 720, 300, 800], t: 'Calls', f: 'c'};
+  const save = (top: number): UiNode => ({p: 0, w: 0, c: 'Button', b: [120, top, 280, top + 60], t: 'Save', f: 'c'});
+
+  it('counts as covered by the later control, and not by a later label or scroller', async () => {
+    const {tapPoint} = await import('./ui/snapshot.ts');
+    expect(tapPoint(buildSnapshot(app, [list, save(730), tab]), 1).coveredBy).toMatch(/Calls/);
+    expect(tapPoint(buildSnapshot(app, [list, save(730), {...tab, f: undefined}]), 1).coveredBy).toBeUndefined();
+    expect(tapPoint(buildSnapshot(app, [list, save(400), tab]), 1)).toEqual({x: 200, y: 430});
+  });
+
+  const runner = (scrolls: boolean) => {
+    const calls: string[] = [];
+    let top = 730;
+    return {
+      calls,
+      call: async (cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'tap' || cmd === 'swipe') calls.push(`${cmd} ${args.x ?? args.x1},${args.y ?? args.y1}${cmd === 'swipe' ? `→${args.y2}` : ''}`);
+        if (cmd === 'swipe' && scrolls) top -= Number(args.y1) - Number(args.y2);
+        if (cmd === 'tree') return {windows: app, nodes: scrolls ? [list, save(top), tab] : [{...list, f: undefined}, {...save(top), p: -1}, tab]};
+        if (cmd === 'info') return {width: 400, height: 800};
+        return {idle: true};
+      },
+      stop: async () => undefined,
+    };
+  };
+
+  it('is scrolled out from under it in its scroller, then pressed, and the answer says so', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const r = runner(true);
+    const res = await new DeviceUi('dev', r as never).press('text=Save');
+    expect(r.calls[0]).toMatch(/^swipe 200,710→/);
+    expect(r.calls.at(-1)).toMatch(/^tap 200,\d+$/);
+    const y = Number(r.calls.at(-1)!.split(',')[1]);
+    expect(y).toBeLessThan(720);
+    expect(res.note).toMatch(/scrolled the target out from under .*Calls/);
+  });
+
+  it('is refused, not pressed through, when no scroller holds it', async () => {
+    const {DeviceUi} = await import('./ui/device.ts');
+    const r = runner(false);
+    await expect(new DeviceUi('dev', r as never).press('text=Save')).rejects.toThrow(/"text=Save" is under .*Calls.*: a tap there would press it instead\nhint: scroll/);
+    expect(r.calls).toEqual([]);
+  });
+});
+
 describe('a link into the app in front', () => {
   it('is followed until what it did shows, so the next press does not land on what it removes', async () => {
     const {DeviceUi} = await import('./ui/device.ts');

@@ -9,7 +9,7 @@ import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
 import {framesMotion, isMoving} from './motion.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
-import {backButton, buildSnapshot, menuOutside, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, vendorNotice, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, shellAlertButtonStays, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
+import {backButton, buildSnapshot, menuOutside, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, vendorNotice, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, shellAlertButtonStays, outFromUnder, swipeArea, tapPoint, type Bounds, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
 /** How long a press that only closed the keyboard waits for a late effect before it presses again. */
 const LATE_EFFECT_MS = 600;
@@ -469,13 +469,29 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     // Before the target is looked up: a window still moving puts its nodes where it is on the way.
     await this.#hooks.beforePointer?.();
     let {snap, target} = await this.#target(selector);
-    let at: {x: number; y: number; coveredBy?: string} = target.index !== undefined ? tapPoint(snap, target.index) : target;
+    let at: {x: number; y: number; coveredBy?: string; cover?: Bounds} = target.index !== undefined ? tapPoint(snap, target.index) : target;
+    const hidden = () => !!at.coveredBy && at.x === target.x && at.y === target.y;
     // Covered all over, nothing of it left to tap: a cover on its way out (an overlay the last step hid, a sheet
     // closing) is waited for once, as the tap would go to it.
-    if (at.coveredBy && at.x === target.x && at.y === target.y && !/^@e\d+$/.test(selector.trim())) {
+    if (hidden() && !/^@e\d+$/.test(selector.trim())) {
       await this.runner.call('idle', {quiet: 200, timeout: 1000}, 6000);
       ({snap, target} = await this.#target(selector));
       at = target.index !== undefined ? tapPoint(snap, target.index) : target;
+    }
+    // Still covered: a target in a scroller is scrolled out from under the cover (a floating tab bar over a list's
+    // last row); one that cannot be is refused, as the tap would press the cover instead — silently a wrong control.
+    let unhid: string | undefined;
+    if (hidden() && target.index !== undefined && at.cover) {
+      const drag = outFromUnder(snap, target.index, at.cover);
+      if (drag) {
+        const covered = at.coveredBy;
+        await this.runner.call('swipe', {...drag, duration: 600}, 12_000);
+        await this.runner.call('idle', {quiet: 200, timeout: 1500}, 6000);
+        ({snap, target} = await this.#target(selector.trim().startsWith('@') ? selectorFor(snap, target.index) : selector));
+        at = target.index !== undefined ? tapPoint(snap, target.index) : target;
+        unhid = `scrolled the target out from under ${covered}`;
+      }
+      if (hidden()) throw new Error(`"${selector}" is under ${at.coveredBy}: a tap there would press it instead${drag ? ', and scrolling did not bring the target out' : ''}\nhint: scroll the target into view (swipe), or close what covers it`);
     }
     this.#front(snap);
     let t = this.#phase('target', t0);
@@ -484,11 +500,7 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
     const chosen = target.index !== undefined ? selectorFor(snap, target.index) : `${target.x},${target.y}`;
     this.record(`${kind === 'tap' ? 'press' : kind} ${chosen}`, chosen);
     let settled = await this.#settle(snap);
-    let note: string | undefined = at.coveredBy
-      ? at.x === target.x && at.y === target.y
-        ? `the target is under ${at.coveredBy}: the tap went to it`
-        : `tapped ${at.x},${at.y}: the centre is under ${at.coveredBy}`
-      : undefined;
+    let note: string | undefined = [unhid, at.coveredBy ? (hidden() ? `the target is under ${at.coveredBy}: the tap went to it` : `tapped ${at.x},${at.y}: the centre is under ${at.coveredBy}`) : undefined].filter(Boolean).join('; ') || undefined;
     // A control can close the keyboard itself and show what it did a moment later (a save that answers after
     // the screen settles): looked at once more before pressing again, so a control that got the tap is never
     // pressed twice (a message sent twice).

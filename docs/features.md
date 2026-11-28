@@ -77,7 +77,8 @@ compact text.
   tap also waits for a round of hot updates to end, and for one that may follow a fresh registration (React
   Native's "Refreshing…" view takes a touch while it shows or goes: up to 1.5 s, right after a launch or an edit). Exact gestures (double tap, swipe
   velocity), D-pad keys and focus for TV, a finger held across calls (inspect a scrubber mid-drag).
-- **Taps that land** — the visible part of a covered target is tapped and what covers its centre is named; a
+- **Taps that land** — the visible part of a covered target is tapped and what covers its centre is named; a target
+  covered all over is scrolled out from under the cover, or refused (never a silent tap on the cover); a
   keyboard over the target is closed first, once it stands still (on iOS never with return from a multi-line field, where
   it would type a new line); system sheets that cover the app (permission requests, the save
   password offer) are named in snapshots and failed waits; a button of an iOS permission request is tapped once

@@ -458,7 +458,7 @@ export const controlAt = (snap: Snapshot, x: number, y: number): {line: string} 
  * painted over it (a floating button, an overlay, a window above) owns the centre. `coveredBy` names the cover.
  * Within a window the painting order (`z`) decides; without it only windows above count.
  */
-export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; coveredBy?: string} => {
+export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; coveredBy?: string; cover?: Bounds} => {
   const n = snap.nodes[index]!;
   const c = centre(n.b);
   const chain = (j: number) => {
@@ -476,9 +476,13 @@ export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; 
     alert(n.w) ? m.w === n.w && m.z !== undefined && n.z !== undefined && m.z > n.z
     : alert(m.w) ? true
     : m.w < n.w ? snap.windows[m.w]?.type === 'app' : m.w === n.w && m.z !== undefined && n.z !== undefined && m.z > n.z;
+  // A tree with no painting order (an Apple runner's, a Mac app's) paints in its own order, later on top: a control
+  // listed after the target that overlaps it (a floating tab bar over a list's last row) takes the tap. Only a
+  // control counts there, not a label or a container that merely shares the area.
+  const later = (m: UiNode, j: number) => m.w === n.w && m.z === undefined && n.z === undefined && j > index && interactive(m) && !has(m, 's');
   const covers = snap.nodes
     .map((m, j) => ({m, j}))
-    .filter(({m, j}) => drawn(m) && above(m) && meets(m.b, n.b) && !mine.has(j) && !chain(j).has(index));
+    .filter(({m, j}) => (above(m) ? drawn(m) : later(m, j)) && meets(m.b, n.b) && !mine.has(j) && !chain(j).has(index));
   if (!covers.length) return c;
   const inside = (x: number, y: number) => covers.find(({m}) => x >= m.b[0] && x < m.b[2] && y >= m.b[1] && y < m.b[3]);
   const cover = inside(c.x, c.y);
@@ -491,7 +495,32 @@ export const tapPoint = (snap: Snapshot, index: number): {x: number; y: number; 
   }
   pts.sort((a, b) => Math.hypot(a.x - c.x, a.y - c.y) - Math.hypot(b.x - c.x, b.y - c.y));
   const free = pts.find(p => !inside(p.x, p.y));
-  return {...(free ?? c), coveredBy};
+  return {...(free ?? c), coveredBy, cover: cover.m.b};
+};
+
+/**
+ * A drag that moves a node out from under what covers it, inside the scroller that holds it: up when the cover is in
+ * the lower half of the node, down otherwise. Starts and ends inside the scroller and off the cover; none when the
+ * node is in no vertical scroller or the scroller has no room for the drag.
+ */
+export const outFromUnder = (snap: Snapshot, index: number, cover: Bounds): {x1: number; y1: number; x2: number; y2: number} | undefined => {
+  const n = snap.nodes[index]!;
+  let k = n.p;
+  while (k >= 0 && snap.nodes[k] && !has(snap.nodes[k]!, 's')) k = snap.nodes[k]!.p;
+  const sc = k >= 0 ? snap.nodes[k] : undefined;
+  if (!sc) return undefined;
+  const [sx1, sy1, sx2, sy2] = sc.b;
+  const margin = Math.max(8, Math.round((n.b[3] - n.b[1]) / 2));
+  const x = Math.round((Math.max(sx1, n.b[0]) + Math.min(sx2, n.b[2])) / 2);
+  const up = (cover[1] + cover[3]) / 2 >= (n.b[1] + n.b[3]) / 2;
+  if (up) {
+    const y1 = Math.min(sy2, cover[1]) - 10;
+    const y2 = Math.max(sy1 + 10, y1 - (n.b[3] - cover[1]) - margin);
+    return y1 - y2 > 10 ? {x1: x, y1, x2: x, y2} : undefined;
+  }
+  const y1 = Math.max(sy1, cover[3]) + 10;
+  const y2 = Math.min(sy2 - 10, y1 + (cover[3] - n.b[1]) + margin);
+  return y2 - y1 > 10 ? {x1: x, y1, x2: x, y2} : undefined;
 };
 
 /** Whether a selector currently matches anything. */
