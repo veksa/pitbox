@@ -155,12 +155,15 @@ export class MacRunner {
 
   readonly #binary: () => Promise<string>;
 
-  /** `binary` stands in for the built runner (tests). */
-  constructor(name: string, cfg: MacAppConfig, root: string, binary: () => Promise<string> = macRunnerBinary) {
+  readonly #launch: (args: string[]) => Promise<{code: number | null; stdout: string; stderr: string}>;
+
+  /** `binary` stands in for the built runner, `launch` for `open` (tests). */
+  constructor(name: string, cfg: MacAppConfig, root: string, binary: () => Promise<string> = macRunnerBinary, launch = (args: string[]) => run('open', args, {timeoutMs: 60_000})) {
     this.name = name;
     this.cfg = cfg;
     this.#root = root;
     this.#binary = binary;
+    this.#launch = launch;
     this.window = cfg.window && cfg.window !== 'front' ? cfg.window : undefined;
   }
 
@@ -274,13 +277,23 @@ export class MacRunner {
     const appPath = this.cfg.path ? path.resolve(this.#root, this.cfg.path) : undefined;
     if (appPath && !fs.existsSync(appPath)) throw new MacError(`no app at ${appPath}`, 'build it first, or drop mac.<name>.path to open the installed app by its bundle id');
     const link = target && /^[a-z][\w+.-]*:\/\//i.test(target) ? target : undefined;
-    const args = link ? [link] : appPath ? [appPath] : ['-b', this.cfg.app];
+    // Launched ignoring the saved window state: after a crash (a test run cut short) the app otherwise opens on its
+    // own "unexpectedly quit while reopening windows" alert, which waits for a person. A link goes as it is.
+    const args = link ? [link] : [...(appPath ? [appPath] : ['-b', this.cfg.app]), '--args', '-ApplePersistenceIgnoreState', 'YES'];
     // The panel macOS shows after a crash ("MyApp quit unexpectedly") keeps every app from the front.
     const name = appPath ? path.basename(appPath).replace(/\.app$/, '') : undefined;
     const dismissed = name ? (await this.call<{dismissed?: boolean}>('dismissCrash', {name}).catch(() => ({dismissed: false}))).dismissed : false;
-    const r = await run('open', args, {timeoutMs: 60_000});
+    const r = await this.#launch(args);
     if (r.code !== 0) throw new MacError(`open failed: ${(r.stderr || r.stdout).trim().split('\n').pop()}`, /Unable to find application/i.test(r.stderr) ? 'set mac.<name>.path to the built .app' : undefined);
-    const front = await this.call<{foreground: boolean}>('foreground', {timeout: 15_000}, 20_000).catch(() => ({foreground: false}));
+    // Waited for in short steps, with a look for a SecurityAgent prompt between them: a keychain or password prompt
+    // the launch brought up waits for a person, and the app stays stuck behind it however long one waits.
+    let front = {foreground: false};
+    for (const end = Date.now() + 15_000; !front.foreground && Date.now() < end; ) {
+      front = await this.call<{foreground: boolean}>('foreground', {timeout: 1500}, 6000).catch(() => ({foreground: false}));
+      if (front.foreground) break;
+      const prompt = (await this.call<{prompt?: string}>('securityPrompt').catch(() => ({prompt: undefined}))).prompt;
+      if (prompt) throw new MacError(`a security prompt is waiting for a person: ${JSON.stringify(prompt.slice(0, 200))}`, 'answer it on the Mac (Always Allow keeps a keychain item from asking again), or run a build signed as the one that saved the item');
+    }
     const pid = (await this.call<{pid?: number}>('pid').catch(() => ({pid: undefined}))).pid;
     if (!front.foreground && pid === undefined) throw new MacError(`${this.cfg.app} did not start`, 'see `app action=logs`');
     return {target: link ?? appPath ?? this.cfg.app, totalMs: Date.now() - t0, ...(pid ? {pid} : {}), ...(dismissed ? {note: 'closed the "quit unexpectedly" panel of an earlier crash'} : {})};

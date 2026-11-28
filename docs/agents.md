@@ -207,7 +207,9 @@ can mix devices — `device web:admin` … `device Pixel_8` — to act in a pane
 same tools: `snapshot`, `press`, `fill`, `type`, `key` (`meta+k` is ⌘K), `swipe` and `scroll … until` (they scroll
 what is under the pointer), `mouse right|hover|wheel`, `wait`, `inspect what=screenshot|visual|media`, `app
 action=open|stop|logs`, and `run` with flows; a crash comes back with its step. Web views (WKWebView) come in the same
-tree as native controls, with the page's `id`s as `id=` selectors.
+tree as native controls, with the page's `id`s as `id=` selectors. `open` starts the app without its saved windows
+(`-ApplePersistenceIgnoreState YES`, so no "unexpectedly quit while reopening windows" alert after a crash) and fails
+at once, quoting it, when a SecurityAgent prompt (a keychain item, a password) is up and holds the app back.
 
 - **One window at a time.** A snapshot covers the app's window in front, with its sheets; points are from that
   window's top left, and screenshots are of it alone. An open menu comes first (`— menu`), the app's items in the

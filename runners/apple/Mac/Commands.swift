@@ -39,6 +39,7 @@ final class Commands {
       return app.map { ["pid": Int($0.processIdentifier)] } ?? [:]
     case "terminate": return try terminate(req)
     case "dismissCrash": return ["dismissed": dismissCrash(req)]
+    case "securityPrompt": return securityPrompt().map { ["prompt": $0] } ?? [:]
     case "relays": return ["relayed": [Int]()]
     default: break
     }
@@ -251,6 +252,22 @@ final class Commands {
       }
     }
     return done
+  }
+
+  /// The text of a SecurityAgent prompt on screen (a keychain item's "MyApp wants to use…", an admin password): it
+  /// waits for a person, and the app asking is stuck behind it, so it is reported rather than waited out.
+  private func securityPrompt() -> String? {
+    guard AXIsProcessTrusted() else { return nil }
+    for agent in NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.SecurityAgent") {
+      for w in Ax.children(AXUIElementCreateApplication(agent.processIdentifier), kAXWindowsAttribute) {
+        let texts = Ax.children(w).filter { Ax.string(Ax.attr($0, kAXRoleAttribute)) == "AXStaticText" }.map { Ax.string(Ax.attr($0, kAXValueAttribute)) }.filter { !$0.isEmpty }
+        let title = Ax.string(Ax.attr(w, kAXTitleAttribute))
+        let all = ([title] + texts).filter { !$0.isEmpty }
+        if !all.isEmpty { return all.joined(separator: " ") }
+        return "a SecurityAgent window"
+      }
+    }
+    return nil
   }
 
   /// Quits the app as a person would, then for good when it does not go.

@@ -184,4 +184,43 @@ for await (const line of readline.createInterface({input: process.stdin})) {
       fs.rmSync(dir, {recursive: true, force: true});
     }
   });
+
+  it.skipIf(process.platform === 'win32')('opens the app without its saved windows and reports a security prompt instead of waiting it out', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-mac-open-'));
+    fs.mkdirSync(path.join(dir, 'MyApp.app'));
+    // A stand-in runner for an app that never comes to the front, stuck behind a keychain prompt.
+    const fake = path.join(dir, 'runner.mjs');
+    fs.writeFileSync(
+      fake,
+      `#!${process.execPath}
+import readline from 'node:readline';
+const answer = (r, body) => process.stdout.write(JSON.stringify({id: r.id, ...body}) + '\\n');
+for await (const line of readline.createInterface({input: process.stdin})) {
+  const r = JSON.parse(line);
+  if (r.cmd === 'shutdown') process.exit(0);
+  if (r.cmd === 'foreground') answer(r, {ok: true, foreground: false});
+  else if (r.cmd === 'securityPrompt') answer(r, {ok: true, prompt: 'MyApp wants to use your confidential information stored in "MyApp Safe Storage" in your keychain.'});
+  else answer(r, {ok: true});
+}
+`,
+    );
+    fs.chmodSync(fake, 0o755);
+    const launched: string[][] = [];
+    const runner = new MacRunner('main', {app: 'com.example.app', path: 'MyApp.app'}, dir, async () => fake, async args => {
+      launched.push(args);
+      return {code: 0, stdout: '', stderr: ''};
+    });
+    try {
+      const t0 = Date.now();
+      await expect(runner.open()).rejects.toThrow(/a security prompt is waiting for a person: "MyApp wants to use your confidential information/);
+      expect(Date.now() - t0).toBeLessThan(10_000);
+      expect(launched).toEqual([[path.join(dir, 'MyApp.app'), '--args', '-ApplePersistenceIgnoreState', 'YES']]);
+      // A link opens as it is.
+      await runner.open('myapp://item/1').catch(() => undefined);
+      expect(launched[1]).toEqual(['myapp://item/1']);
+    } finally {
+      await runner.stop();
+      fs.rmSync(dir, {recursive: true, force: true});
+    }
+  });
 });
