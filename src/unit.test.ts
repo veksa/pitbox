@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {describe, expect, it} from 'vitest';
 import {failed, parseArgs, toCall} from './cli.ts';
+import {num} from './daemon/engine.ts';
 import {loadConfig} from './config/load.ts';
 import {exposedPorts} from './config/schema.ts';
 import {grep, headings, lineRange, section, toc} from './docs/docs.ts';
@@ -683,5 +684,18 @@ describe('isUnresolvedLink', () => {
     expect(isUnresolvedLink(new Error('launch failed: Error: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW dat=pitbox.com.x://connect/... }'))).toBe(true);
     expect(isUnresolvedLink(new Error('launch failed: Error: Activity class {com.x/.Main} does not exist'))).toBe(false);
     expect(isUnresolvedLink('adb: device offline')).toBe(false);
+  });
+});
+
+describe('engine numeric parameters', () => {
+  it('reads a number given as a string or a number, and nothing when absent', () => {
+    expect(num({duration: '450'}, 'duration')).toBe(450);
+    expect(num({duration: 450}, 'duration')).toBe(450);
+    expect(num({}, 'duration')).toBeUndefined();
+  });
+
+  it('refuses a value that is not a number by name instead of passing NaN on as a timeout', () => {
+    // `pitbox swipe down id=list` put `id=list` where the duration goes: it became "timed out after NaN ms"
+    expect(() => num({duration: 'id=list'}, 'duration')).toThrow('parameter duration must be a number, got "id=list"');
   });
 });

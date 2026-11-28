@@ -63,7 +63,14 @@ const req = (p: Params, k: string): string => {
   if (!v) throw new Error(`missing parameter: ${k}`);
   return v;
 };
-const num = (p: Params, k: string): number | undefined => (p[k] === undefined ? undefined : Number(p[k]));
+// A value that is not a number is refused by name: read as NaN it went on as a timeout or a duration and failed far
+// from its cause (`swipe down id=list` took `id=list` as the duration: "timed out after NaN ms").
+export const num = (p: Params, k: string): number | undefined => {
+  if (p[k] === undefined) return undefined;
+  const v = Number(p[k]);
+  if (Number.isNaN(v)) throw new Error(`parameter ${k} must be a number, got ${JSON.stringify(p[k])}`);
+  return v;
+};
 const bool = (p: Params, k: string): boolean | undefined => (p[k] === undefined ? undefined : p[k] === true || p[k] === 'true' || p[k] === '1');
 const list = (p: Params, k: string): string[] => {
   const v = p[k];
