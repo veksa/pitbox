@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {encodeStore, keepsOverrides, notDisabled, parseStore, SIM_SLIM_LABELS, SIM_WIDGET_LABELS, simSlimList, slimSimulator, storeDir, unslimSimulator} from './drivers/apple/slim.ts';
+import {encodeStore, keepsOverrides, notDisabled, parseStore, SIM_SLIM_LABELS, SIM_WATCH_LINK, SIM_WIDGET_LABELS, simSlimList, slimSimulator, storeDir, unslimSimulator, watchLinkOff} from './drivers/apple/slim.ts';
 
 const UDID = '00000000-0000-0000-0000-000000000001';
 let root: string;
@@ -42,6 +42,28 @@ describe('simulator slim', () => {
   it('never disables game center: a test runner launched by xcodebuild waits about 10 s for it on every start', () => {
     expect(SIM_SLIM_LABELS).not.toContain('com.apple.gamed');
     expect(simSlimList({disable: ['com.apple.gamed']})).not.toContain('com.apple.gamed');
+  });
+
+  it('never cuts the link to a paired watch: watchconnectivity runs over identityservicesd', () => {
+    expect(SIM_WATCH_LINK).toContain('com.apple.identityservicesd');
+    for (const label of SIM_WATCH_LINK) {
+      expect(SIM_SLIM_LABELS).not.toContain(label);
+      expect(simSlimList({disable: [label]})).not.toContain(label);
+    }
+  });
+
+  it('tells a running phone that has the watch link off', () => {
+    expect(watchLinkOff('disabled services = {\n\t"com.apple.identityservicesd" => disabled\n\t"com.apple.newsd" => disabled\n}')).toEqual(['com.apple.identityservicesd']);
+    expect(watchLinkOff('disabled services = {\n\t"com.apple.identityservicesd" => enabled\n}')).toEqual([]);
+    expect(watchLinkOff('')).toEqual([]);
+  });
+
+  it('turns identityservicesd back on for a simulator an older list slimmed', () => {
+    // As 0.9.0 left it: identityservicesd disabled by pitbox, with no entry before.
+    seed({'com.apple.identityservicesd': true});
+    fs.writeFileSync(path.join(storeDir(UDID, root), 'pitbox-slim.json'), JSON.stringify({'com.apple.identityservicesd': null}));
+    slimSimulator(UDID, {}, root);
+    expect(store()['com.apple.identityservicesd']).toBeUndefined();
   });
 
   it('gives back a daemon an older list disabled once the list no longer names it', () => {

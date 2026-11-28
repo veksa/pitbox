@@ -1127,6 +1127,9 @@ export class Engine {
     const answer = async (pairId: string, watch: {udid: string; name: string}, extra: Record<string, unknown> = {}) => {
       this.#simKinds.set(watch.udid, 'watch');
       const pr = await wait(pairId);
+      // A phone booted slim by an older pitbox runs without the daemon WatchConnectivity rides on: the pair connects,
+      // but the apps never hear each other, and nothing else says so.
+      const linkOff = await s.watchLinkOff(phone.udid).catch(() => []);
       return {
         watch: watch.name,
         udid: watch.udid,
@@ -1135,6 +1138,7 @@ export class Engine {
         state: pr ? `${pr.active ? 'active' : 'inactive'}, ${pr.connected ? 'connected' : 'disconnected'}` : 'unknown',
         ...extra,
         ...(pr?.connected ? {} : {note: `not connected after ${Engine.PAIR_CONNECT_MS / 1000}s: the watch may still be starting; device action=list shows both`}),
+        ...(linkOff.length ? {warning: `${phone.name} runs with ${linkOff.join(', ')} off, which WatchConnectivity needs: its apps and the watch's will not reach each other — shut the phone down and boot it again (device action=shutdown, then boot)`} : {}),
       };
     };
 

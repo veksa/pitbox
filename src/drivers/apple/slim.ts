@@ -74,7 +74,7 @@ export const SIM_SLIM_LABELS = [
   'com.apple.photoanalysisd',
   'com.apple.SafariBookmarksSyncAgent',
   // Wallet's watch companion, media analysis, Memoji, voice banking, Find My, on-device model catalog, Files
-  // indexing, watch contact sync, iMessage identity, ID verification
+  // indexing, watch contact sync, ID verification
   'com.apple.NPKCompanionAgent',
   'com.apple.mediaanalysisd',
   'com.apple.avatarsd',
@@ -83,17 +83,32 @@ export const SIM_SLIM_LABELS = [
   'com.apple.modelcatalogd',
   'com.apple.fileindexerd',
   'com.apple.addressbooksyncd',
-  'com.apple.identityservicesd',
   'com.apple.coreidvd',
 ];
+
+/**
+ * The iPhone's half of the link to a paired Apple Watch simulator: WatchConnectivity runs over identityservicesd (IDS).
+ * With it off the phone's `WCSession` reads not paired, with no pairing id and the watch unreachable, while the watch
+ * sees a paired phone that never finishes its first unlock: messages and transfers between the apps go nowhere, and
+ * nothing says why.
+ */
+export const SIM_WATCH_LINK = ['com.apple.identityservicesd'];
 
 /**
  * Daemons that are never disabled. Others call some in a tight loop while they are off, which keeps several cores
  * busy for good (sleepd: healthd, mobiletimerd and SpringBoard spin, and diagnosticd with them). Game Center's gamed
  * is asked for by the simulator's DTServiceHub when xcodebuild launches a test runner: with it off, the runner stays
- * suspended for about 10 s before it runs, on every start.
+ * suspended for about 10 s before it runs, on every start. The watch link (`SIM_WATCH_LINK`) is kept the same way.
  */
-export const SIM_NEVER = ['com.apple.sleepd', 'com.apple.SpringBoard', 'com.apple.backboardd', 'com.apple.runningboardd', 'com.apple.CoreSimulator.bridge', 'com.apple.gamed'];
+export const SIM_NEVER = [
+  'com.apple.sleepd',
+  'com.apple.SpringBoard',
+  'com.apple.backboardd',
+  'com.apple.runningboardd',
+  'com.apple.CoreSimulator.bridge',
+  'com.apple.gamed',
+  ...SIM_WATCH_LINK,
+];
 
 /** Home screen widgets and Live Activities (about 0.6 GB with their extensions): off only on request, `disable:
  *  ['widgets']`, since an app's own widgets and Live Activities need them. */
@@ -233,4 +248,11 @@ export const unslimSimulator = (udid: string, root?: string): number => {
 export const notDisabled = (printDisabled: string, labels: string[]): string[] => {
   const off = new Set([...printDisabled.matchAll(/"([^"]+)"\s*=>\s*(?:true|disabled)/g)].map(m => m[1]!));
   return labels.filter(l => !off.has(l));
+};
+
+/** Of the watch link's daemons (`SIM_WATCH_LINK`), those a running phone has off (`launchctl print-disabled system`):
+ *  a phone booted slim by an older list keeps them off until its next boot. */
+export const watchLinkOff = (printDisabled: string): string[] => {
+  const on = new Set(notDisabled(printDisabled, SIM_WATCH_LINK));
+  return SIM_WATCH_LINK.filter(l => !on.has(l));
 };

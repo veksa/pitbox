@@ -425,7 +425,7 @@ export const formatResult = (method: string, r: unknown): string => {
           ...((x.warnings as string[] | undefined) ?? []).map(w => `warning: ${w}`),
         ].join('\n');
       }
-      if (x.pair) return `${x.already ? 'already paired' : 'paired'} ${x.watch} (${x.udid}) with ${x.phone} · ${x.state}${x.created ? ' · created for this session' : ''} — device=watch names it${x.note ? `\nnote: ${x.note}` : ''}`;
+      if (x.pair) return `${x.already ? 'already paired' : 'paired'} ${x.watch} (${x.udid}) with ${x.phone} · ${x.state}${x.created ? ' · created for this session' : ''} — device=watch names it${x.note ? `\nnote: ${x.note}` : ''}${x.warning ? `\nwarning: ${x.warning}` : ''}`;
       if (x.serial) return `connected ${x.serial} over Wi-Fi`;
       if (x.waiting) return `still waiting for a phone to scan the QR (${x.file})`;
       return [

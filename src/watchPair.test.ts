@@ -81,6 +81,9 @@ class FakeSimctl {
     const p = this.pairList.find(x => x.id === id)!;
     for (const q of this.pairList) if (q.phone.udid === p.phone.udid) q.active = q.id === id;
   };
+  /** The watch link's daemons the phone runs with off (a phone booted slim by an older list). */
+  linkOff: string[] = [];
+  watchLinkOff = async () => this.linkOff;
   unpair = async (id: string) => {
     this.pairList = this.pairList.filter(p => p.id !== id);
     this.unpaired.push(id);
@@ -138,6 +141,17 @@ describe('watch pairs', () => {
     expect(s.sims.find(x => x.udid === 'W1')?.state).toBe('Shutdown');
     expect(readLease('apple', 'U1')).toBeDefined();
     expect(listCreated()).toEqual([]);
+  });
+
+  it("warns when the phone runs without the daemon watchconnectivity needs: the pair connects, the apps never talk", async () => {
+    const s = new FakeSimctl([{}, watch('W1')]);
+    const a = await session('alice', s);
+    await a.methods.boot({avd: 'iPhone 17'});
+    expect(await a.methods.pair({value: 'watch'})).not.toHaveProperty('warning');
+    s.linkOff = ['com.apple.identityservicesd'];
+    const r = (await a.methods.pair({value: 'watch'})) as {warning?: string};
+    expect(r.warning).toContain('com.apple.identityservicesd');
+    expect(r.warning).toContain('boot it again');
   });
 
   it('never takes a watch paired to another phone or held by another session: it clones one, and the release deletes it', async () => {

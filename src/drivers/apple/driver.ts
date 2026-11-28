@@ -11,7 +11,7 @@ import {run, which, type RunResult} from '../../util/proc.ts';
 import {tailLines} from '../../util/text.ts';
 
 import {deviceError, isPhysical, PhysicalDevices, physicalUdid} from './physical.ts';
-import {keepsOverrides, notDisabled, simSlimList, slimSimulator, storeDir, unslimSimulator, type SimSlimOptions} from './slim.ts';
+import {keepsOverrides, notDisabled, simSlimList, slimSimulator, storeDir, unslimSimulator, watchLinkOff, type SimSlimOptions} from './slim.ts';
 
 export type SimKind = 'phone' | 'foldable' | 'tablet' | 'tv' | 'xr' | 'watch';
 
@@ -422,6 +422,12 @@ export class AppleDriver {
     const r = await this.simctl(['pair_activate', id], {timeoutMs});
     if (r.timedOut) throw new AppleError(`simctl pair_activate did not answer in ${Math.round(timeoutMs / 1000)}s`, 'CoreSimulator could not switch the phone to this watch: boot a fresh phone for the pair (`device boot`) and pair again');
     if (r.code !== 0) throw new AppleError(`pair_activate failed: ${(r.stderr || r.stdout).trim().split('\n').pop()}`);
+  }
+
+  /** The watch link's daemons a booted phone has off (see `SIM_WATCH_LINK`); empty when it cannot tell. */
+  async watchLinkOff(udid: string): Promise<string[]> {
+    const printed = await this.simctl(['spawn', udid, 'launchctl', 'print-disabled', 'system'], {timeoutMs: 30_000});
+    return printed.code === 0 ? watchLinkOff(printed.stdout) : [];
   }
 
   /** Removes a pair; a pair already gone is no error. */
