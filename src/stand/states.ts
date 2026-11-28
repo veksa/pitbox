@@ -8,9 +8,14 @@ import path from 'node:path';
 import type {AndroidDriver} from '../drivers/android/driver.ts';
 import {quoteArg, resolveShell, runShell} from '../util/proc.ts';
 import {renderTemplate} from '../util/text.ts';
+import {type Exec, exec, pgRestore, pgSave, type PostgresStateConfig, redisFlush, type RedisStateConfig} from './pgState.ts';
 import type {StandContext} from './services.ts';
 
-export type StatesConfig = {save?: string; restore?: string; migrate?: string};
+/**
+ * The backend side of a state. `postgres` and `redis` are built in; `save` / `restore` are the project's own commands,
+ * run after them (other stores, files); `migrate` runs after every backend restore.
+ */
+export type StatesConfig = {postgres?: PostgresStateConfig; redis?: RedisStateConfig; save?: string; restore?: string; migrate?: string};
 export type StateInfo = {name: string; savedAt: number; device?: string; avd?: string; backend: boolean; kind?: 'emulator' | 'app-data'};
 
 /**
@@ -162,10 +167,12 @@ export class StateStore {
   readonly #ctx: StandContext;
   readonly #cfg: StatesConfig;
   readonly #dir: string;
+  readonly #exec: Exec;
 
-  constructor(ctx: StandContext, cfg: StatesConfig = {}) {
+  constructor(ctx: StandContext, cfg: StatesConfig = {}, run: Exec = exec) {
     this.#ctx = ctx;
     this.#cfg = cfg;
+    this.#exec = run;
     this.#dir = path.join(ctx.stateDir, 'states');
   }
 
@@ -200,7 +207,8 @@ export class StateStore {
     validStateName(name);
     fs.mkdirSync(this.#dir, {recursive: true});
     await device?.save(snapshotName(name));
-    const backend = await this.#hook('save', name);
+    if (this.#cfg.postgres) await pgSave(this.#cfg.postgres, this.#file(name), this.#exec);
+    const backend = (await this.#hook('save', name)) || !!this.#cfg.postgres;
     const info: StateInfo = {name, savedAt: Date.now(), device: device?.id, avd: device?.label, backend, ...(device ? {kind: device.kind} : {})};
     fs.writeFileSync(this.#meta(name), JSON.stringify(info, null, 2));
     return info;
@@ -213,7 +221,9 @@ export class StateStore {
     const info = JSON.parse(fs.readFileSync(this.#meta(name), 'utf8')) as StateInfo;
     // Backend first: the app restored from the snapshot reconnects to data that already matches it.
     if (info.backend) {
+      if (this.#cfg.postgres) await pgRestore(this.#cfg.postgres, this.#file(name), this.#exec);
       await this.#hook('restore', name);
+      if (this.#cfg.redis) await redisFlush(this.#cfg.redis, this.#exec);
       // A dump carries the schema of the day it was taken: migrations added since would be rolled back with it.
       await this.#hook('migrate', name);
     }

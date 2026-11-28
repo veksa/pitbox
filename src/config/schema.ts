@@ -358,11 +358,35 @@ export const configSchema = z.object({
     )
     .optional(),
   /**
-   * Named states: `save` and `restore` back up and bring back the backend (`{name}`, `{file}` — a file under
-   * .pitbox/states); the device side is an emulator snapshot taken by pitbox. `migrate` runs after every backend
-   * restore, so a dump older than the code gets the migrations added since it was taken.
+   * Named states. The backend side: `postgres` dumps the app's schemas and on restore drops them and makes them again
+   * in one transaction; `redis` is emptied after a restore; `save` and `restore` are the project's own commands
+   * (`{name}`, `{file}` — a file under .pitbox/states), run after the built-in ones. `migrate` runs after every
+   * backend restore, so a dump older than the code gets the migrations added since it was taken. The device side is
+   * an emulator snapshot or the app's data, taken by pitbox.
    */
-  states: z.object({save: z.string().optional(), restore: z.string().optional(), migrate: z.string().optional()}).optional(),
+  states: z
+    .object({
+      postgres: z
+        .object({
+          container: z.string().min(1).optional(),
+          url: z.string().min(1).optional(),
+          user: z.string().min(1).optional(),
+          database: z.string().min(1).optional(),
+          schemas: z.array(z.string().min(1)).min(1, 'name the app\'s schemas: they are what a restore drops'),
+          extensions: z.array(z.string().min(1)).optional(),
+        })
+        .refine(p => !!p.container !== !!p.url, 'states.postgres takes a container or a url, one of them')
+        .refine(p => !p.url || (!p.user && !p.database), 'states.postgres.url carries the user and the database itself')
+        .optional(),
+      redis: z
+        .object({container: z.string().min(1).optional(), url: z.string().min(1).optional()})
+        .refine(r => !!r.container !== !!r.url, 'states.redis takes a container or a url, one of them')
+        .optional(),
+      save: z.string().optional(),
+      restore: z.string().optional(),
+      migrate: z.string().optional(),
+    })
+    .optional(),
   /**
    * Variants for `matrix`: every combination runs the flow once, with screenshots and visual baselines kept
    * per variant. Devices are serials or AVD names.
