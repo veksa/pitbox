@@ -2,7 +2,7 @@
 // restart cannot take another session's run (and its devices) away, and two versions cannot replace each other in
 // a loop.
 
-import {spawn, type ChildProcess} from 'node:child_process';
+import {spawn, spawnSync, type ChildProcess} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,9 +19,9 @@ const dirs: string[] = [];
 const children: ChildProcess[] = [];
 afterEach(() => {
   for (const c of children.splice(0)) c.kill();
-  // On Windows a daemon runs under a small wrapper (svcwrap) that keeps the daemon log open and the project folder as
-  // its working directory, and writes the exit status there once the daemon is gone: for that moment after the
-  // daemon's own exit the folder cannot be removed (EPERM, EBUSY), so the removal is retried.
+  // On Windows a daemon runs under a small wrapper (svcwrap) that writes the exit status into the project folder once
+  // the daemon is gone; a test that stops a daemon waits for that status, and the removal is retried for the moment
+  // the wrapper takes to exit after it.
   for (const d of dirs.splice(0)) fs.rmSync(d, {recursive: true, force: true, maxRetries: 20, retryDelay: 250});
   fs.rmSync(leaseDir(), {recursive: true, force: true});
 });
@@ -32,6 +32,12 @@ const project = () => {
   const config = path.join(dir, 'pitbox.config.json');
   fs.writeFileSync(config, '{}');
   return config;
+};
+
+const exists = async (file: string, ms = 15_000) => {
+  const end = Date.now() + ms;
+  while (!fs.existsSync(file) && Date.now() < end) await new Promise(r => setTimeout(r, 100));
+  return fs.existsSync(file);
 };
 
 const gone = async (pid: number, ms = 15_000) => {
@@ -108,9 +114,12 @@ describe('a daemon in use', () => {
   }, 60_000);
 
   it('lets an idle one go', async () => {
-    const c = await connect({config: project()});
+    const config = project();
+    const c = await connect({config});
     await c.call(DAEMON_STOP, {});
     expect(await gone(c.info.pid)).toBe(true);
+    // Windows: the wrapper is done with the folder once it has written the daemon's exit status.
+    if (process.platform === 'win32') expect(await exists(path.join(path.dirname(config), '.pitbox', 'daemon.log.exit'))).toBe(true);
   }, 60_000);
 });
 
@@ -230,4 +239,47 @@ describe('doctor', () => {
     expect(f).toMatchObject({rule: 'daemon-versions', severity: 'warn'});
     expect(f!.message).toMatch(/runs pitbox 1\.1\.0, and clients of other versions \(1\.0\.0, an older pitbox\)/);
   });
+});
+
+describe('the wrapper a Windows service runs under', () => {
+  // What a process holds is read from lsof (macOS) or /proc (Linux); the wrapper does the same on Windows, where a
+  // folder it held could not be removed.
+  const held = (pid: number): {cwd: string; files: string[]} => {
+    if (process.platform === 'linux') {
+      const fds = fs.readdirSync(`/proc/${pid}/fd`).map(f => {
+        try {
+          return fs.readlinkSync(`/proc/${pid}/fd/${f}`);
+        } catch {
+          return '';
+        }
+      });
+      return {cwd: fs.readlinkSync(`/proc/${pid}/cwd`), files: fds};
+    }
+    const out = spawnSync('lsof', ['-a', '-p', String(pid), '-Fn'], {encoding: 'utf8'}).stdout;
+    const cwdOut = spawnSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {encoding: 'utf8'}).stdout;
+    const names = (s: string) => s.split('\n').filter(l => l.startsWith('n')).map(l => l.slice(1));
+    return {cwd: names(cwdOut)[0] ?? '', files: names(out)};
+  };
+
+  it.skipIf(process.platform === 'win32')("leaves the service's folder and log to the service while it runs", async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-version-')));
+    dirs.push(dir);
+    const log = path.join(dir, 'service.log');
+    const spec = {file: process.execPath, args: ['-e', 'console.log("pid " + process.pid); setTimeout(() => {}, 20000)'], cwd: dir, env: {}, log, status: `${log}.exit`};
+    const wrapper = spawn(process.execPath, [path.resolve('src/util/svcwrap.ts'), Buffer.from(JSON.stringify(spec)).toString('base64')], {cwd: dir, stdio: 'ignore'});
+    children.push(wrapper);
+    try {
+      expect(await exists(log)).toBe(true);
+      const end = Date.now() + 10_000;
+      while (!fs.readFileSync(log, 'utf8').includes('pid ') && Date.now() < end) await new Promise(r => setTimeout(r, 100));
+      const h = held(wrapper.pid!);
+      expect(h.cwd).not.toBe(dir);
+      expect(h.files).not.toContain(log);
+    } finally {
+      // The service outlives its wrapper (that is what the wrapper is for): stopped by its own pid.
+      const pid = Number(/pid (\d+)/.exec(fs.readFileSync(log, 'utf8'))?.[1]);
+      if (pid) process.kill(pid);
+      await gone(wrapper.pid!);
+    }
+  }, 30_000);
 });
