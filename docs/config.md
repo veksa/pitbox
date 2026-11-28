@@ -365,14 +365,26 @@ the running simulator or emulator. See [push.md](push.md#the-push-gateway).
 
 ```ts
 states: {
-  save: 'docker exec db pg_dump -U app -Fc app > {file}',
-  restore: 'docker exec -i db pg_restore -U app -d app --clean --if-exists --single-transaction < {file}',
+  // The app's schemas in a Postgres container (or `url: 'postgres://…'` for the machine's own tools).
+  postgres: {container: 'db', user: 'app', database: 'app', schemas: ['app'], extensions: ['vector']},
+  redis: {container: 'cache'},  // optional: emptied after every restore
   migrate: 'yarn db-migrate',   // optional: run after every backend restore
 },
 ```
 
-Commands that back up and bring back the backend for `state save <name>` / `state restore <name>`; `{name}`
-and `{file}` (a file under `.pitbox/states`) are filled in. The device side is an emulator snapshot taken by
+The backend side of `state save <name>` / `state restore <name>`. `postgres` dumps only the schemas named (and the
+extensions, `-e`) to a file under `.pitbox/states`; on restore the archive is read first (a damaged one fails before
+anything is dropped), then those schemas are dropped whole — tables made since the save go too — and made again from
+the dump in one transaction that stops at the first error, so a failed restore leaves the database as it was. The
+tools run as processes of their own with their input and output piped by pitbox, no shell redirection: the same on
+macOS, Linux and Windows. `redis` is emptied (`FLUSHALL`) after the restore: keys built from row ids (locks, limits)
+would speak of rows that are gone.
+
+`save` and `restore` are the project's own commands for anything else (other stores, files), run after the built-in
+ones, `{name}` and `{file}` filled in; alone, they are the whole backend side (`save: 'docker exec db pg_dump … >
+{file}'`). A state saved by such a command can be restored by `postgres` when its file is a custom-format dump.
+
+The device side is an emulator snapshot taken by
 pitbox; on an Android phone, which has no snapshots, a tar of the app's data folder (caches left out) read and
 written through `run-as`, so a debug build; on an Apple simulator or device, a copy of the app's container. On
 restore the backend comes first, then the device side; the app's data comes back with the app stopped. On a web app
