@@ -372,7 +372,10 @@ Commands that back up and bring back the backend for `state save <name>` / `stat
 and `{file}` (a file under `.pitbox/states`) are filled in. The device side is an emulator snapshot taken by
 pitbox; on an Android phone, which has no snapshots, a tar of the app's data folder (caches left out) read and
 written through `run-as`, so a debug build; on an Apple simulator or device, a copy of the app's container. On
-restore the backend comes first, then the device side; the app's data comes back with the app stopped.
+restore the backend comes first, then the device side; the app's data comes back with the app stopped. On a web app
+(`web:<name>` named, or set with `device` in a flow before `state`) the side is the browser's cookies and storage
+(`states/web/<name>/`); a state saved without it empties them on restore, since the backend's ids start over and
+storage keyed by them would speak of other rows. The open page reloads in a new context.
 
 ## matrix
 

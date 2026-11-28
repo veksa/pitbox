@@ -411,6 +411,24 @@ describe('named states', () => {
     expect(store.list()).toEqual([]);
   });
 
+  it('empty a browser when the state brought back has no device side, and leave a device without reset alone', async () => {
+    const {StateStore} = await import('./stand/states.ts');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-states-'));
+    const store = new StateStore({root, stateDir: path.join(root, '.pitbox')}, {save: 'node -e 0', restore: 'node -e 0'});
+    await store.save('clean', undefined);
+    const order: string[] = [];
+    const device = {
+      id: 'web:app',
+      kind: 'app-data' as const,
+      save: async (n: string) => void order.push(`save ${n}`),
+      load: async (n: string) => void order.push(`load ${n}`),
+      remove: async (n: string) => void order.push(`remove ${n}`),
+    };
+    await store.restore('clean', {...device, reset: async () => void order.push('reset')});
+    await store.restore('clean', device);
+    expect(order).toEqual(['reset']);
+  });
+
   it("keep an android phone's side as a tar of the app's data, read and written through run-as", async () => {
     const {androidAppData} = await import('./stand/states.ts');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-appdata-'));

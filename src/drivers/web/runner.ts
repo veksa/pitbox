@@ -391,6 +391,8 @@ export class WebRunner {
   /** Downloads an answer has shown: `downloads wait` waits for one that is not. */
   #downloadsSeen = 0;
   #downloadSeq = 0;
+  /** Cookies and storage the next context starts with: a state restored while the browser was closed. */
+  #pendingStorage?: unknown;
 
   constructor(name: string, cfg: WebAppConfig, root: string, stateDir = path.join(root, '.pitbox')) {
     this.name = name;
@@ -466,7 +468,9 @@ export class WebRunner {
       }
     }
     if (this.#context) return this.#newPage();
-    return this.#openContext(contextOptions([this.#base, this.#over], pw.devices ?? {}));
+    const storage = this.#pendingStorage;
+    this.#pendingStorage = undefined;
+    return this.#openContext(contextOptions([this.#base, this.#over], pw.devices ?? {}), storage);
   }
 
   /** A context with these options (and the storage of an earlier one), and its page. */
@@ -656,6 +660,38 @@ export class WebRunner {
     if (!this.#opts?.hasTouch || (this.cfg.browser ?? 'chromium') !== 'chromium') return undefined;
     this.#cdp ??= await this.#context.newCDPSession(page);
     return this.#cdp;
+  }
+
+  /**
+   * The browser's side of a stand state: its cookies and storage (IndexedDB too where Playwright keeps it), as the
+   * app's data is a phone's side. A browser not started yet saves an empty one.
+   */
+  async saveStorage(file: string): Promise<void> {
+    const state = this.#context
+      ? await this.#context.storageState({indexedDB: true}).catch(() => this.#context.storageState())
+      : {cookies: [], origins: []};
+    fs.mkdirSync(path.dirname(file), {recursive: true});
+    fs.writeFileSync(file, JSON.stringify(state));
+  }
+
+  /**
+   * Brings the browser's cookies and storage back to a saved state, or to none when the state has no browser
+   * side: the backend restored with it starts its ids over, and storage keyed by them would otherwise speak of rows
+   * that are now someone else's. The open page reloads in a new context; a closed browser starts with it.
+   */
+  async restoreStorage(file?: string): Promise<void> {
+    const state: unknown = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined;
+    if (!this.#context || !this.#browser?.isConnected?.()) {
+      this.#pendingStorage = state;
+      return;
+    }
+    const url = this.#page && !this.#page.isClosed() ? String(this.#page.url()) : undefined;
+    const opts = this.#opts ?? contextOptions([this.#base, this.#over], (await loadPlaywright(this.#root)).devices ?? {});
+    await this.#context.close().catch(() => undefined);
+    this.#context = undefined;
+    this.#page = undefined;
+    const page = await this.#openContext(opts, state);
+    await page.goto(url && /^https?:/.test(url) ? url : this.cfg.url, {waitUntil: 'domcontentloaded', timeout: 60_000});
   }
 
   /** Clears cookies and storage of the app's origin (the app's data on a phone). */

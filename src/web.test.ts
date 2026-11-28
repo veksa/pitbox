@@ -150,6 +150,26 @@ describe('a web app as a device', () => {
     // Back where it was: scrolled to the end of the list.
     await ui.wait('text=Row 20');
   });
+
+  it("saves the browser's storage as a state's side and brings it back, or empties it for a state without one", {timeout: 60_000}, async () => {
+    const {browserStorage} = await import('./stand/states.ts');
+    const snap = browserStorage(runner, 'web:demo', path.join(dir, 'states-web'));
+    const read = async () => (await runner.evaluate('localStorage.getItem("step")')).value;
+    await runner.goto();
+    await runner.evaluate('localStorage.setItem("step", "saved")');
+    await snap.save('pitbox-one');
+    await runner.evaluate('localStorage.setItem("step", "later")');
+    await snap.load('pitbox-one');
+    expect(await read()).toBe('"saved"');
+    await snap.reset?.();
+    expect(await read()).toBe('null');
+    // A browser not started yet takes the storage when it starts.
+    const cold = new WebRunner('demo', {url: `http://127.0.0.1:${port}/`, viewport: '800x600'}, dir);
+    await browserStorage(cold, 'web:demo', path.join(dir, 'states-web')).load('pitbox-one');
+    await cold.goto();
+    expect((await cold.evaluate('localStorage.getItem("step")')).value).toBe('"saved"');
+    await cold.stop();
+  });
 });
 
 describe('a web flow', () => {
@@ -168,6 +188,10 @@ describe('a web flow', () => {
     try {
       const ok = (await e.methods.run({flow: 'sign-in', params: {user: 'bo@example.test'}, device: 'web:demo'})) as {ok: boolean; steps: number};
       expect(ok).toMatchObject({ok: true});
+      // A state on a web app keeps the browser's side under the app's name, and a flow restores it there.
+      expect(await e.methods.stateSave({name: 'signed', device: 'web:demo'})).toMatchObject({device: 'web:demo', kind: 'app-data'});
+      expect(fs.existsSync(path.join(project, '.pitbox', 'states', 'web', 'demo', 'pitbox-signed.json'))).toBe(true);
+      expect((await e.methods.run({steps: 'device web:demo\nstate signed\nexpect id=second'})) as {ok: boolean}).toMatchObject({ok: true});
       // A flow that moves to the web app itself, and a fresh browser that lands on the app before any open.
       await e.stopAll();
       const moved = (await e.methods.run({steps: 'device web:demo\nexpect id=email'})) as {ok: boolean};

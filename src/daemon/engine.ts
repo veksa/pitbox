@@ -32,7 +32,7 @@ import {PushGateway} from '../push/gateway.ts';
 import {fromPayloadFile} from '../push/payload.ts';
 import {projectRoot, ServiceManager, type ServiceState} from '../stand/services.ts';
 import {describeTool, runTool, toolDevicePlaceholders} from '../stand/tools.ts';
-import {androidAppData, type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
+import {androidAppData, browserStorage, type DeviceSnapshot, emulatorSnapshot, StateStore} from '../stand/states.ts';
 import {runFlow, type FlowHost} from '../flows/run.ts';
 import type {PerfData} from '../flows/budget.ts';
 import {formatResult} from '../format.ts';
@@ -229,6 +229,9 @@ export class Engine {
     const a = this.android;
     const online = a ? (await a.devices().catch(() => [])).filter(d => d.state === 'device') : [];
     const sims = this.apple ? await this.apple.booted().catch(() => []) : [];
+    // A web app named: its side is the browser's cookies and storage.
+    const web = device ? await this.#webTarget(device) : undefined;
+    if (web) return {snap: browserStorage(this.#webRunner(web), `web:${web}`, path.join(this.#loaded.stateDir, 'states', 'web', web))};
     // With no device named, the device of this session, or none at all (the state is the backend's alone).
     if (!device && !this.#leases.held().length) return {};
     const t = online.length || sims.length || device ? await this.#target(device) : undefined;

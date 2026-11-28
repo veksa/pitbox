@@ -13,8 +13,19 @@ import type {StandContext} from './services.ts';
 export type StatesConfig = {save?: string; restore?: string};
 export type StateInfo = {name: string; savedAt: number; device?: string; avd?: string; backend: boolean; kind?: 'emulator' | 'app-data'};
 
-/** A device's side of a state, kept by its driver under the state's name. */
-export type DeviceSnapshot = {id: string; label?: string; kind: 'emulator' | 'app-data'; save(name: string): Promise<void>; load(name: string): Promise<void>; remove(name: string): Promise<void>};
+/**
+ * A device's side of a state, kept by its driver under the state's name. `reset`, where a device has one, is what a
+ * state saved without a device side does to it (a browser's storage goes; a phone is left as it is).
+ */
+export type DeviceSnapshot = {
+  id: string;
+  label?: string;
+  kind: 'emulator' | 'app-data';
+  save(name: string): Promise<void>;
+  load(name: string): Promise<void>;
+  remove(name: string): Promise<void>;
+  reset?(): Promise<void>;
+};
 
 const snapshotName = (name: string) => `pitbox-${name}`;
 
@@ -130,6 +141,23 @@ export const validStateName = (name: string) => {
   return name;
 };
 
+/**
+ * A web app's side of a state: the browser's cookies and storage, a file per state. Restoring a state saved without
+ * it (only the backend) empties them, as the backend's ids start over and storage keyed by them would mislead.
+ */
+export const browserStorage = (browser: {saveStorage(file: string): Promise<void>; restoreStorage(file?: string): Promise<void>}, id: string, dir: string): DeviceSnapshot => {
+  const file = (n: string) => path.join(dir, `${n}.json`);
+  return {
+    id,
+    label: id,
+    kind: 'app-data',
+    save: n => browser.saveStorage(file(n)),
+    load: n => browser.restoreStorage(file(n)),
+    remove: async n => fs.rmSync(file(n), {force: true}),
+    reset: () => browser.restoreStorage(),
+  };
+};
+
 export class StateStore {
   readonly #ctx: StandContext;
   readonly #cfg: StatesConfig;
@@ -188,6 +216,8 @@ export class StateStore {
     if (info.device) {
       if (!device || (info.kind === 'app-data' && device.id !== info.device)) throw new Error(`state "${name}" has a device side (${info.avd ?? info.device}); ${info.kind === 'app-data' ? 'boot or connect that device' : 'boot that emulator'} first`);
       await device.load(snapshotName(name));
+    } else {
+      await device?.reset?.();
     }
     return {...info, ms: Date.now() - t0};
   }
