@@ -36,7 +36,7 @@ android
   apps [filter]
   app-logs [-n 50] [--grep re] [--level E] [--all]
   settings fontScale=1.3 dark=true animations=false size=1080x2400 density=420 locale=fr-FR grant=<perm> revoke=<perm> reset=<perm>
-  settings emulate="iPhone 15"|reset size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR   a web app (login kept)
+  settings emulate="iPhone 15"|reset size=390x844 density=3 touch=true mobile=true userAgent=… dark=true locale=fr-FR dialogs=accept|dismiss   a web app (login kept)
   downloads [name-regex] [-n 10] [--wait s]   a web app's downloaded files; --wait waits for a new one
   network full|lte|umts|edge|gsm|offline|online
   screenshot [file]

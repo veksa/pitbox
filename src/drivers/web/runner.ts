@@ -35,9 +35,14 @@ export type WebAppConfig = {
   /** Touch input: taps, long presses, swipes and a held finger reach the page as touch events. */
   touch?: boolean;
   userAgent?: string;
+  /** How `alert()`, `confirm()`, `prompt()` and leave-page dialogs are answered. Default `dismiss`. */
+  dialogs?: 'accept' | 'dismiss';
 };
 
 /** What a web app emulates. Layers apply in order (the config's, then the runtime's); a preset sets every field it has. */
+/** How a web app's dialogs are answered: `accept`, `dismiss`, or `accept <text>` (what a prompt() returns). */
+export type WebDialogs = 'accept' | 'dismiss' | `accept ${string}`;
+
 export type WebEmulation = {device?: string; viewport?: string; scale?: number; mobile?: boolean; touch?: boolean; userAgent?: string; dark?: boolean; locale?: string};
 
 export type WebContextOptions = {
@@ -386,6 +391,10 @@ export class WebRunner {
   #opts?: WebContextOptions;
   /** Uncaught page errors and console errors, for the actions' crash reports. */
   readonly events: AppEvent[] = [];
+  /** What the page did on its own since the last action (a dialog answered), told in the action's note. */
+  readonly notices: string[] = [];
+  /** How `alert`, `confirm`, `prompt` and `beforeunload` dialogs are answered, set at run time over the config's. */
+  #dialogs?: WebDialogs;
   #touch?: {x: number; y: number};
   readonly #downloads: WebDownload[] = [];
   /** Downloads an answer has shown: `downloads wait` waits for one that is not. */
@@ -489,12 +498,35 @@ export class WebRunner {
   async #newPage(): Promise<Pw> {
     const page = await this.#context.newPage();
     page.on('pageerror', (err: Error) => this.#event(`${err.name}: ${err.message}`, err.stack));
+    // A dialog blocks the page until it is answered; with no listener Playwright dismisses it unseen, so a confirm()
+    // the flow meant to accept turns into a silent "cancel".
+    page.on('dialog', (d: Pw) => void this.#answer(d));
     page.on('console', (m: Pw) => {
       if (m.type() === 'error') this.#event(m.text());
     });
     this.#page = page;
     this.#cdp = undefined;
     return page;
+  }
+
+  /** How dialogs are answered now: `accept`, `dismiss`, or `accept <text>` for a prompt(). */
+  get dialogs(): WebDialogs {
+    return this.#dialogs ?? this.cfg.dialogs ?? 'dismiss';
+  }
+
+  set dialogs(mode: WebDialogs) {
+    if (!/^(accept( .*)?|dismiss)$/s.test(mode)) throw new WebError(`not a dialog answer: ${mode}`, 'dialogs=accept | dismiss | "accept <text for a prompt>"');
+    this.#dialogs = mode;
+  }
+
+  async #answer(d: Pw) {
+    const mode = this.dialogs;
+    const accept = mode.startsWith('accept');
+    const text = mode.startsWith('accept ') ? mode.slice(7) : undefined;
+    const message = String(d.message() ?? '').replace(/\s+/g, ' ').slice(0, 120);
+    await (accept ? d.accept(text) : d.dismiss()).catch(() => undefined);
+    this.notices.push(`${d.type()} ${JSON.stringify(message)} ${accept ? 'accepted' : 'dismissed'}${accept ? '' : ' (settings dialogs=accept to accept)'}`);
+    if (this.notices.length > 20) this.notices.shift();
   }
 
   #event(message: string, stack?: string) {

@@ -61,6 +61,8 @@ beforeAll(async () => {
       res.setHeader('content-type', 'application/zip').setHeader('content-disposition', 'attachment; filename="slow.zip"').write('PK\x03\x04');
       setTimeout(() => res.end('rest'), 1500);
     } else if (req.url === '/report.pdf') res.setHeader('content-type', 'application/pdf').setHeader('content-disposition', 'attachment; filename="report.pdf"').end('%PDF-1.4\n% a tiny file\n');
+    else if (req.url === '/ask')
+      res.end(`<!doctype html><title>Ask</title><button onclick="document.getElementById('out').textContent = 'said ' + confirm('Delete it?')">Delete</button><button onclick="document.getElementById('out').textContent = 'named ' + prompt('Name?')">Rename</button><p id="out" data-testid="out">-</p>`);
     else if (req.url === '/second') res.end('<!doctype html><title>Second</title><h2 data-testid="second">Second page</h2><button onclick="boom()">Break</button><button onclick="setTimeout(() => location.reload(), 30)">Reload</button>');
     else res.setHeader('content-type', 'text/html').end(page);
   });
@@ -151,6 +153,22 @@ describe('a web app as a device', () => {
     await ui.wait('text=Row 20');
   });
 
+  it('answers confirm() and prompt() as the config or settings say, and tells the dialog in the note', {timeout: 30_000}, async () => {
+    await runner.goto('/ask');
+    const dismissed = await ui.press('text=Delete');
+    await ui.wait('text=said false', {timeoutMs: 5000});
+    expect(dismissed.note).toMatch(/confirm "Delete it\?" dismissed \(settings dialogs=accept/);
+    runner.dialogs = 'accept';
+    const accepted = await ui.press('text=Delete');
+    await ui.wait('text=said true', {timeoutMs: 5000});
+    expect(accepted.note).toMatch(/confirm "Delete it\?" accepted/);
+    runner.dialogs = 'accept Bo';
+    await ui.press('text=Rename');
+    await ui.wait('text=named Bo', {timeoutMs: 5000});
+    expect(() => (runner.dialogs = 'maybe' as never)).toThrow(/not a dialog answer/);
+    runner.dialogs = 'dismiss';
+  });
+
   it("saves the browser's storage as a state's side and brings it back, or empties it for a state without one", {timeout: 60_000}, async () => {
     const {browserStorage} = await import('./stand/states.ts');
     const snap = browserStorage(runner, 'web:demo', path.join(dir, 'states-web'));
@@ -204,6 +222,8 @@ describe('a web flow', () => {
       const set = await e.methods.settings({device: 'web:demo', emulate: 'iPhone 15', dark: 'true'});
       expect(formatResult('settings', set)).toMatch(/393x659 @3x mobile touch · iPhone 15 · dark/);
       await expect(e.methods.settings({device: 'web:demo', fontScale: 1.3})).rejects.toThrow(/fontScale: not for a web app\nhint: a web app takes emulate=/);
+      expect(await e.methods.settings({device: 'web:demo', dialogs: 'accept'})).toEqual({serial: 'web:demo', applied: ['dialogs accept']});
+      await expect(e.methods.settings({device: 'web:demo', dialogs: 'sometimes'})).rejects.toThrow(/not a dialog answer/);
       const none = await e.methods.downloads({device: 'web:demo'});
       expect(formatResult('downloads', none)).toBe('no downloads on web:demo yet (they are saved to .pitbox/downloads/demo)');
       expect(formatResult('downloads', {serial: 'web:demo', root: '/p', dir: '/p/.pitbox/downloads/demo', waited: 1200, downloads: [{n: 1, name: 'a.pdf', url: 'http://x/a.pdf', at: 0, state: 'done', size: 2048, type: 'application/pdf', file: '/p/.pitbox/downloads/demo/a.pdf'}]})).toBe(

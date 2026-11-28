@@ -325,6 +325,11 @@ export const configSchema = z.object({
         /** Touch input: taps, long presses and swipes reach the page as touch events. */
         touch: z.boolean().optional(),
         userAgent: z.string().optional(),
+        /**
+         * How `alert()`, `confirm()`, `prompt()` and leave-page dialogs are answered: `dismiss` (the default) or
+         * `accept`; `settings dialogs=accept` changes it at run time. Each answered dialog is told in the action's note.
+         */
+        dialogs: z.enum(['accept', 'dismiss']).optional(),
       }),
     )
     .optional(),

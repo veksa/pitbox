@@ -234,6 +234,7 @@ routes: {order: '/orders/{id}'},   // a route that starts with / opens in the we
 | `mobile` | a mobile browser: the page's meta viewport is honoured (not in Firefox) |
 | `touch` | touch input: `press`, `longpress`, `doubletap`, `swipe` and `touch` reach the page as touch events (Chromium; other browsers keep the mouse) |
 | `userAgent` | the user agent string |
+| `dialogs` | how `alert()`, `confirm()`, `prompt()` and leave-page dialogs are answered: `dismiss` (default) or `accept`; `settings dialogs=accept` (or `"accept <text>"`, what a `prompt()` returns) changes it at run time, and each answered dialog is told in the action's note |
 
 Playwright is loaded only when a web app is driven, from the project: add `playwright-core` (or `playwright`) to
 its dev dependencies — pitbox does not bring one — and its browsers with `npx playwright-core install chromium`. `open!` (`relaunch`) closes the tab and opens the

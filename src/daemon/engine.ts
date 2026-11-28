@@ -1,7 +1,7 @@
 // The engine the daemon serves: config, stand, Android driver, doctor and docs behind one method table.
 // The CLI and the MCP server call these methods over the daemon's RPC.
 
-import {WebRunner} from '../drivers/web/runner.ts';
+import {WebRunner, type WebDialogs} from '../drivers/web/runner.ts';
 import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import fs from 'node:fs';
@@ -2816,11 +2816,16 @@ export class Engine {
       const web = await this.#webTarget(str(p, 'device'));
       if (web) {
         const unsupported = ['fontScale', 'animations', 'grant', 'revoke', 'reset'].filter(k => p[k] !== undefined);
-        if (unsupported.length) throw new Error(`${unsupported.join(', ')}: not for a web app\nhint: a web app takes emulate=<preset>|reset, size=WxH|reset, density=<scale>, touch, mobile, userAgent, dark, locale`);
+        if (unsupported.length) throw new Error(`${unsupported.join(', ')}: not for a web app\nhint: a web app takes emulate=<preset>|reset, size=WxH|reset, density=<scale>, touch, mobile, userAgent, dark, locale, dialogs=accept|dismiss`);
         const size = str(p, 'size');
         const emulate = str(p, 'emulate');
         const density = str(p, 'density');
-        const applied = await this.#webRunner(web).emulate({
+        const dialogs = str(p, 'dialogs');
+        const runner = this.#webRunner(web);
+        if (dialogs !== undefined) runner.dialogs = dialogs as WebDialogs;
+        const emulating = ['size', 'emulate', 'density', 'touch', 'mobile', 'userAgent', 'dark', 'locale'].some(k => p[k] !== undefined);
+        if (!emulating && dialogs !== undefined) return {serial: `web:${web}`, applied: [`dialogs ${runner.dialogs}`]};
+        const applied = await runner.emulate({
           reset: emulate === 'reset',
           unset: [...(size === 'reset' ? (['viewport'] as const) : []), ...(density === 'reset' ? (['scale'] as const) : [])],
           device: emulate && emulate !== 'reset' ? emulate : undefined,
@@ -2833,7 +2838,7 @@ export class Engine {
           locale: str(p, 'locale'),
         });
         this.#uis.get(`web:${web}`)?.screenChanged();
-        return {serial: `web:${web}`, applied};
+        return {serial: `web:${web}`, applied: dialogs !== undefined ? [...applied, `dialogs ${runner.dialogs}`] : applied};
       }
       if (str(p, 'emulate') !== undefined) throw new Error('emulate is for web apps (device web:<name>): a phone is what it is');
       const t = await this.#target(str(p, 'device'));

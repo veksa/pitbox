@@ -151,8 +151,8 @@ export const registerTools = (server: ToolServer, config: PitboxConfig, daemon: 
   );
   tool(
     'settings',
-    'Device settings: fontScale, dark, animations, size/density ("reset"), locale (app), grant/revoke/reset permission (short names: mic, camera, photos, notifications, location; reset = ask again), network (full|lte|umts|edge|gsm|offline|online). Web: emulate=<Playwright device, "iPhone 15">|reset, size=WxH, density=<scale>, touch, mobile, userAgent, dark, locale (login kept).',
-    {fontScale: opt.num(), dark: opt.bool(), animations: opt.bool(), size: opt.str(), density: opt.str(), locale: opt.str(), grant: opt.str(), revoke: opt.str(), reset: opt.str(), network: opt.str(), emulate: opt.str(), touch: opt.bool(), mobile: opt.bool(), userAgent: opt.str(), device},
+    'Device settings: fontScale, dark, animations, size/density ("reset"), locale (app), grant/revoke/reset permission (short names: mic, camera, photos, notifications, location; reset = ask again), network (full|lte|umts|edge|gsm|offline|online). Web: emulate=<Playwright device, "iPhone 15">|reset, size=WxH, density=<scale>, touch, mobile, userAgent, dark, locale (login kept), dialogs=accept|dismiss|"accept <prompt text>" (how alert/confirm/prompt are answered; default from the config, else dismiss).',
+    {fontScale: opt.num(), dark: opt.bool(), animations: opt.bool(), size: opt.str(), density: opt.str(), locale: opt.str(), grant: opt.str(), revoke: opt.str(), reset: opt.str(), network: opt.str(), emulate: opt.str(), touch: opt.bool(), mobile: opt.bool(), userAgent: opt.str(), dialogs: opt.str(), device},
     a => (a.network ? 'network' : 'settings'),
     a => (a.network ? {device: a.device, profile: a.network} : a),
   );
