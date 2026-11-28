@@ -180,11 +180,14 @@ export const toCall = ({positional, flags}: Args): {method: string; params: Reco
     case 'shutdown':
       return {method: 'shutdown', params: {...common, force: flags.force}};
     case 'device': {
+      // The MCP tool's actions work here too (`device boot <avd>`, `device list`), so a hint that names one can be pasted.
+      const alias = ({boot: ['boot'], list: ['devices'], clean: ['devices', 'clean'], shutdown: ['shutdown'], info: ['info']} as Record<string, string[]>)[rest[0] ?? ''];
+      if (alias) return toCall({positional: [...alias, ...rest.slice(1)], flags});
       if (rest[0] === 'lease') return {method: 'lease', params: {device: device ?? rest[1], purpose: flags.purpose}};
       if (rest[0] === 'release') return {method: 'release', params: {device: device ?? rest[1], keep: flags.keep, force: flags.force}};
       if (rest[0] === 'pair' && rest[1] === 'watch') return {method: 'pair', params: {value: 'watch', device, watch: flags.watch ?? (rest.slice(2).join(' ') || undefined)}};
       if (rest[0] === 'unpair') return {method: 'unpair', params: {value: rest[1] ?? 'watch', device}};
-      throw new Error('device lease [--device d] [--purpose text] | device release [--device d] [--keep] | device pair watch [<watch name|avd>] [--device phone] | device unpair watch');
+      throw new Error('device boot|list|clean|shutdown|info … | device lease [--device d] [--purpose text] | device release [--device d] [--keep] | device pair watch [<watch name|avd>] [--device phone] | device unpair watch');
     }
     case 'build':
       // The build's declared variables take their values from this shell, not from the daemon's environment.

@@ -258,6 +258,14 @@ describe('cli', () => {
     expect(() => toCall(parseArgs(['as']))).toThrow(/as <user>/);
   });
 
+  it('maps the MCP device actions under device, so device boot reaches the boot and its unknown-AVD error', () => {
+    expect(toCall(parseArgs(['device', 'boot', 'Missing_AVD', '--wipe']))).toEqual(toCall(parseArgs(['boot', 'Missing_AVD', '--wipe'])));
+    expect(toCall(parseArgs(['device', 'boot', 'Missing_AVD'])).params).toMatchObject({avd: 'Missing_AVD'});
+    expect(toCall(parseArgs(['device', 'list'])).method).toBe('devices');
+    expect(toCall(parseArgs(['device', 'clean'])).method).toBe('cleanDevices');
+    expect(toCall(parseArgs(['device', 'shutdown', '--device', 'emulator-5554'])).method).toBe('shutdown');
+    expect(() => toCall(parseArgs(['device', 'nope']))).toThrow(/device boot/);
+  });
 });
 
 describe('runner version', () => {
