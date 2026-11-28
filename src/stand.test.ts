@@ -411,6 +411,20 @@ describe('named states', () => {
     expect(store.list()).toEqual([]);
   });
 
+  it('migrate the backend after every restore, so a dump older than the code does not take migrations back', async () => {
+    const {StateStore} = await import('./stand/states.ts');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-states-'));
+    const log = path.join(root, 'log');
+    // The commands run in the project's root, so a relative file needs no quoting on any shell.
+    const append = (word: string) => `node -e "require('fs').appendFileSync('log', '${word} ')"`;
+    const store = new StateStore({root, stateDir: path.join(root, '.pitbox')}, {save: 'node -e 0', restore: append('restore'), migrate: append('migrate')});
+    await store.save('clean', undefined);
+    await store.restore('clean', undefined);
+    expect(fs.readFileSync(log, 'utf8')).toBe('restore migrate ');
+    const failing = new StateStore({root, stateDir: path.join(root, '.pitbox')}, {save: 'node -e 0', restore: 'node -e 0', migrate: 'node -e "process.exit(3)"'});
+    await expect(failing.restore('clean', undefined)).rejects.toThrow(/state migrate command failed \(exit 3\)/);
+  });
+
   it('empty a browser when the state brought back has no device side, and leave a device without reset alone', async () => {
     const {StateStore} = await import('./stand/states.ts');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pitbox-states-'));

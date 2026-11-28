@@ -10,7 +10,7 @@ import {quoteArg, resolveShell, runShell} from '../util/proc.ts';
 import {renderTemplate} from '../util/text.ts';
 import type {StandContext} from './services.ts';
 
-export type StatesConfig = {save?: string; restore?: string};
+export type StatesConfig = {save?: string; restore?: string; migrate?: string};
 export type StateInfo = {name: string; savedAt: number; device?: string; avd?: string; backend: boolean; kind?: 'emulator' | 'app-data'};
 
 /**
@@ -186,7 +186,7 @@ export class StateStore {
       .sort((a, b) => b.savedAt - a.savedAt);
   }
 
-  async #hook(kind: 'save' | 'restore', name: string): Promise<boolean> {
+  async #hook(kind: 'save' | 'restore' | 'migrate', name: string): Promise<boolean> {
     const template = this.#cfg[kind];
     if (!template) return false;
     const shell = resolveShell(this.#ctx.shell);
@@ -212,7 +212,11 @@ export class StateStore {
     if (!fs.existsSync(this.#meta(name))) throw new Error(`no state "${name}" (saved: ${this.list().map(s => s.name).join(', ') || 'none'})`);
     const info = JSON.parse(fs.readFileSync(this.#meta(name), 'utf8')) as StateInfo;
     // Backend first: the app restored from the snapshot reconnects to data that already matches it.
-    if (info.backend) await this.#hook('restore', name);
+    if (info.backend) {
+      await this.#hook('restore', name);
+      // A dump carries the schema of the day it was taken: migrations added since would be rolled back with it.
+      await this.#hook('migrate', name);
+    }
     if (info.device) {
       if (!device || (info.kind === 'app-data' && device.id !== info.device)) throw new Error(`state "${name}" has a device side (${info.avd ?? info.device}); ${info.kind === 'app-data' ? 'boot or connect that device' : 'boot that emulator'} first`);
       await device.load(snapshotName(name));

@@ -347,9 +347,10 @@ export const configSchema = z.object({
     .optional(),
   /**
    * Named states: `save` and `restore` back up and bring back the backend (`{name}`, `{file}` — a file under
-   * .pitbox/states); the device side is an emulator snapshot taken by pitbox.
+   * .pitbox/states); the device side is an emulator snapshot taken by pitbox. `migrate` runs after every backend
+   * restore, so a dump older than the code gets the migrations added since it was taken.
    */
-  states: z.object({save: z.string().optional(), restore: z.string().optional()}).optional(),
+  states: z.object({save: z.string().optional(), restore: z.string().optional(), migrate: z.string().optional()}).optional(),
   /**
    * Variants for `matrix`: every combination runs the flow once, with screenshots and visual baselines kept
    * per variant. Devices are serials or AVD names.

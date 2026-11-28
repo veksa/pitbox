@@ -365,6 +365,7 @@ the running simulator or emulator. See [push.md](push.md#the-push-gateway).
 states: {
   save: 'docker exec db pg_dump -U app -Fc app > {file}',
   restore: 'docker exec -i db pg_restore -U app -d app --clean --if-exists --single-transaction < {file}',
+  migrate: 'yarn db-migrate',   // optional: run after every backend restore
 },
 ```
 
@@ -376,6 +377,10 @@ restore the backend comes first, then the device side; the app's data comes back
 (`web:<name>` named, or set with `device` in a flow before `state`) the side is the browser's cookies and storage
 (`states/web/<name>/`); a state saved without it empties them on restore, since the backend's ids start over and
 storage keyed by them would speak of other rows. The open page reloads in a new context.
+
+A dump holds the schema of the day it was saved, so restoring it takes back every migration added since. `migrate`,
+when set, runs right after each backend restore (before the device side) and brings the schema back to the code's
+head; a failing one fails the restore.
 
 ## matrix
 
