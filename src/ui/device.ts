@@ -7,6 +7,7 @@ import path from 'node:path';
 import {KEYS} from '../drivers/android/driver.ts';
 import {keyOf} from '../drivers/android/formfactor.ts';
 import type {AppEvent} from '../drivers/android/events.ts';
+import {framesMotion, isMoving} from './motion.ts';
 import {compareFingerprints, type Fingerprint, type Region} from './visual.ts';
 import {backButton, buildSnapshot, menuOutside, controlAt, diffSnapshots, keyboardTop, logBoxToast, matches, missHint, vendorNotice, onlyClosedKeyboard, outcomeStep, passwordOffer, permissionPrompt, resolveTarget, selectorFor, shellAlertButtonStays, swipeArea, tapPoint, type Snapshot, type SnapshotDiff, type UiNode, type UiWindow} from './snapshot.ts';
 
@@ -944,11 +945,13 @@ export class DeviceUi<R extends UiRunner = UiRunner> {
       bounds = t.node.b;
       target = t.ref;
     }
-    const r = await this.runner.call<{luma: number[]; diff: number[]}>('frames', {bounds, count: opts.count ?? 4, interval: opts.intervalMs ?? 400}, 30_000);
-    const motion = Math.max(0, ...r.diff);
+    const r = await this.runner.call<{luma: number[]; diff: number[]; cols?: number; rows?: number; grids?: number[][]}>('frames', {bounds, count: opts.count ?? 4, interval: opts.intervalMs ?? 400}, 30_000);
+    // By tiles when the runner sends its grids (`motion.ts`); a runner from before them sends only the mean.
+    const m = r.grids && r.cols && r.rows ? framesMotion(r.grids, r.cols, r.rows) : {mean: Math.max(0, ...r.diff), peak: 0};
+    const motion = Math.max(m.mean, m.peak);
     const luma = r.luma.reduce((a, b) => a + b, 0) / Math.max(1, r.luma.length);
     const black = luma < 8;
-    const moving = motion > 1.5;
+    const moving = isMoving(m);
     return {target, moving, black, playing: moving && !black, motion: Math.round(motion * 10) / 10, luma: Math.round(luma)};
   }
 

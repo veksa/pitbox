@@ -541,12 +541,14 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
 
   /**
    * Is something moving in a region, and is it black? `count` frames `interval` ms apart, each cropped to
-   * `bounds`, shrunk to `size`×`size` greyscale. Answers the mean brightness of each frame and the mean absolute
-   * difference between neighbours (0–255) — no image leaves the device.
+   * `bounds`, shrunk to `size`×`size` greyscale. Answers the mean brightness of each frame, the mean absolute
+   * difference between neighbours (0–255) and the grids themselves, which the host cuts into tiles: a change
+   * in one corner is lost in a mean over the frame. No image leaves the device.
    */
   private fun frames(bounds: JSONArray?, count: Int, interval: Long, size: Int): JSONObject {
     val luma = JSONArray()
     val diff = JSONArray()
+    val grids = JSONArray()
     var prev: IntArray? = null
     for (i in 0 until count) {
       if (i > 0) SystemClock.sleep(interval)
@@ -563,10 +565,11 @@ class Commands(private val instrumentation: Instrumentation, private val ui: UiA
         (((c shr 16) and 0xff) * 299 + ((c shr 8) and 0xff) * 587 + (c and 0xff) * 114) / 1000
       }
       luma.put(grey.average())
+      grids.put(JSONArray().also { a -> grey.forEach { a.put(it) } })
       prev?.let { p -> diff.put(grey.indices.sumOf { k -> kotlin.math.abs(grey[k] - p[k]) }.toDouble() / grey.size) }
       prev = grey
     }
-    return JSONObject().put("luma", luma).put("diff", diff)
+    return JSONObject().put("luma", luma).put("diff", diff).put("cols", size).put("rows", size).put("grids", grids)
   }
 
   /**

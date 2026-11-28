@@ -132,7 +132,8 @@ Many explorations at once, each finding proven before it is reported:
 
 ## Checking instead of looking
 
-- `inspect what=media target=…` — is a video playing (motion between frames, not black).
+- `inspect what=media target=…` — is a video playing (motion between frames, not black). Motion is the largest
+  change of one tile of the region, so a mostly still clip with a running timecode reads as playing.
 - `inspect what=visual name=…` — the screen against a stored baseline; changed regions in pixels.
 - `expect` in flows — presence, absence, focus, playing, paused, `visual`.
 - `dev action=embed` — a verification build with no dev server in the loop: the bundle from the running bundler

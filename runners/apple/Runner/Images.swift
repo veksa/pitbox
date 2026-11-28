@@ -81,6 +81,7 @@ enum Images {
     try checkRegions(bounds != nil)
     var luma: [Double] = []
     var diff: [Double] = []
+    var grids: [[Int]] = []
     var prev: [UInt8]?
     for i in 0..<max(1, count) {
       if i > 0 { Thread.sleep(forTimeInterval: interval) }
@@ -88,9 +89,11 @@ enum Images {
       let scale = CGFloat(cg.width) / max(1, points.width)
       let px = try grey(cg, crop: bounds.map { toPixels($0, scale) }, cols: size, rows: size)
       luma.append(Double(px.reduce(0) { $0 + Int($1) }) / Double(px.count))
+      // The grid itself too: the host cuts it into tiles, so a change in one corner is not lost in the mean.
+      grids.append(px.map { Int($0) })
       if let p = prev { diff.append(Double(zip(px, p).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }) / Double(px.count)) }
       prev = px
     }
-    return ["luma": luma, "diff": diff]
+    return ["luma": luma, "diff": diff, "cols": size, "rows": size, "grids": grids]
   }
 }

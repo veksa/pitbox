@@ -811,17 +811,21 @@ export class WebRunner {
         const lab = await this.#labPage();
         const luma: number[] = [];
         const diff: number[] = [];
+        const grids: number[][] = [];
+        let rows = 0;
         let prev: number[] | undefined;
         for (let i = 0; i < count; i++) {
           if (i) await page.waitForTimeout(interval);
           const clip = b ? {x: b[0]!, y: b[1]!, width: Math.max(1, b[2]! - b[0]!), height: Math.max(1, b[3]! - b[1]!)} : undefined;
           const png = (await page.screenshot({type: 'png', scale: 'css', ...(clip ? {clip} : {})})) as Buffer;
-          const fp = (await lab.evaluate(labFingerprint, {src: `data:image/png;base64,${png.toString('base64')}`, cols: 32, masks: [], scale: 1})) as {grid: number[]};
+          const fp = (await lab.evaluate(labFingerprint, {src: `data:image/png;base64,${png.toString('base64')}`, cols: 32, masks: [], scale: 1})) as {rows: number; grid: number[]};
+          rows = fp.rows;
+          grids.push(fp.grid);
           luma.push(fp.grid.reduce((s, v) => s + v, 0) / fp.grid.length);
           if (prev) diff.push(fp.grid.reduce((s, v, k) => s + Math.abs(v - prev![k]!), 0) / fp.grid.length);
           prev = fp.grid;
         }
-        return {luma, diff};
+        return {luma, diff, cols: 32, rows, grids};
       }
       case 'focus': {
         const tree = (await evaluateAcrossNavigation(page, pageTree)) as {nodes: UiNode[]};
